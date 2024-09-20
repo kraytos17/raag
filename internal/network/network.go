@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,21 @@ func NewNetwork(cfg *config.Config, lib *library.Library) (*NetworkManager, erro
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
+	var acPort int
+	for _, addr := range host.Addrs() {
+		port, err := addr.ValueForProtocol(multiaddr.P_TCP)
+		if err == nil {
+			acPort, _ = strconv.Atoi(port)
+			break
+		}
+	}
+
+	if acPort == 0 {
+		return nil, fmt.Errorf("failed to get actual port")
+	}
+
+	cfg.ListenPort = acPort
+
 	nm := &NetworkManager{
 		host:    host,
 		cfg:     cfg,
@@ -80,6 +96,7 @@ func NewNetwork(cfg *config.Config, lib *library.Library) (*NetworkManager, erro
 			nm.handlePeerDisconnect(conn.RemotePeer(), conn.RemoteMultiaddr())
 		},
 	})
+	log.Printf("Your Raag Node is listening on port %d\n", acPort)
 
 	return nm, nil
 }
