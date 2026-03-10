@@ -12,6 +12,8 @@ import (
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/network"
 	"github.com/p-society/raag/internal/player"
+	"github.com/p-society/raag/internal/playlist"
+	"github.com/p-society/raag/internal/storage"
 )
 
 func main() {
@@ -35,15 +37,23 @@ func main() {
 		log.Fatalf("Error initializing network: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	pm := playlist.NewManager()
+	store, err := storage.New()
+	if err != nil {
+		log.Printf("Warning: Could not initialize storage: %v", err)
+	} else {
+		if err := store.LoadPlaylists(pm); err != nil {
+			log.Printf("Warning: Could not load playlists: %v", err)
+		}
+	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	errChan := make(chan error, 1)
 	go func() {
 		errChan <- net.Start(ctx)
 	}()
 
-	cli := cli.NewCLI(lib, p, net)
+	cli := cli.NewCLI(lib, p, net, pm)
 	go func() {
 		if err := cli.Start(); err != nil {
 			log.Printf("Error in CLI: %v", err)
@@ -59,5 +69,11 @@ func main() {
 		log.Println("Received termination signal, shutting down...")
 	case err := <-errChan:
 		log.Printf("Error in network: %v", err)
+	}
+
+	if store != nil {
+		if err := store.SavePlaylists(pm); err != nil {
+			log.Printf("Warning: Could not save playlists: %v", err)
+		}
 	}
 }

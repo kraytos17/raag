@@ -3,13 +3,18 @@ package player
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/effects"
+	"github.com/faiface/beep/flac"
 	"github.com/faiface/beep/mp3"
 	"github.com/faiface/beep/speaker"
+	"github.com/faiface/beep/vorbis"
+	"github.com/faiface/beep/wav"
 	"github.com/p-society/raag/internal/metadata"
 )
 
@@ -17,6 +22,7 @@ type Player struct {
 	ctrl         *beep.Ctrl
 	format       beep.Format
 	streamer     beep.StreamSeeker
+	file         *os.File
 	Queue        []metadata.Song
 	CurrentIndex int
 	Volume       float64
@@ -44,6 +50,9 @@ func (p *Player) Play(song metadata.Song) error {
 
 	if p.streamer != nil {
 		speaker.Clear()
+		if p.file != nil {
+			p.file.Close()
+		}
 	}
 
 	f, err := os.Open(song.Path)
@@ -51,16 +60,17 @@ func (p *Player) Play(song metadata.Song) error {
 		return fmt.Errorf("error opening audio file: %w", err)
 	}
 
-	streamer, format, err := mp3.Decode(f)
+	streamer, format, err := p.decodeAudio(f)
 	if err != nil {
 		f.Close()
 		return fmt.Errorf("error decoding audio file: %w", err)
 	}
 
+	p.file = f
 	p.streamer = streamer
 	p.format = format
 	p.Position = 0
-	p.Duration = format.SampleRate.N(time.Duration(streamer.Len()) * format.SampleRate.D(1))
+	p.Duration = int(time.Duration(streamer.Len()).Seconds() * float64(format.SampleRate) / float64(time.Second))
 
 	inLoop := beep.Loop(-1, streamer)
 	p.VolumeCtrl = &effects.Volume{Streamer: inLoop, Base: 2, Volume: 0}
@@ -69,6 +79,22 @@ func (p *Player) Play(song metadata.Song) error {
 
 	fmt.Printf("Now playing: %s - %s\n", song.Title, song.Artist)
 	return nil
+}
+
+func (p *Player) decodeAudio(f *os.File) (beep.StreamSeekCloser, beep.Format, error) {
+	ext := strings.ToLower(filepath.Ext(f.Name()))
+	switch ext {
+	case ".mp3":
+		return mp3.Decode(f)
+	case ".flac":
+		return flac.Decode(f)
+	case ".wav":
+		return wav.Decode(f)
+	case ".ogg", ".ogv":
+		return vorbis.Decode(f)
+	default:
+		return nil, beep.Format{}, fmt.Errorf("unsupported audio format: %s", ext)
+	}
 }
 
 func (p *Player) PlayQueue() error {

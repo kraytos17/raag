@@ -10,21 +10,24 @@ import (
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/network"
 	"github.com/p-society/raag/internal/player"
+	"github.com/p-society/raag/internal/playlist"
 	"github.com/spf13/cobra"
 )
 
 type CLI struct {
-	library *library.Library
-	player  *player.Player
-	network *network.NetworkManager
-	rootCmd *cobra.Command
+	library   *library.Library
+	player    *player.Player
+	network   *network.NetworkManager
+	playlists *playlist.Manager
+	rootCmd   *cobra.Command
 }
 
-func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager) *CLI {
+func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager, pm *playlist.Manager) *CLI {
 	cli := &CLI{
-		library: lib,
-		player:  p,
-		network: net,
+		library:   lib,
+		player:    p,
+		network:   net,
+		playlists: pm,
 	}
 	cli.rootCmd = &cobra.Command{
 		Use:   "raag",
@@ -47,6 +50,8 @@ func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager)
 	cli.rootCmd.AddCommand(cli.volumeCommand())
 	cli.rootCmd.AddCommand(cli.seekCommand())
 	cli.rootCmd.AddCommand(cli.libraryCommand())
+	cli.rootCmd.AddCommand(cli.nowplayingCommand())
+	cli.rootCmd.AddCommand(cli.playlistCommand())
 
 	return cli
 }
@@ -245,6 +250,8 @@ func (c *CLI) libraryCommand() *cobra.Command {
 	cmd.AddCommand(c.libraryListCommand())
 	cmd.AddCommand(c.librarySearchCommand())
 	cmd.AddCommand(c.libraryRescanCommand())
+	cmd.AddCommand(c.libraryAddCommand())
+	cmd.AddCommand(c.libraryRemoveCommand())
 
 	return cmd
 }
@@ -305,12 +312,246 @@ func (c *CLI) libraryRescanCommand() *cobra.Command {
 		Short: "Rescan music directory",
 		Run: func(cmd *cobra.Command, args []string) {
 			log.Println("Rescanning music library...")
-			if err := c.library.ScanMusicLibrary(""); err != nil {
+			musicDir := c.library.GetMusicDir()
+			if err := c.library.ScanMusicLibrary(musicDir); err != nil {
 				log.Printf("Error rescanning library: %v\n", err)
 				return
 			}
 			songs := c.library.ListSongs()
 			log.Printf("Library rescanned. Found %d songs.\n", len(songs))
+		},
+	}
+}
+
+func (c *CLI) libraryAddCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <path>",
+		Short: "Add a song to library",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			path := args[0]
+			if err := c.library.AddSong(path); err != nil {
+				log.Printf("Error adding song: %v\n", err)
+				return
+			}
+			log.Printf("Added song from: %s\n", path)
+		},
+	}
+}
+
+func (c *CLI) libraryRemoveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <title>",
+		Short: "Remove a song from library",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			title := args[0]
+			if err := c.library.RemoveSong(title); err != nil {
+				log.Printf("Error removing song: %v\n", err)
+				return
+			}
+			log.Printf("Removed '%s' from library\n", title)
+		},
+	}
+}
+
+func (c *CLI) nowplayingCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "nowplaying",
+		Short: "Show current playing song",
+		Run: func(cmd *cobra.Command, args []string) {
+			song := c.player.GetCurrentSong()
+			if song == nil {
+				log.Println("No song playing")
+				return
+			}
+
+			pos := c.player.GetPosition()
+			dur := c.player.GetDuration()
+			vol := c.player.GetVolume()
+			playing := c.player.IsPlaying()
+			paused := c.player.IsPaused()
+
+			status := "Playing"
+			if paused {
+				status = "Paused"
+			} else if !playing {
+				status = "Stopped"
+			}
+
+			log.Printf("Now %s:\n", status)
+			log.Printf("  Title:  %s\n", song.Title)
+			log.Printf("  Artist: %s\n", song.Artist)
+			log.Printf("  Album:  %s\n", song.Album)
+			log.Printf("  Position: %d / %d seconds\n", pos, dur)
+			log.Printf("  Volume: %.0f%%\n", vol)
+		},
+	}
+}
+
+func (c *CLI) playlistCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "playlist",
+		Short: "Manage playlists",
+	}
+
+	cmd.AddCommand(c.playlistCreateCommand())
+	cmd.AddCommand(c.playlistDeleteCommand())
+	cmd.AddCommand(c.playlistListCommand())
+	cmd.AddCommand(c.playlistAddCommand())
+	cmd.AddCommand(c.playlistRemoveCommand())
+	cmd.AddCommand(c.playlistSongsCommand())
+	cmd.AddCommand(c.playlistPlayCommand())
+
+	return cmd
+}
+
+func (c *CLI) playlistCreateCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a new playlist",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			name := args[0]
+			if err := c.playlists.Create(name); err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			log.Printf("Playlist '%s' created\n", name)
+		},
+	}
+}
+
+func (c *CLI) playlistDeleteCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete a playlist",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			name := args[0]
+			if err := c.playlists.Delete(name); err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			log.Printf("Playlist '%s' deleted\n", name)
+		},
+	}
+}
+
+func (c *CLI) playlistListCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List all playlists",
+		Run: func(cmd *cobra.Command, args []string) {
+			names := c.playlists.List()
+			if len(names) == 0 {
+				log.Println("No playlists found")
+				return
+			}
+			log.Println("Playlists:")
+			for _, name := range names {
+				log.Printf("  - %s\n", name)
+			}
+		},
+	}
+}
+
+func (c *CLI) playlistAddCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <playlist> <song>",
+		Short: "Add a song to a playlist",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			playlistName := args[0]
+			songTitle := args[1]
+
+			song, err := c.library.FindSong(songTitle)
+			if err != nil {
+				log.Printf("Error: Song not found: %v\n", err)
+				return
+			}
+			if err := c.playlists.AddSong(playlistName, song); err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			log.Printf("Added '%s' to playlist '%s'\n", songTitle, playlistName)
+		},
+	}
+}
+
+func (c *CLI) playlistRemoveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <playlist> <index>",
+		Short: "Remove a song from playlist by index",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			playlistName := args[0]
+			index, err := strconv.Atoi(args[1])
+			if err != nil {
+				log.Printf("Error: Invalid index: %v\n", err)
+				return
+			}
+			if err := c.playlists.RemoveSong(playlistName, index-1); err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			log.Printf("Removed song at index %d from playlist '%s'\n", index, playlistName)
+		},
+	}
+}
+
+func (c *CLI) playlistSongsCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "songs <playlist>",
+		Short: "List songs in a playlist",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			playlistName := args[0]
+
+			songs, err := c.playlists.GetSongs(playlistName)
+			if err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			if len(songs) == 0 {
+				log.Printf("Playlist '%s' is empty\n", playlistName)
+				return
+			}
+
+			log.Printf("Songs in '%s':\n", playlistName)
+			for i, song := range songs {
+				log.Printf("  %d. %s - %s\n", i+1, song.Title, song.Artist)
+			}
+		},
+	}
+}
+
+func (c *CLI) playlistPlayCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "play <playlist>",
+		Short: "Play all songs in a playlist",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			playlistName := args[0]
+
+			songs, err := c.playlists.GetSongs(playlistName)
+			if err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			if len(songs) == 0 {
+				log.Printf("Playlist '%s' is empty\n", playlistName)
+				return
+			}
+
+			for _, song := range songs {
+				c.player.AddToQueue(song)
+			}
+			if err := c.player.PlayQueue(); err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			log.Printf("Playing playlist '%s' with %d songs\n", playlistName, len(songs))
 		},
 	}
 }
