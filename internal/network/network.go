@@ -27,8 +27,6 @@ import (
 	"github.com/p-society/raag/internal/metadata"
 )
 
-//TODO :- offline and online detection by the application
-
 type NetworkManager struct {
 	host          host.Host
 	cfg           *config.Config
@@ -57,9 +55,7 @@ func NewNetwork(cfg *config.Config, lib *library.Library, musicDir string) (*Net
 	}
 
 	var opts []libp2p.Option
-
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", cfg.ListenHost, cfg.ListenPort))
-
 	opts = append(opts, libp2p.ListenAddrs(sourceMultiAddr), libp2p.Identity(prvKey))
 	if cfg.Offline {
 		opts = append(opts, libp2p.NoTransports, libp2p.Transport(tcp.NewTCPTransport))

@@ -50,7 +50,7 @@ func (s *Storage) SavePlaylists(pm *playlist.Manager) error {
 		if err != nil {
 			continue
 		}
-		
+
 		playlists = append(playlists, PlaylistData{
 			Name:  name,
 			Songs: songs,

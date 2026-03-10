@@ -11,6 +11,7 @@ import (
 	"github.com/p-society/raag/internal/network"
 	"github.com/p-society/raag/internal/player"
 	"github.com/p-society/raag/internal/playlist"
+	"github.com/p-society/raag/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -19,15 +20,17 @@ type CLI struct {
 	player    *player.Player
 	network   *network.NetworkManager
 	playlists *playlist.Manager
+	storage   *storage.Storage
 	rootCmd   *cobra.Command
 }
 
-func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager, pm *playlist.Manager) *CLI {
+func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager, pm *playlist.Manager, store *storage.Storage) *CLI {
 	cli := &CLI{
 		library:   lib,
 		player:    p,
 		network:   net,
 		playlists: pm,
+		storage:   store,
 	}
 	cli.rootCmd = &cobra.Command{
 		Use:   "raag",
@@ -53,6 +56,7 @@ func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager,
 	cli.rootCmd.AddCommand(cli.nowplayingCommand())
 	cli.rootCmd.AddCommand(cli.playlistCommand())
 	cli.rootCmd.AddCommand(cli.peersCommand())
+	cli.rootCmd.AddCommand(cli.configCommand())
 
 	return cli
 }
@@ -508,7 +512,6 @@ func (c *CLI) playlistSongsCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			playlistName := args[0]
-
 			songs, err := c.playlists.GetSongs(playlistName)
 			if err != nil {
 				log.Printf("Error: %v\n", err)
@@ -534,7 +537,6 @@ func (c *CLI) playlistPlayCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			playlistName := args[0]
-
 			songs, err := c.playlists.GetSongs(playlistName)
 			if err != nil {
 				log.Printf("Error: %v\n", err)
@@ -658,4 +660,150 @@ func (c *CLI) peersDisconnectCommand() *cobra.Command {
 
 func (c *CLI) Start() error {
 	return c.rootCmd.Execute()
+}
+
+func (c *CLI) configCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Manage configuration",
+	}
+
+	cmd.AddCommand(c.configShowCommand())
+	cmd.AddCommand(c.configSetCommand())
+	cmd.AddCommand(c.configResetCommand())
+
+	return cmd
+}
+
+func (c *CLI) configShowCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Show current configuration",
+		Run: func(cmd *cobra.Command, args []string) {
+			if c.storage == nil {
+				log.Println("Error: Storage not initialized")
+				return
+			}
+
+			cfg, err := c.storage.LoadConfig()
+			if err != nil {
+				log.Printf("Error loading config: %v\n", err)
+				return
+			}
+
+			log.Println("Current configuration:")
+			log.Printf("  music_dir:   %s\n", cfg.MusicDir)
+			log.Printf("  volume:      %d\n", cfg.Volume)
+			log.Printf("  tui_enabled:%v\n", cfg.TUIEnabled)
+			log.Printf("  wifi_mode:  %v\n", cfg.WifiMode)
+			log.Printf("  offline:    %v\n", cfg.Offline)
+			log.Printf("  rendezvous: %s\n", cfg.Rendezvous)
+			log.Printf("  host:       %s\n", cfg.Host)
+			log.Printf("  port:       %d\n", cfg.Port)
+			log.Printf("  log_level:  %s\n", cfg.LogLevel)
+		},
+	}
+}
+
+func (c *CLI) configSetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Set a configuration value",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if c.storage == nil {
+				log.Println("Error: Storage not initialized")
+				return
+			}
+
+			key := args[0]
+			value := args[1]
+
+			cfg, err := c.storage.LoadConfig()
+			if err != nil {
+				log.Printf("Error loading config: %v\n", err)
+				return
+			}
+
+			switch key {
+			case "musicdir":
+				cfg.MusicDir = value
+			case "volume":
+				v, err := strconv.Atoi(value)
+				if err != nil || v < 0 || v > 100 {
+					log.Println("Error: Volume must be 0-100")
+					return
+				}
+				cfg.Volume = v
+			case "tui":
+				v, err := strconv.ParseBool(value)
+				if err != nil {
+					log.Println("Error: tui must be true or false")
+					return
+				}
+				cfg.TUIEnabled = v
+			case "wifi":
+				v, err := strconv.ParseBool(value)
+				if err != nil {
+					log.Println("Error: wifi must be true or false")
+					return
+				}
+				cfg.WifiMode = v
+			case "offline":
+				v, err := strconv.ParseBool(value)
+				if err != nil {
+					log.Println("Error: offline must be true or false")
+					return
+				}
+				cfg.Offline = v
+			case "rendezvous":
+				cfg.Rendezvous = value
+			case "host":
+				cfg.Host = value
+			case "port":
+				v, err := strconv.Atoi(value)
+				if err != nil || v < 0 || v > 65535 {
+					log.Println("Error: Port must be 0-65535")
+					return
+				}
+				cfg.Port = v
+			case "loglevel":
+				if value != "debug" && value != "info" && value != "warn" && value != "error" {
+					log.Println("Error: log_level must be debug, info, warn, or error")
+					return
+				}
+				cfg.LogLevel = value
+			default:
+				log.Printf("Error: Unknown key '%s'\n", key)
+				log.Println("Available keys: musicdir, volume, tui, wifi, offline, rendezvous, host, port, loglevel")
+				return
+			}
+
+			if err := c.storage.SaveConfig(cfg); err != nil {
+				log.Printf("Error saving config: %v\n", err)
+				return
+			}
+			log.Printf("Config updated: %s = %s\n", key, value)
+		},
+	}
+}
+
+func (c *CLI) configResetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reset",
+		Short: "Reset configuration to defaults",
+		Run: func(cmd *cobra.Command, args []string) {
+			if c.storage == nil {
+				log.Println("Error: Storage not initialized")
+				return
+			}
+
+			cfg := storage.DefaultConfig()
+			if err := c.storage.SaveConfig(cfg); err != nil {
+				log.Printf("Error saving config: %v\n", err)
+				return
+			}
+			log.Println("Configuration reset to defaults")
+		},
+	}
 }
