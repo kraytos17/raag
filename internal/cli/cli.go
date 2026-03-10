@@ -36,7 +36,7 @@ func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager,
 		Use:   "raag",
 		Short: "Raag CLI for decentralized music streaming",
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Help()
+			// No default action - just return
 		},
 	}
 
