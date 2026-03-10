@@ -20,6 +20,9 @@ func NewLibrary(musicDir string) (*Library, error) {
 		Songs: make(map[string]metadata.Song),
 	}
 
+	if err := os.MkdirAll(musicDir, 0755); err != nil {
+		return nil, fmt.Errorf("error creating music directory: %w", err)
+	}
 	if err := lib.ScanMusicLibrary(musicDir); err != nil {
 		return nil, fmt.Errorf("error scanning music library: %w", err)
 	}
@@ -31,6 +34,17 @@ func (l *Library) ScanMusicLibrary(musicDir string) error {
 	defer l.mutex.Unlock()
 
 	l.Songs = make(map[string]metadata.Song)
+	info, err := os.Stat(musicDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("not a directory: %s", musicDir)
+	}
+
 	return filepath.Walk(musicDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err

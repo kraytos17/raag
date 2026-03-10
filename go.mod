@@ -1,6 +1,6 @@
 module github.com/p-society/raag
 
-go 1.22.6
+go 1.26.0
 
 require (
 	github.com/faiface/beep v1.1.0

@@ -23,6 +23,6 @@ go.work
 #Other files
 
 #o/p binary
-raag
+bin/
 #Currently musicDir flag is hardcoded, hence this needs to be ignored
 music/
