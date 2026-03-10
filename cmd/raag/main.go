@@ -32,7 +32,7 @@ func main() {
 		log.Fatalf("Error initializing player: %v", err)
 	}
 
-	net, err := network.NewNetwork(cfg, lib)
+	net, err := network.NewNetwork(cfg, lib, cfg.MusicDir)
 	if err != nil {
 		log.Fatalf("Error initializing network: %v", err)
 	}

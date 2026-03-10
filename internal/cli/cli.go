@@ -52,6 +52,7 @@ func NewCLI(lib *library.Library, p *player.Player, net *network.NetworkManager,
 	cli.rootCmd.AddCommand(cli.libraryCommand())
 	cli.rootCmd.AddCommand(cli.nowplayingCommand())
 	cli.rootCmd.AddCommand(cli.playlistCommand())
+	cli.rootCmd.AddCommand(cli.peersCommand())
 
 	return cli
 }
@@ -552,6 +553,105 @@ func (c *CLI) playlistPlayCommand() *cobra.Command {
 				return
 			}
 			log.Printf("Playing playlist '%s' with %d songs\n", playlistName, len(songs))
+		},
+	}
+}
+
+func (c *CLI) peersCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "peers",
+		Short: "Manage peers",
+	}
+
+	cmd.AddCommand(c.peersListCommand())
+	cmd.AddCommand(c.peersInfoCommand())
+	cmd.AddCommand(c.peersConnectCommand())
+	cmd.AddCommand(c.peersDisconnectCommand())
+
+	return cmd
+}
+
+func (c *CLI) peersListCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List connected peers",
+		Run: func(cmd *cobra.Command, args []string) {
+			peers := c.network.GetPeers()
+			if len(peers) == 0 {
+				log.Println("No peers connected")
+				return
+			}
+
+			log.Printf("Connected peers (%d):\n", len(peers))
+			for _, p := range peers {
+				log.Printf("  - %s\n", p.ID)
+			}
+		},
+	}
+}
+
+func (c *CLI) peersInfoCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "info",
+		Short: "Show own peer info",
+		Run: func(cmd *cobra.Command, args []string) {
+			peerID := c.network.GetPeerID()
+			multiaddr := c.network.GetMultiaddr()
+			peerCount := c.network.GetPeerCount()
+			online := c.network.IsOnline()
+
+			status := "Offline"
+			if online {
+				status = "Online"
+			}
+
+			log.Printf("Your Peer ID: %s\n", peerID)
+			log.Printf("Your Multiaddr: %s\n", multiaddr)
+			log.Printf("Network Status: %s\n", status)
+			log.Printf("Connected Peers: %d\n", peerCount)
+		},
+	}
+}
+
+func (c *CLI) peersConnectCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "connect <multiaddr>",
+		Short: "Connect to a peer by multiaddr",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			addr := args[0]
+
+			addrInfo, err := peer.AddrInfoFromString(addr)
+			if err != nil {
+				log.Printf("Error: Invalid multiaddr: %v\n", err)
+				return
+			}
+
+			if err := c.network.Connect(cmd.Context(), *addrInfo); err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			log.Printf("Connected to peer: %s\n", addrInfo.ID)
+		},
+	}
+}
+
+func (c *CLI) peersDisconnectCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "disconnect <peerID>",
+		Short: "Disconnect from a peer",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			peerID, err := peer.Decode(args[0])
+			if err != nil {
+				log.Printf("Error: Invalid peer ID: %v\n", err)
+				return
+			}
+			if err := c.network.Disconnect(peerID); err != nil {
+				log.Printf("Error: %v\n", err)
+				return
+			}
+			log.Printf("Disconnected from peer: %s\n", peerID)
 		},
 	}
 }
