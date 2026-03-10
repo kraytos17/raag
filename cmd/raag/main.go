@@ -14,6 +14,7 @@ import (
 	"github.com/p-society/raag/internal/player"
 	"github.com/p-society/raag/internal/playlist"
 	"github.com/p-society/raag/internal/storage"
+	"github.com/p-society/raag/internal/tui"
 )
 
 func main() {
@@ -45,6 +46,18 @@ func main() {
 		if err := store.LoadPlaylists(pm); err != nil {
 			log.Printf("Warning: Could not load playlists: %v", err)
 		}
+	}
+
+	if cfg.TUI || len(os.Args) == 1 {
+		if err := tui.Start(lib, p, net, pm); err != nil {
+			log.Printf("Error in TUI: %v", err)
+		}
+		if store != nil {
+			if err := store.SavePlaylists(pm); err != nil {
+				log.Printf("Warning: Could not save playlists: %v", err)
+			}
+		}
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
