@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "-h" || os.Args[1] == "--help") {
+	if showHelpRequested() {
 		showHelp()
 		return
 	}
@@ -139,6 +139,15 @@ func saveAll(store *storage.Storage, p *player.Player, pm *playlist.Manager) {
 	if err := store.SavePlaylists(pm); err != nil {
 		log.Printf("Warning: Could not save playlists: %v", err)
 	}
+}
+
+func showHelpRequested() bool {
+	for _, arg := range os.Args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
 }
 
 func showHelp() {
