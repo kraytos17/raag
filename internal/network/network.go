@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,11 +30,16 @@ import (
 //TODO :- offline and online detection by the application
 
 type NetworkManager struct {
-	host      host.Host
-	cfg       *config.Config
-	library   *library.Library
-	peers     map[peer.ID]struct{}
-	peersLock sync.RWMutex
+	host          host.Host
+	cfg           *config.Config
+	library       *library.Library
+	musicDir      string
+	peers         map[peer.ID]struct{}
+	peersLock     sync.RWMutex
+	Online        bool
+	OnPeerJoin    func(peer.ID)
+	OnPeerLeave   func(peer.ID)
+	OnStateChange func(bool)
 }
 
 type discoveryNotifee struct {
@@ -44,7 +50,7 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	n.PeerChan <- pi
 }
 
-func NewNetwork(cfg *config.Config, lib *library.Library) (*NetworkManager, error) {
+func NewNetwork(cfg *config.Config, lib *library.Library, musicDir string) (*NetworkManager, error) {
 	prvKey, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
@@ -69,10 +75,11 @@ func NewNetwork(cfg *config.Config, lib *library.Library) (*NetworkManager, erro
 	}
 
 	nm := &NetworkManager{
-		host:    host,
-		cfg:     cfg,
-		library: lib,
-		peers:   make(map[peer.ID]struct{}),
+		host:     host,
+		cfg:      cfg,
+		library:  lib,
+		musicDir: musicDir,
+		peers:    make(map[peer.ID]struct{}),
 	}
 
 	host.Network().Notify(&network.NotifyBundle{
@@ -91,7 +98,6 @@ func NewConnectionManager(low, high int, gracePeriod time.Duration) *connmgr.Bas
 
 func (n *NetworkManager) Start(ctx context.Context) error {
 	n.host.SetStreamHandler(protocol.ID(n.cfg.ProtocolID), n.handleStream)
-
 	if n.cfg.Offline {
 		peerChan := n.initMDNS(n.host, n.cfg.RendezvousString)
 		go n.discoverPeers(ctx, peerChan)
@@ -100,7 +106,11 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 		go n.discoverPeers(ctx, peerChan)
 	}
 
-	//TODO :- if wifi enabled, should we use kademlia along with mDNS for peer discovery?
+	// TODO: Kademlia DHT for wider peer discovery beyond mDNS
+	// - Add github.com/libp2p/go-libp2p-kad-dht dependency
+	// - Enable DHT in wifi mode for internet-wide discovery
+	// - Requires bootstrap nodes for non-local networks
+	// - See: https://github.com/libp2p/go-libp2p-kad-dht
 
 	log.Printf("Your Raag Node Multiaddress Is: /ip4/%s/tcp/%v/p2p/%s\n", n.cfg.ListenHost, n.cfg.ListenPort, n.host.ID())
 
@@ -128,9 +138,82 @@ func (n *NetworkManager) handlePeer(ctx context.Context, peerInfo peer.AddrInfo)
 
 	n.peersLock.Lock()
 	n.peers[peerInfo.ID] = struct{}{}
+	peerCount := len(n.peers)
 	n.peersLock.Unlock()
 
 	log.Printf("Connected to peer: %s\n", peerInfo.ID)
+	if n.OnPeerJoin != nil {
+		n.OnPeerJoin(peerInfo.ID)
+	}
+	if !n.Online && peerCount > 0 {
+		n.Online = true
+		log.Println("Network: Online - peer connected")
+		if n.OnStateChange != nil {
+			n.OnStateChange(true)
+		}
+	}
+}
+
+func (n *NetworkManager) GetPeers() []peer.AddrInfo {
+	n.peersLock.RLock()
+	defer n.peersLock.RUnlock()
+
+	peers := make([]peer.AddrInfo, 0)
+	for peerID := range n.peers {
+		if conns := n.host.Network().ConnsToPeer(peerID); len(conns) > 0 {
+			peers = append(peers, peer.AddrInfo{
+				ID:    peerID,
+				Addrs: []multiaddr.Multiaddr{conns[0].RemoteMultiaddr()},
+			})
+		}
+	}
+	return peers
+}
+
+func (n *NetworkManager) Connect(ctx context.Context, addrInfo peer.AddrInfo) error {
+	if err := n.host.Connect(ctx, addrInfo); err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+
+	n.peersLock.Lock()
+	n.peers[addrInfo.ID] = struct{}{}
+	n.peersLock.Unlock()
+
+	log.Printf("Connected to peer: %s\n", addrInfo.ID)
+	return nil
+}
+
+func (n *NetworkManager) Disconnect(peerID peer.ID) error {
+	if err := n.host.Network().ClosePeer(peerID); err != nil {
+		return fmt.Errorf("failed to disconnect: %w", err)
+	}
+
+	n.peersLock.Lock()
+	delete(n.peers, peerID)
+	n.peersLock.Unlock()
+
+	log.Printf("Disconnected from peer: %s\n", peerID)
+	return nil
+}
+
+func (n *NetworkManager) GetPeerID() peer.ID {
+	return n.host.ID()
+}
+
+func (n *NetworkManager) GetMultiaddr() string {
+	return fmt.Sprintf("/ip4/%s/tcp/%v/p2p/%s", n.cfg.ListenHost, n.cfg.ListenPort, n.host.ID())
+}
+
+func (n *NetworkManager) GetPeerCount() int {
+	n.peersLock.RLock()
+	defer n.peersLock.RUnlock()
+	return len(n.peers)
+}
+
+func (n *NetworkManager) IsOnline() bool {
+	n.peersLock.RLock()
+	defer n.peersLock.RUnlock()
+	return len(n.peers) > 0
 }
 
 func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) error {
@@ -212,10 +295,24 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 
 	title := songInfo[0]
 	peerId := peerID.String()
-	fileName := fmt.Sprintf("%s_%s.mp3", peerId, title)
-	log.Printf("Preparing to save file as: %s\n", fileName)
 
-	file, err := os.Create(fileName)
+	safeTitle := strings.ReplaceAll(title, "/", "_")
+	safeTitle = strings.ReplaceAll(safeTitle, "\\", "_")
+	fileName := fmt.Sprintf("%s_%s.mp3", peerId, safeTitle)
+
+	saveDir := n.musicDir
+	if saveDir == "" {
+		saveDir = "."
+	}
+	if err := os.MkdirAll(saveDir, 0755); err != nil {
+		log.Printf("Error creating directory: %s\n", err)
+		return
+	}
+
+	filePath := filepath.Join(saveDir, fileName)
+	log.Printf("Preparing to save file as: %s\n", filePath)
+
+	file, err := os.Create(filePath)
 	if err != nil {
 		log.Printf("Error creating file: %s\n", err)
 		return
@@ -228,9 +325,9 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 		log.Printf("Error saving song: %s\n", err)
 		return
 	}
-	log.Printf("Song data saved. Bytes written: %d\n", bytesWritten)
 
-	log.Printf("Successfully received and saved '%s' from peer '%s' as '%s'\n", title, peerID, fileName)
+	log.Printf("Song data saved. Bytes written: %d\n", bytesWritten)
+	log.Printf("Successfully received and saved '%s' from peer '%s' as '%s'\n", title, peerID, filePath)
 }
 
 func (n *NetworkManager) initMDNS(peerhost host.Host, rendezvous string) <-chan peer.AddrInfo {
@@ -253,5 +350,16 @@ func (n *NetworkManager) handlePeerDisconnect(peerId peer.ID, addr multiaddr.Mul
 	if _, ok := n.peers[peerId]; ok {
 		delete(n.peers, peerId)
 		log.Printf("Peer %s has disconnected: %s", peerId, addr.String())
+
+		if n.OnPeerLeave != nil {
+			n.OnPeerLeave(peerId)
+		}
+		if len(n.peers) == 0 {
+			n.Online = false
+			log.Println("Network: Offline - no peers connected")
+			if n.OnStateChange != nil {
+				n.OnStateChange(false)
+			}
+		}
 	}
 }
