@@ -13,6 +13,7 @@ type Config struct {
 	MusicDir         string
 	Offline          bool
 	Wifi             bool
+	TUI              bool
 }
 
 func ParseFlags() (*Config, error) {
@@ -24,6 +25,7 @@ func ParseFlags() (*Config, error) {
 	flag.StringVar(&c.MusicDir, "musicdir", "./music", "Directory containing music files")
 	flag.BoolVar(&c.Offline, "offline", true, "Run in offline mode")
 	flag.BoolVar(&c.Wifi, "wifi", false, "Enable Wi-Fi connectivity")
+	flag.BoolVar(&c.TUI, "tui", false, "Start in TUI mode")
 	flag.Parse()
 
 	if c.ListenPort < 0 || c.ListenPort > 65535 {
