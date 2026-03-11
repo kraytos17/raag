@@ -7,6 +7,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+	appconfig "github.com/p-society/raag/internal/config"
 )
 
 type PeerPersistence struct {
@@ -14,8 +15,10 @@ type PeerPersistence struct {
 }
 
 func NewPeerPersistence() *PeerPersistence {
-	configDir, _ := os.UserConfigDir()
-	peersFile := filepath.Join(configDir, "raag", "peers.json")
+	peersFile, err := appconfig.PeerPersistencePath()
+	if err != nil {
+		peersFile = filepath.Join(os.TempDir(), "raag-peers.json")
+	}
 	return &PeerPersistence{peersFile: peersFile}
 }
 
@@ -49,14 +52,7 @@ func (p *PeerPersistence) Load() ([]peer.AddrInfo, error) {
 }
 
 func (p *PeerPersistence) Save(peers []peer.AddrInfo) error {
-	var multiaddrs []string
-	for _, peerInfo := range peers {
-		for _, addr := range peerInfo.Addrs {
-			fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + peerInfo.ID.String()))
-			multiaddrs = append(multiaddrs, fullAddr.String())
-		}
-	}
-
+	multiaddrs := AddrInfoStrings(peers)
 	data, err := json.MarshalIndent(multiaddrs, "", "  ")
 	if err != nil {
 		return err

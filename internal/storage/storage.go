@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	appconfig "github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
 	"github.com/p-society/raag/internal/playlist"
@@ -25,7 +26,7 @@ type StorageData struct {
 }
 
 func New() (*Storage, error) {
-	configDir, err := getConfigDir()
+	configDir, err := appconfig.Dir()
 	if err != nil {
 		return nil, err
 	}
@@ -33,14 +34,6 @@ func New() (*Storage, error) {
 		return nil, fmt.Errorf("error creating config directory: %w", err)
 	}
 	return &Storage{configDir: configDir}, nil
-}
-
-func getConfigDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config", "raag"), nil
 }
 
 func (s *Storage) SavePlaylists(pm *playlist.Manager) error {

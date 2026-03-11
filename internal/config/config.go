@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -35,16 +34,40 @@ type Config struct {
 	LogLevel string
 }
 
+func DefaultConfig() Config {
+	return Config{
+		Host:           "127.0.0.1",
+		Port:           0,
+		FixedPort:      0,
+		Rendezvous:     "raag-music-share",
+		ProtocolID:     "/raag/1.0.0",
+		TrackerURL:     "",
+		DHTEnabled:     true,
+		MaxPeers:       100,
+		BootstrapPeers: []string{},
+		MusicDir:       "./music",
+		Volume:         50,
+		TUI:            true,
+		Wifi:           false,
+		Offline:        true,
+		LogLevel:       "info",
+	}
+}
+
 // InitViper initializes Viper with defaults and binds flags
 func InitViper(cmd *cobra.Command) (*viper.Viper, error) {
 	v := viper.New()
 
-	configDir, err := os.UserConfigDir()
+	configDir, err := Dir()
 	if err != nil {
 		return nil, fmt.Errorf("could not get user config dir: %w", err)
 	}
-	configPath := filepath.Join(configDir, "raag")
-	configFile := filepath.Join(configPath, "config.yaml")
+
+	configPath := configDir
+	configFile, err := FilePath()
+	if err != nil {
+		return nil, fmt.Errorf("could not determine config file: %w", err)
+	}
 	if err := os.MkdirAll(configPath, 0o755); err != nil {
 		return nil, fmt.Errorf("could not create config dir: %w", err)
 	}
@@ -70,28 +93,22 @@ func InitViper(cmd *cobra.Command) (*viper.Viper, error) {
 }
 
 func setDefaults(v *viper.Viper) {
-	// Network defaults
-	v.SetDefault("network.host", "127.0.0.1")
-	v.SetDefault("network.port", 0)
-	v.SetDefault("network.fixed_port", 0)
-	v.SetDefault("network.rendezvous", "raag-music-share")
-	v.SetDefault("network.protocol_id", "/raag/1.0.0")
-
-	// Discovery defaults
-	v.SetDefault("discovery.tracker_url", "")
-	v.SetDefault("discovery.dht_enabled", true)
-	v.SetDefault("discovery.max_peers", 100)
-	v.SetDefault("discovery.bootstrap_peers", []string{})
-
-	// Playback defaults
-	v.SetDefault("playback.music_dir", "./music")
-	v.SetDefault("playback.volume", 50)
-
-	// UI defaults
-	v.SetDefault("ui.tui_enabled", true)
-	v.SetDefault("ui.wifi_mode", false)
-	v.SetDefault("ui.offline", true)
-	v.SetDefault("ui.log_level", "info")
+	defaults := DefaultConfig()
+	v.SetDefault("network.host", defaults.Host)
+	v.SetDefault("network.port", defaults.Port)
+	v.SetDefault("network.fixed_port", defaults.FixedPort)
+	v.SetDefault("network.rendezvous", defaults.Rendezvous)
+	v.SetDefault("network.protocol_id", defaults.ProtocolID)
+	v.SetDefault("discovery.tracker_url", defaults.TrackerURL)
+	v.SetDefault("discovery.dht_enabled", defaults.DHTEnabled)
+	v.SetDefault("discovery.max_peers", defaults.MaxPeers)
+	v.SetDefault("discovery.bootstrap_peers", defaults.BootstrapPeers)
+	v.SetDefault("playback.music_dir", defaults.MusicDir)
+	v.SetDefault("playback.volume", defaults.Volume)
+	v.SetDefault("ui.tui_enabled", defaults.TUI)
+	v.SetDefault("ui.wifi_mode", defaults.Wifi)
+	v.SetDefault("ui.offline", defaults.Offline)
+	v.SetDefault("ui.log_level", defaults.LogLevel)
 }
 
 func bindFlags(v *viper.Viper, cmd *cobra.Command) {

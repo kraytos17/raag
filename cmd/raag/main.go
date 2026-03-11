@@ -36,25 +36,17 @@ func main() {
 		Use:   "raag",
 		Short: "Raag - Decentralized Music Streaming",
 		Run: func(cmd *cobra.Command, args []string) {
-			// No command provided - start network by default
 			if len(args) == 0 {
-				tuiEnabled := cmd.Flags().Changed("tui")
-				tuiValue, _ := cmd.Flags().GetBool("tui")
-				if tuiEnabled && tuiValue {
-					if err := initializeApp(cmd); err != nil {
-						logger.Errorf("Error initializing error=%v", err)
-						return
-					}
-					startTUI()
-				} else {
-					// Default: initialize and connect (keep network running)
-					if err := initializeApp(cmd); err != nil {
-						logger.Errorf("Error initializing error=%v", err)
-						return
-					}
-					logger.Info("Starting peer discovery...")
-					<-ctx.Done()
+				if err := initializeApp(cmd); err != nil {
+					logger.Errorf("Error initializing error=%v", err)
+					return
 				}
+				if shouldStartTUI(cmd, cfg, false, false) {
+					startTUI()
+					return
+				}
+				logger.Info("Starting peer discovery...")
+				<-ctx.Done()
 			}
 		},
 	}
@@ -99,53 +91,19 @@ func main() {
 }
 
 func initializeApp(cmd *cobra.Command) error {
-	var err error
-
-	v, err = config.InitViper(cmd)
+	rt, err := bootstrapRuntime(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to initialize config: %w", err)
+		return fmt.Errorf("bootstrap runtime: %w", err)
 	}
 
-	cfg, err = config.LoadConfig(v)
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-	if cmd.Root().Flags().Changed("wifi") {
-		cfg.Offline = false
-	}
-
-	store, err = storage.New()
-	if err != nil {
-		logger.Warnf("Could not initialize storage error=%v", err)
-	}
-
-	lib, err = library.NewLibrary(cfg.MusicDir)
-	if err != nil {
-		return err
-	}
-
-	p, err = player.NewPlayer()
-	if err != nil {
-		return err
-	}
-
-	p.SetVolume(float64(cfg.Volume))
-	netMgr, err = network.NewNetwork(cfg, v, lib, cfg.MusicDir)
-	if err != nil {
-		return err
-	}
-
-	pm = playlist.NewManager()
-	if store != nil {
-		if err := store.LoadPlaylists(pm); err != nil {
-			logger.Warnf("Could not load playlists error=%v", err)
-		}
-	}
-
+	applyRuntime(rt)
 	ctx, cancelCtx = context.WithCancel(context.Background())
-	// Start network in background
 	go func() {
 		if err := netMgr.Start(ctx); err != nil {
+			if err == context.Canceled {
+				logger.Info("Network stopped")
+				return
+			}
 			logger.Errorf("Network error error=%v", err)
 		}
 	}()

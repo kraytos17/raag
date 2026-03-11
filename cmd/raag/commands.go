@@ -898,7 +898,7 @@ func trySocketAndPrintStatus() bool {
 	logger.Info("daemon status")
 	logger.Infof("running value=%v", data["running"])
 	logger.Infof("peer count count=%v", data["peer_count"])
-	logger.Infof("network online status=%v", data["connected"])
+	logger.Infof("network online status=%v", data["network_online"])
 	logger.Infof("uptime value=%v", data["uptime"])
 	logger.Infof("version value=%v", data["version"])
 	return true
@@ -923,16 +923,17 @@ func configShowCommand() *cobra.Command {
 		Short: "Show current configuration",
 		Run: func(cmd *cobra.Command, args []string) {
 			if cfg == nil {
+				defaults := config.DefaultConfig()
 				logger.Info("current configuration (default)")
-				logger.Infof("music_dir value=%s", "./music")
-				logger.Infof("volume value=%d", 50)
-				logger.Infof("tui_enabled value=%v", false)
-				logger.Infof("wifi_mode value=%v", false)
-				logger.Infof("offline value=%v", true)
-				logger.Infof("rendezvous value=%s", "raag-music-share")
-				logger.Infof("host value=%s", "127.0.0.1")
-				logger.Infof("port value=%d", 0)
-				logger.Infof("log_level value=%s", "info")
+				logger.Infof("music_dir value=%s", defaults.MusicDir)
+				logger.Infof("volume value=%d", defaults.Volume)
+				logger.Infof("tui_enabled value=%v", defaults.TUI)
+				logger.Infof("wifi_mode value=%v", defaults.Wifi)
+				logger.Infof("offline value=%v", defaults.Offline)
+				logger.Infof("rendezvous value=%s", defaults.Rendezvous)
+				logger.Infof("host value=%s", defaults.Host)
+				logger.Infof("port value=%d", defaults.Port)
+				logger.Infof("log_level value=%s", defaults.LogLevel)
 				return
 			}
 
@@ -956,6 +957,16 @@ func configSetCommand() *cobra.Command {
 		Short: "Set a configuration value",
 		Args:  cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
+			if cfg == nil || v == nil {
+				loadedV, loadedCfg, err := loadConfigOnly(cmd)
+				if err != nil {
+					logger.Errorf("failed to initialize config error=%v", err)
+					return
+				}
+				v = loadedV
+				cfg = loadedCfg
+			}
+
 			key := args[0]
 			value := args[1]
 			switch key {
@@ -1016,6 +1027,9 @@ func configSetCommand() *cobra.Command {
 				logger.Errorf("failed to save config error=%v", err)
 				return
 			}
+			if key == "loglevel" {
+				logger.SetLevel(cfg.LogLevel)
+			}
 			logger.Infof("config updated key=%s value=%s", key, value)
 		},
 	}
@@ -1026,20 +1040,39 @@ func configResetCommand() *cobra.Command {
 		Use:   "reset",
 		Short: "Reset configuration to defaults",
 		Run: func(cmd *cobra.Command, args []string) {
-			cfg.MusicDir = "./music"
-			cfg.Volume = 50
-			cfg.TUI = true
-			cfg.Wifi = false
-			cfg.Offline = true
-			cfg.Rendezvous = "raag-music-share"
-			cfg.Host = "127.0.0.1"
-			cfg.Port = 0
-			cfg.LogLevel = "info"
+			if cfg == nil || v == nil {
+				loadedV, loadedCfg, err := loadConfigOnly(cmd)
+				if err != nil {
+					logger.Errorf("failed to initialize config error=%v", err)
+					return
+				}
+				v = loadedV
+				cfg = loadedCfg
+			}
+
+			defaults := config.DefaultConfig()
+			cfg.MusicDir = defaults.MusicDir
+			cfg.Volume = defaults.Volume
+			cfg.TUI = defaults.TUI
+			cfg.Wifi = defaults.Wifi
+			cfg.Offline = defaults.Offline
+			cfg.Rendezvous = defaults.Rendezvous
+			cfg.Host = defaults.Host
+			cfg.Port = defaults.Port
+			cfg.FixedPort = defaults.FixedPort
+			cfg.ProtocolID = defaults.ProtocolID
+			cfg.TrackerURL = defaults.TrackerURL
+			cfg.DHTEnabled = defaults.DHTEnabled
+			cfg.MaxPeers = defaults.MaxPeers
+			cfg.BootstrapPeers = defaults.BootstrapPeers
+			cfg.LogLevel = defaults.LogLevel
 
 			if err := config.SaveConfig(v, cfg); err != nil {
 				logger.Errorf("failed to save config error=%v", err)
 				return
 			}
+
+			logger.SetLevel(cfg.LogLevel)
 			logger.Info("configuration reset to defaults")
 		},
 	}

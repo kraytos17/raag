@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	appconfig "github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/socket"
 )
 
@@ -17,13 +18,10 @@ type SocketClient struct {
 }
 
 func NewSocketClient() *SocketClient {
-	home, err := os.UserHomeDir()
+	socketPath, err := appconfig.SocketPath()
 	if err != nil {
-		home = os.TempDir()
+		return &SocketClient{socketPath: filepath.Join(os.TempDir(), DefaultSocketName)}
 	}
-
-	configDir := filepath.Join(home, ".config", "raag")
-	socketPath := filepath.Join(configDir, DefaultSocketName)
 	return &SocketClient{socketPath: socketPath}
 }
 

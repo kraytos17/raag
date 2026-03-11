@@ -2,6 +2,7 @@ package library
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,11 +48,11 @@ func (l *Library) ScanMusicLibrary(musicDir string) error {
 		return fmt.Errorf("not a directory: %s", musicDir)
 	}
 
-	return filepath.Walk(musicDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(musicDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && isAudioFile(info.Name()) {
+		if !d.IsDir() && isAudioFile(d.Name()) {
 			song, err := metadata.ExtractMetadata(path)
 			if err != nil {
 				return fmt.Errorf("error extracting metadata from %s: %w", path, err)
