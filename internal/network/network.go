@@ -112,7 +112,6 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 
 	<-ctx.Done()
 	return ctx.Err()
-
 }
 
 func (n *NetworkManager) discoverPeers(ctx context.Context, peerChan <-chan peer.AddrInfo) {
@@ -290,17 +289,17 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	}
 
 	title := songInfo[0]
-	peerId := peerID.String()
+	pID := peerID.String()
 
 	safeTitle := strings.ReplaceAll(title, "/", "_")
 	safeTitle = strings.ReplaceAll(safeTitle, "\\", "_")
-	fileName := fmt.Sprintf("%s_%s.mp3", peerId, safeTitle)
+	fileName := fmt.Sprintf("%s_%s.mp3", pID, safeTitle)
 
 	saveDir := n.musicDir
 	if saveDir == "" {
 		saveDir = "."
 	}
-	if err := os.MkdirAll(saveDir, 0755); err != nil {
+	if err := os.MkdirAll(saveDir, 0o755); err != nil {
 		log.Printf("Error creating directory: %s\n", err)
 		return
 	}
@@ -335,20 +334,18 @@ func (n *NetworkManager) initMDNS(peerhost host.Host, rendezvous string) <-chan 
 	if err := service.Start(); err != nil {
 		panic(err)
 	}
-
 	return peerChan
 }
 
-func (n *NetworkManager) handlePeerDisconnect(peerId peer.ID, addr multiaddr.Multiaddr) {
+func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Multiaddr) {
 	n.peersLock.Lock()
 	defer n.peersLock.Unlock()
 
-	if _, ok := n.peers[peerId]; ok {
-		delete(n.peers, peerId)
-		log.Printf("Peer %s has disconnected: %s", peerId, addr.String())
-
+	if _, ok := n.peers[peerID]; ok {
+		delete(n.peers, peerID)
+		log.Printf("Peer %s has disconnected: %s", peerID, addr.String())
 		if n.OnPeerLeave != nil {
-			n.OnPeerLeave(peerId)
+			n.OnPeerLeave(peerID)
 		}
 		if len(n.peers) == 0 {
 			n.Online = false

@@ -22,7 +22,7 @@ func NewLibrary(musicDir string) (*Library, error) {
 		musicDir: musicDir,
 	}
 
-	if err := os.MkdirAll(musicDir, 0755); err != nil {
+	if err := os.MkdirAll(musicDir, 0o755); err != nil {
 		return nil, fmt.Errorf("error creating music directory: %w", err)
 	}
 	if err := lib.ScanMusicLibrary(musicDir); err != nil {

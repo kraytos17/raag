@@ -194,44 +194,17 @@ func (m *Model) filterLibrary() {
 	}
 
 	m.filteredLib = nil
-	lowerQuery := fmt.Sprintf("%s", m.searchQuery)
+	lowerQuery := strings.ToLower(m.searchQuery)
 	for _, song := range m.librarySongs {
-		if containsFold(song.Title, lowerQuery) ||
-			containsFold(song.Artist, lowerQuery) ||
-			containsFold(song.Album, lowerQuery) {
+		if strings.Contains(strings.ToLower(song.Title), lowerQuery) ||
+			strings.Contains(strings.ToLower(song.Artist), lowerQuery) ||
+			strings.Contains(strings.ToLower(song.Album), lowerQuery) {
 			m.filteredLib = append(m.filteredLib, song)
 		}
 	}
 	if m.selectedIdx >= len(m.filteredLib) {
 		m.selectedIdx = max(0, len(m.filteredLib)-1)
 	}
-}
-
-func containsFold(s, substr string) bool {
-	if len(substr) == 0 {
-		return true
-	}
-
-	c := []rune(substr)
-	for i := 0; i <= len(s)-len(c); i++ {
-		if equalFold(s[i:i+len(c)], c) {
-			return true
-		}
-	}
-	return false
-}
-
-func equalFold(s string, c []rune) bool {
-	for i := range c {
-		r := rune(s[i])
-		if r >= 'A' && r <= 'Z' {
-			r += 'a' - 'A'
-		}
-		if r != c[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func (m *Model) View() string {

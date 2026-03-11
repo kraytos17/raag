@@ -28,7 +28,7 @@ func New() (*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return nil, fmt.Errorf("error creating config directory: %w", err)
 	}
 	return &Storage{configDir: configDir}, nil
