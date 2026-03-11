@@ -95,26 +95,27 @@ func setDefaults(v *viper.Viper) {
 }
 
 func bindFlags(v *viper.Viper, cmd *cobra.Command) {
+	root := cmd.Root()
 	// Network flags
-	v.BindPFlag("network.host", cmd.PersistentFlags().Lookup("host"))
-	v.BindPFlag("network.port", cmd.PersistentFlags().Lookup("port"))
-	v.BindPFlag("network.fixed_port", cmd.PersistentFlags().Lookup("fixed-port"))
-	v.BindPFlag("network.rendezvous", cmd.PersistentFlags().Lookup("rendezvous"))
-	v.BindPFlag("network.protocol_id", cmd.PersistentFlags().Lookup("pid"))
+	v.BindPFlag("network.host", root.PersistentFlags().Lookup("host"))
+	v.BindPFlag("network.port", root.PersistentFlags().Lookup("port"))
+	v.BindPFlag("network.fixed_port", root.PersistentFlags().Lookup("fixed-port"))
+	v.BindPFlag("network.rendezvous", root.PersistentFlags().Lookup("rendezvous"))
+	v.BindPFlag("network.protocol_id", root.PersistentFlags().Lookup("pid"))
 
 	// Discovery flags
-	v.BindPFlag("discovery.tracker_url", cmd.PersistentFlags().Lookup("tracker"))
-	v.BindPFlag("discovery.dht_enabled", cmd.PersistentFlags().Lookup("dht"))
-	v.BindPFlag("discovery.max_peers", cmd.PersistentFlags().Lookup("max-peers"))
-	v.BindPFlag("discovery.bootstrap_peers", cmd.PersistentFlags().Lookup("bootstrap"))
+	v.BindPFlag("discovery.tracker_url", root.PersistentFlags().Lookup("tracker"))
+	v.BindPFlag("discovery.dht_enabled", root.PersistentFlags().Lookup("dht"))
+	v.BindPFlag("discovery.max_peers", root.PersistentFlags().Lookup("max-peers"))
+	v.BindPFlag("discovery.bootstrap_peers", root.PersistentFlags().Lookup("bootstrap"))
 
 	// Playback flags
-	v.BindPFlag("playback.music_dir", cmd.PersistentFlags().Lookup("musicdir"))
+	v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("musicdir"))
 
 	// UI flags
-	v.BindPFlag("ui.tui_enabled", cmd.PersistentFlags().Lookup("tui"))
-	v.BindPFlag("ui.wifi_mode", cmd.PersistentFlags().Lookup("wifi"))
-	v.BindPFlag("ui.offline", cmd.PersistentFlags().Lookup("offline"))
+	v.BindPFlag("ui.tui_enabled", root.PersistentFlags().Lookup("tui"))
+	v.BindPFlag("ui.wifi_mode", root.PersistentFlags().Lookup("wifi"))
+	v.BindPFlag("ui.offline", root.PersistentFlags().Lookup("offline"))
 }
 
 // LoadConfig loads configuration from Viper instance
@@ -140,14 +141,12 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 		LogLevel: v.GetString("ui.log_level"),
 	}
 
-	// Validate
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, fmt.Errorf("invalid port number: %d", cfg.Port)
 	}
 	if cfg.FixedPort < 0 || cfg.FixedPort > 65535 {
 		return nil, fmt.Errorf("invalid fixed port number: %d", cfg.FixedPort)
 	}
-
 	return cfg, nil
 }
 

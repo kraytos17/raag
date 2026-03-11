@@ -69,9 +69,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.listenHost == "127.0.0.1" || m.listenHost == "localhost" {
 		logger.Info("Skipping mDNS discovery (localhost mode)")
 	} else {
-		logger.Info("Starting mDNS discovery...")
-		m.discoverViaMDNS(ctx)
-		logger.Info("mDNS discovery completed")
+		logger.Info("Starting mDNS discovery in background...")
+		go m.discoverViaMDNS(ctx)
 	}
 
 	logger.Info("Initializing DHT with existing peer connections...")
@@ -514,12 +513,9 @@ func (m *Manager) discoverViaMDNS(ctx context.Context) {
 		return
 	}
 
-	select {
-	case <-time.After(10 * time.Second):
-		logger.Info("mDNS discovery timeout")
-	case <-ctx.Done():
-		return
-	}
+	logger.Info("mDNS service started, running continuously...")
+	<-ctx.Done()
+	logger.Info("mDNS discovery stopped")
 }
 
 type mdnsNotifee struct {

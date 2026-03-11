@@ -64,6 +64,9 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Errorf("failed to load config error=%v", err)
 		os.Exit(1)
 	}
+	if cmd.Root().Flags().Changed("wifi") {
+		cfg.Offline = false
+	}
 	if daemonTrackerURL != "" {
 		cfg.TrackerURL = daemonTrackerURL
 		if err := config.SaveConfig(v, cfg); err != nil {
@@ -89,8 +92,8 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Errorf("failed to initialize player error=%v", err)
 		os.Exit(1)
 	}
+	
 	p.SetVolume(float64(cfg.Volume))
-
 	netMgr, err := network.NewNetwork(cfg, v, lib, cfg.MusicDir)
 	if err != nil {
 		logger.Errorf("failed to initialize network error=%v", err)
