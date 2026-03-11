@@ -92,7 +92,7 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Errorf("failed to initialize player error=%v", err)
 		os.Exit(1)
 	}
-	
+
 	p.SetVolume(float64(cfg.Volume))
 	netMgr, err := network.NewNetwork(cfg, v, lib, cfg.MusicDir)
 	if err != nil {
