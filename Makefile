@@ -1,14 +1,18 @@
-.PHONY: build run test clean install deps lint vet fmt
+.PHONY: build run test clean install deps lint vet fmt build-tracker run-tracker update fix
 
 BINARY_NAME=raag
+TRACKER_BINARY_NAME=tracker
 GO_CMD=go
 GO_BUILD_FLAGS=-ldflags="-s -w"
 
 build:
-	$(GO_CMD) build $(GO_BUILD_FLAGS) -o bin/$(BINARY_NAME) cmd/raag/main.go
+	$(GO_CMD) build $(GO_BUILD_FLAGS) -o bin/$(BINARY_NAME) ./cmd/raag
 
-run: build
-	./bin/$(BINARY_NAME)
+build-tracker:
+	$(GO_CMD) build $(GO_BUILD_FLAGS) -o bin/$(TRACKER_BINARY_NAME) tracker/cmd/tracker/main.go
+
+run-tracker: build-tracker
+	./bin/$(TRACKER_BINARY_NAME) --port 8080
 
 test:
 	$(GO_CMD) test -v ./...
@@ -35,4 +39,10 @@ fmt:
 tidy:
 	$(GO_CMD) mod tidy
 
-all: clean deps build
+update:
+	$(GO_CMD) get -u ./...
+
+fix:
+	$(GO_CMD) fix ./...
+
+all: clean deps build build-tracker

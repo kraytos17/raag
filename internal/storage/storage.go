@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
 	"github.com/p-society/raag/internal/playlist"
 )
@@ -82,10 +83,15 @@ func (s *Storage) LoadPlaylists(pm *playlist.Manager) error {
 		}
 		return fmt.Errorf("error reading playlists file: %w", err)
 	}
+	if len(data) == 0 {
+		logger.Warn("playlists file is empty, starting with no playlists")
+		return nil
+	}
 
 	var storageData StorageData
 	if err := json.Unmarshal(data, &storageData); err != nil {
-		return fmt.Errorf("error decoding playlists: %w", err)
+		logger.Warn("corrupted playlists file, resetting", "error", err)
+		return nil
 	}
 	for _, pl := range storageData.Playlists {
 		if err := pm.Create(pl.Name); err != nil {

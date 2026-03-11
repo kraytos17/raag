@@ -2,126 +2,179 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/p-society/raag/internal/cli"
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/library"
+	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/network"
 	"github.com/p-society/raag/internal/player"
 	"github.com/p-society/raag/internal/playlist"
 	"github.com/p-society/raag/internal/storage"
 	"github.com/p-society/raag/internal/tui"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+)
+
+var (
+	v         *viper.Viper
+	cfg       *config.Config
+	store     *storage.Storage
+	lib       *library.Library
+	p         *player.Player
+	netMgr    *network.NetworkManager
+	pm        *playlist.Manager
+	ctx       context.Context
+	cancelCtx context.CancelFunc
 )
 
 func main() {
-	if showHelpRequested() {
-		showHelp()
-		return
+	rootCmd := &cobra.Command{
+		Use:   "raag",
+		Short: "Raag - Decentralized Music Streaming",
+		Run: func(cmd *cobra.Command, args []string) {
+			// No command provided - start network by default
+			if len(args) == 0 {
+				tuiEnabled := cmd.Flags().Changed("tui")
+				tuiValue, _ := cmd.Flags().GetBool("tui")
+				if tuiEnabled && tuiValue {
+					if err := initializeApp(cmd); err != nil {
+						logger.Error("Error initializing", "error", err)
+						return
+					}
+					startTUI()
+				} else {
+					// Default: initialize and connect (keep network running)
+					if err := initializeApp(cmd); err != nil {
+						logger.Error("Error initializing", "error", err)
+						return
+					}
+					logger.Info("Starting peer discovery...")
+					<-ctx.Done()
+				}
+			}
+		},
 	}
 
-	cfg, err := config.ParseFlags()
+	rootCmd.PersistentFlags().String("config", "", "config file (default is $HOME/.config/raag/config.yaml)")
+	rootCmd.PersistentFlags().String("musicdir", "./music", "Directory containing music files")
+	rootCmd.PersistentFlags().Bool("offline", true, "Run in offline mode")
+	rootCmd.PersistentFlags().Bool("wifi", false, "Enable Wi-Fi connectivity")
+	rootCmd.PersistentFlags().Bool("tui", false, "Start in TUI mode")
+	rootCmd.PersistentFlags().String("tracker", "", "Centralized tracker URL for peer discovery")
+	rootCmd.PersistentFlags().Int("fixed-port", 0, "Fixed port for listening (0 for random)")
+	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery")
+	rootCmd.PersistentFlags().Int("max-peers", 100, "Maximum number of peers to maintain")
+	rootCmd.PersistentFlags().StringSlice("bootstrap", []string{}, "DHT bootstrap peers (multiaddr)")
+	rootCmd.PersistentFlags().String("host", "127.0.0.1", "The host address to listen on")
+	rootCmd.PersistentFlags().Int("port", 0, "Node listen port (0 to pick a random unused port)")
+	rootCmd.PersistentFlags().String("rendezvous", "raag-music-share", "Unique string to identify Raag nodes")
+	rootCmd.PersistentFlags().String("pid", "/raag/1.0.0", "Protocol ID for stream headers")
+
+	// Add subcommands
+	rootCmd.AddCommand(playCommand())
+	rootCmd.AddCommand(pauseCommand())
+	rootCmd.AddCommand(resumeCommand())
+	rootCmd.AddCommand(stopCommand())
+	rootCmd.AddCommand(nextCommand())
+	rootCmd.AddCommand(previousCommand())
+	rootCmd.AddCommand(queueCommand())
+	rootCmd.AddCommand(volumeCommand())
+	rootCmd.AddCommand(seekCommand())
+	rootCmd.AddCommand(nowplayingCommand())
+	rootCmd.AddCommand(peersCommand())
+	rootCmd.AddCommand(libraryCommand())
+	rootCmd.AddCommand(playlistCommand())
+	rootCmd.AddCommand(shareCommand())
+	rootCmd.AddCommand(configCommand())
+	rootCmd.AddCommand(daemonCommand())
+	rootCmd.AddCommand(statusCommand())
+
+	if err := rootCmd.Execute(); err != nil {
+		logger.Error("Command execution failed", "error", err)
+	}
+}
+
+func initializeApp(cmd *cobra.Command) error {
+	var err error
+
+	v, err = config.InitViper(cmd)
 	if err != nil {
-		log.Fatalf("Error parsing flags: %v", err)
+		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 
-	store, err := storage.New()
+	cfg, err = config.LoadConfig(v)
 	if err != nil {
-		log.Printf("Warning: Could not initialize storage: %v", err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	var appCfg *storage.AppConfig
-	if store != nil {
-		appCfg, err = store.LoadConfig()
-		if err != nil {
-			log.Printf("Warning: Could not load config: %v", err)
-		}
-	}
-	if appCfg != nil {
-		if cfg.MusicDir == "./music" && appCfg.MusicDir != "" {
-			cfg.MusicDir = appCfg.MusicDir
-		}
-		if !cfg.TUI && appCfg.TUIEnabled {
-			cfg.TUI = appCfg.TUIEnabled
-		}
-		if !cfg.Wifi && appCfg.WifiMode {
-			cfg.Wifi = appCfg.WifiMode
-		}
-		if !cfg.Offline && appCfg.Offline {
-			cfg.Offline = appCfg.Offline
-		}
-	}
-
-	var state *storage.PlayerState
-	if store != nil {
-		state, err = store.LoadState()
-		if err != nil {
-			log.Printf("Warning: Could not load state: %v", err)
-		}
-	}
-
-	lib, err := library.NewLibrary(cfg.MusicDir)
+	store, err = storage.New()
 	if err != nil {
-		log.Fatalf("Error initializing library: %v", err)
+		logger.Warn("Could not initialize storage", "error", err)
 	}
 
-	p, err := player.NewPlayer()
+	lib, err = library.NewLibrary(cfg.MusicDir)
 	if err != nil {
-		log.Fatalf("Error initializing player: %v", err)
-	}
-	if state != nil {
-		p.SetVolume(float64(state.Volume))
+		return err
 	}
 
-	net, err := network.NewNetwork(cfg, lib, cfg.MusicDir)
+	p, err = player.NewPlayer()
 	if err != nil {
-		log.Fatalf("Error initializing network: %v", err)
+		return err
+	}
+	p.SetVolume(float64(cfg.Volume))
+
+	netMgr, err = network.NewNetwork(cfg, lib, cfg.MusicDir)
+	if err != nil {
+		return err
 	}
 
-	pm := playlist.NewManager()
+	pm = playlist.NewManager()
 	if store != nil {
 		if err := store.LoadPlaylists(pm); err != nil {
-			log.Printf("Warning: Could not load playlists: %v", err)
+			logger.Warn("Could not load playlists", "error", err)
 		}
 	}
-	if cfg.TUI {
-		if err := tui.Start(lib, p, net, pm); err != nil {
-			log.Printf("Error in TUI: %v", err)
-		}
-		saveAll(store, p, pm)
-		return
-	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- net.Start(ctx)
-	}()
+	ctx, cancelCtx = context.WithCancel(context.Background())
 
-	cli := cli.NewCLI(lib, p, net, pm, store)
+	// Start network in background
 	go func() {
-		if err := cli.Start(); err != nil {
-			log.Printf("Error in CLI: %v", err)
-			cancel()
+		if err := netMgr.Start(ctx); err != nil {
+			logger.Error("Network error", "error", err)
 		}
 	}()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		logger.Info("Received termination signal, shutting down")
+		shutdown()
+		os.Exit(0)
+	}()
 
-	select {
-	case <-sigChan:
-		log.Println("Received termination signal, shutting down...")
-	case err := <-errChan:
-		log.Printf("Error in network: %v", err)
-	}
-	saveAll(store, p, pm)
+	return nil
 }
 
-func saveAll(store *storage.Storage, p *player.Player, pm *playlist.Manager) {
+func startTUI() {
+	if cfg == nil {
+		logger.Error("Configuration not initialized")
+		os.Exit(1)
+	}
+	if err := tui.Start(lib, p, netMgr, pm); err != nil {
+		logger.Error("Error in TUI", "error", err)
+	}
+	shutdown()
+}
+
+func shutdown() {
+	if cancelCtx != nil {
+		cancelCtx()
+	}
 	if store == nil {
 		return
 	}
@@ -134,31 +187,12 @@ func saveAll(store *storage.Storage, p *player.Player, pm *playlist.Manager) {
 		state.Position = p.GetPosition()
 	}
 	if err := store.SaveState(state); err != nil {
-		log.Printf("Warning: Could not save state: %v", err)
+		logger.Warn("Could not save state", "error", err)
 	}
 	if err := store.SavePlaylists(pm); err != nil {
-		log.Printf("Warning: Could not save playlists: %v", err)
+		logger.Warn("Could not save playlists", "error", err)
 	}
-}
-
-func showHelpRequested() bool {
-	for _, arg := range os.Args {
-		if arg == "-h" || arg == "--help" {
-			return true
-		}
+	if err := config.SaveConfig(v, cfg); err != nil {
+		logger.Error("Error saving config", "error", err)
 	}
-	return false
-}
-
-func showHelp() {
-	store, _ := storage.New()
-	lib, _ := library.NewLibrary("./music")
-	p, _ := player.NewPlayer()
-	net, _ := network.NewNetwork(&config.Config{
-		ListenHost: "127.0.0.1",
-		MusicDir:   "./music",
-	}, lib, "./music")
-	pm := playlist.NewManager()
-	c := cli.NewCLI(lib, p, net, pm, store)
-	c.Start()
 }
