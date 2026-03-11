@@ -460,7 +460,7 @@ func (m *Manager) logRoutingTableSize(ctx context.Context) {
 				dhtSize := m.dht.RoutingTable().Size()
 				networkPeers := len(m.host.Network().Peers())
 				logger.Infof("DHT status: routing_table_size=%d connected_peers=%d network_peers=%d",
-					dhtSize, connectedCount, networkPeers-1)
+					dhtSize, connectedCount, networkPeers)
 			}
 		}
 	}
