@@ -1,36 +1,171 @@
 package config
 
 import (
-	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
+// Config holds all configuration values
 type Config struct {
-	RendezvousString string
-	ProtocolID       string
-	ListenHost       string
-	ListenPort       int
-	MusicDir         string
-	Offline          bool
-	Wifi             bool
-	TUI              bool
+	// Network
+	Host       string
+	Port       int
+	FixedPort  int
+	Rendezvous string
+	ProtocolID string
+
+	// Discovery
+	TrackerURL     string
+	DHTEnabled     bool
+	MaxPeers       int
+	BootstrapPeers []string
+
+	// Playback
+	MusicDir string
+	Volume   int
+
+	// UI
+	TUI      bool
+	Wifi     bool
+	Offline  bool
+	LogLevel string
 }
 
-func ParseFlags() (*Config, error) {
-	c := &Config{}
-	flag.StringVar(&c.RendezvousString, "rendezvous", "raag-music-share", "Unique string to identify Raag nodes on the local network")
-	flag.StringVar(&c.ListenHost, "host", "127.0.0.1", "The host address to listen on")
-	flag.StringVar(&c.ProtocolID, "pid", "/raag/1.0.0", "Sets a protocol id for stream headers")
-	flag.IntVar(&c.ListenPort, "port", 0, "Node listen port (0 to pick a random unused port)")
-	flag.StringVar(&c.MusicDir, "musicdir", "./music", "Directory containing music files")
-	flag.BoolVar(&c.Offline, "offline", true, "Run in offline mode")
-	flag.BoolVar(&c.Wifi, "wifi", false, "Enable Wi-Fi connectivity")
-	flag.BoolVar(&c.TUI, "tui", false, "Start in TUI mode")
-	flag.Parse()
+// InitViper initializes Viper with defaults and binds flags
+func InitViper(cmd *cobra.Command) (*viper.Viper, error) {
+	v := viper.New()
 
-	if c.ListenPort < 0 || c.ListenPort > 65535 {
-		return nil, fmt.Errorf("invalid port number: %d", c.ListenPort)
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("could not get user config dir: %w", err)
+	}
+	configPath := filepath.Join(configDir, "raag")
+	configFile := filepath.Join(configPath, "config.yaml")
+
+	v.SetConfigType("yaml")
+	v.SetConfigFile(configFile)
+	setDefaults(v)
+
+	if err := v.ReadInConfig(); err != nil {
+		if err := os.MkdirAll(configPath, 0o755); err != nil {
+			return nil, fmt.Errorf("could not create config dir: %w", err)
+		}
+		if err := v.SafeWriteConfigAs(configFile); err != nil {
+			return nil, fmt.Errorf("could not write default config: %w", err)
+		}
 	}
 
-	return c, nil
+	bindFlags(v, cmd)
+	return v, nil
+}
+
+func setDefaults(v *viper.Viper) {
+	// Network defaults
+	v.SetDefault("network.host", "127.0.0.1")
+	v.SetDefault("network.port", 0)
+	v.SetDefault("network.fixed_port", 0)
+	v.SetDefault("network.rendezvous", "raag-music-share")
+	v.SetDefault("network.protocol_id", "/raag/1.0.0")
+
+	// Discovery defaults
+	v.SetDefault("discovery.tracker_url", "")
+	v.SetDefault("discovery.dht_enabled", true)
+	v.SetDefault("discovery.max_peers", 100)
+	v.SetDefault("discovery.bootstrap_peers", []string{})
+
+	// Playback defaults
+	v.SetDefault("playback.music_dir", "./music")
+	v.SetDefault("playback.volume", 50)
+
+	// UI defaults
+	v.SetDefault("ui.tui_enabled", true)
+	v.SetDefault("ui.wifi_mode", false)
+	v.SetDefault("ui.offline", true)
+	v.SetDefault("ui.log_level", "info")
+}
+
+func bindFlags(v *viper.Viper, cmd *cobra.Command) {
+	// Network flags
+	v.BindPFlag("network.host", cmd.PersistentFlags().Lookup("host"))
+	v.BindPFlag("network.port", cmd.PersistentFlags().Lookup("port"))
+	v.BindPFlag("network.fixed_port", cmd.PersistentFlags().Lookup("fixed-port"))
+	v.BindPFlag("network.rendezvous", cmd.PersistentFlags().Lookup("rendezvous"))
+	v.BindPFlag("network.protocol_id", cmd.PersistentFlags().Lookup("pid"))
+
+	// Discovery flags
+	v.BindPFlag("discovery.tracker_url", cmd.PersistentFlags().Lookup("tracker"))
+	v.BindPFlag("discovery.dht_enabled", cmd.PersistentFlags().Lookup("dht"))
+	v.BindPFlag("discovery.max_peers", cmd.PersistentFlags().Lookup("max-peers"))
+	v.BindPFlag("discovery.bootstrap_peers", cmd.PersistentFlags().Lookup("bootstrap"))
+
+	// Playback flags
+	v.BindPFlag("playback.music_dir", cmd.PersistentFlags().Lookup("musicdir"))
+
+	// UI flags
+	v.BindPFlag("ui.tui_enabled", cmd.PersistentFlags().Lookup("tui"))
+	v.BindPFlag("ui.wifi_mode", cmd.PersistentFlags().Lookup("wifi"))
+	v.BindPFlag("ui.offline", cmd.PersistentFlags().Lookup("offline"))
+}
+
+// LoadConfig loads configuration from Viper instance
+func LoadConfig(v *viper.Viper) (*Config, error) {
+	cfg := &Config{
+		Host:       v.GetString("network.host"),
+		Port:       v.GetInt("network.port"),
+		FixedPort:  v.GetInt("network.fixed_port"),
+		Rendezvous: v.GetString("network.rendezvous"),
+		ProtocolID: v.GetString("network.protocol_id"),
+
+		TrackerURL:     v.GetString("discovery.tracker_url"),
+		DHTEnabled:     v.GetBool("discovery.dht_enabled"),
+		MaxPeers:       v.GetInt("discovery.max_peers"),
+		BootstrapPeers: v.GetStringSlice("discovery.bootstrap_peers"),
+
+		MusicDir: v.GetString("playback.music_dir"),
+		Volume:   v.GetInt("playback.volume"),
+
+		TUI:      v.GetBool("ui.tui_enabled"),
+		Wifi:     v.GetBool("ui.wifi_mode"),
+		Offline:  v.GetBool("ui.offline"),
+		LogLevel: v.GetString("ui.log_level"),
+	}
+
+	// Validate
+	if cfg.Port < 0 || cfg.Port > 65535 {
+		return nil, fmt.Errorf("invalid port number: %d", cfg.Port)
+	}
+	if cfg.FixedPort < 0 || cfg.FixedPort > 65535 {
+		return nil, fmt.Errorf("invalid fixed port number: %d", cfg.FixedPort)
+	}
+
+	return cfg, nil
+}
+
+// SaveConfig saves current configuration to file
+func SaveConfig(v *viper.Viper, cfg *Config) error {
+	// Update Viper with config values
+	v.Set("network.host", cfg.Host)
+	v.Set("network.port", cfg.Port)
+	v.Set("network.fixed_port", cfg.FixedPort)
+	v.Set("network.rendezvous", cfg.Rendezvous)
+	v.Set("network.protocol_id", cfg.ProtocolID)
+
+	v.Set("discovery.tracker_url", cfg.TrackerURL)
+	v.Set("discovery.dht_enabled", cfg.DHTEnabled)
+	v.Set("discovery.max_peers", cfg.MaxPeers)
+	v.Set("discovery.bootstrap_peers", cfg.BootstrapPeers)
+
+	v.Set("playback.music_dir", cfg.MusicDir)
+	v.Set("playback.volume", cfg.Volume)
+
+	v.Set("ui.tui_enabled", cfg.TUI)
+	v.Set("ui.wifi_mode", cfg.Wifi)
+	v.Set("ui.offline", cfg.Offline)
+	v.Set("ui.log_level", cfg.LogLevel)
+
+	return v.WriteConfig()
 }
