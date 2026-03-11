@@ -1,117 +1,94 @@
 package logger
 
 import (
-	"context"
-	"io"
-	"log/slog"
 	"os"
-	"sync"
+
+	"charm.land/lipgloss/v2"
+	"charm.land/log/v2"
 )
 
-var (
-	log   *slog.Logger
-	mu    sync.RWMutex
-	level = slog.LevelInfo
-)
+var logger *log.Logger
 
 func init() {
-	log = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: level,
-	}))
+	NewLogger("raag")
 }
 
-func SetOutput(w io.Writer) {
-	mu.Lock()
-	defer mu.Unlock()
-	log = slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
-		Level: level,
-	}))
-}
+func NewLogger(prefix string) {
+	logger = log.NewWithOptions(os.Stderr, log.Options{
+		ReportTimestamp: true,
+		TimeFormat:      "15:04:05",
+		Prefix:          prefix,
+	})
 
-func SetLevel(l slog.Level) {
-	mu.Lock()
-	defer mu.Unlock()
-	level = l
-	log = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: l,
-	}))
+	styles := log.DefaultStyles()
+	styles.Levels[log.DebugLevel] = lipgloss.NewStyle().
+		SetString("DEBUG").
+		Foreground(lipgloss.Color("247"))
+	styles.Levels[log.InfoLevel] = lipgloss.NewStyle().
+		SetString("INFO").
+		Foreground(lipgloss.Color("75"))
+	styles.Levels[log.WarnLevel] = lipgloss.NewStyle().
+		SetString("WARN").
+		Foreground(lipgloss.Color("226"))
+	styles.Levels[log.ErrorLevel] = lipgloss.NewStyle().
+		SetString("ERROR").
+		Foreground(lipgloss.Color("196"))
+	styles.Levels[log.FatalLevel] = lipgloss.NewStyle().
+		SetString("FATAL").
+		Foreground(lipgloss.Color("199"))
+
+	logger.SetStyles(styles)
+	logger.SetLevel(log.InfoLevel)
 }
 
 func Debug(msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.Debug(msg, args...)
-	}
-}
-
-func DebugContext(ctx context.Context, msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.DebugContext(ctx, msg, args...)
+	if len(args) == 0 {
+		logger.Debug(msg)
+	} else {
+		logger.Debug(msg, args...)
 	}
 }
 
 func Info(msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.Info(msg, args...)
-	}
-}
-
-func InfoContext(ctx context.Context, msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.InfoContext(ctx, msg, args...)
+	if len(args) == 0 {
+		logger.Info(msg)
+	} else {
+		logger.Info(msg, args...)
 	}
 }
 
 func Warn(msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.Warn(msg, args...)
-	}
-}
-
-func WarnContext(ctx context.Context, msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.WarnContext(ctx, msg, args...)
+	if len(args) == 0 {
+		logger.Warn(msg)
+	} else {
+		logger.Warn(msg, args...)
 	}
 }
 
 func Error(msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.Error(msg, args...)
+	if len(args) == 0 {
+		logger.Error(msg)
+	} else {
+		logger.Error(msg, args...)
 	}
 }
 
-func ErrorContext(ctx context.Context, msg string, args ...any) {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	if l != nil {
-		l.ErrorContext(ctx, msg, args...)
-	}
+func With(args ...any) *log.Logger {
+	return logger.With(args...)
 }
 
-func With(args ...any) *slog.Logger {
-	mu.RLock()
-	l := log
-	mu.RUnlock()
-	return l.With(args...)
+func Debugf(format string, args ...any) {
+	logger.Debugf(format, args...)
+}
+
+func Infof(format string, args ...any) {
+	logger.Infof(format, args...)
+}
+
+func Warnf(format string, args ...any) {
+	logger.Warnf(format, args...)
+}
+
+func Errorf(format string, args ...any) {
+	logger.Errorf(format, args...)
 }

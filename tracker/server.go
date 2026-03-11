@@ -17,7 +17,7 @@ type Tracker struct {
 }
 
 func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	logger.Info("tracker request", "method", r.Method, "path", r.URL.Path)
+	logger.Infof("tracker request method=%s path=%s", r.Method, r.URL.Path)
 	w.Header().Set("Content-Type", "application/json")
 	switch r.URL.Path {
 	case "/peers":
@@ -81,9 +81,9 @@ func StartServer(port int) {
 	tracker := &Tracker{peers: make(map[string]time.Time)}
 	go tracker.cleanupOldPeers()
 
-	logger.Info("starting tracker", "port", port)
+	logger.Infof("starting tracker port=%d", port)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), tracker); err != nil {
-		logger.Error("tracker server failed", "error", err)
+		logger.Errorf("tracker server failed error=%v", err)
 		os.Exit(1)
 	}
 }

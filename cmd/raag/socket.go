@@ -52,7 +52,7 @@ func (s *SocketServer) Start() error {
 
 	s.listener = listener
 	os.Chmod(s.socketPath, 0o600)
-	logger.Info("Daemon socket listening", "socket_path", s.socketPath)
+	logger.Infof("Daemon socket listening socket_path=%s", s.socketPath)
 
 	go s.acceptLoop()
 	return nil

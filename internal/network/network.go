@@ -24,11 +24,13 @@ import (
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
+	"github.com/spf13/viper"
 )
 
 type NetworkManager struct {
 	host          host.Host
 	cfg           *config.Config
+	viper         *viper.Viper
 	library       *library.Library
 	musicDir      string
 	peers         map[peer.ID]struct{}
@@ -40,8 +42,8 @@ type NetworkManager struct {
 	discovery     *discovery.Manager
 }
 
-func NewNetwork(cfg *config.Config, lib *library.Library, musicDir string) (*NetworkManager, error) {
-	logger.Info("Network config", "offline", cfg.Offline, "wifi", cfg.Wifi, "host", cfg.Host, "port", cfg.Port, "rendezvous", cfg.Rendezvous)
+func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string) (*NetworkManager, error) {
+	logger.Infof("Network config offline=%v wifi=%v host=%s port=%d rendezvous=%s", cfg.Offline, cfg.Wifi, cfg.Host, cfg.Port, cfg.Rendezvous)
 
 	prvKey, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
 	if err != nil {
@@ -79,6 +81,7 @@ func NewNetwork(cfg *config.Config, lib *library.Library, musicDir string) (*Net
 	nm := &NetworkManager{
 		host:      host,
 		cfg:       cfg,
+		viper:     v,
 		library:   lib,
 		musicDir:  musicDir,
 		peers:     make(map[peer.ID]struct{}),
@@ -86,6 +89,22 @@ func NewNetwork(cfg *config.Config, lib *library.Library, musicDir string) (*Net
 	}
 
 	discoveryMgr.SetNetworkManager(nm)
+	discoveryMgr.SetOnPeerSave(func(peers []peer.AddrInfo) {
+		var peerAddrs []string
+		for _, p := range peers {
+			for _, addr := range p.Addrs {
+				fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + p.ID.String())).String()
+				peerAddrs = append(peerAddrs, fullAddr)
+			}
+		}
+		if len(peerAddrs) > 0 {
+			if err := config.UpdateBootstrapPeers(v, peerAddrs); err != nil {
+				logger.Warnf("Failed to update bootstrap_peers in config error=%v", err)
+			} else {
+				logger.Infof("Updated bootstrap_peers in config count=%d", len(peerAddrs))
+			}
+		}
+	})
 	host.Network().Notify(&network.NotifyBundle{
 		ConnectedF: func(n network.Network, conn network.Conn) {
 			nm.handlePeerConnect(conn.RemotePeer(), conn.RemoteMultiaddr())
@@ -106,20 +125,20 @@ func NewConnectionManager(low, high int, gracePeriod time.Duration) *connmgr.Bas
 func (n *NetworkManager) Start(ctx context.Context) error {
 	n.host.SetStreamHandler(protocol.ID(n.cfg.ProtocolID), n.handleStream)
 	if err := n.discovery.Start(ctx); err != nil {
-		logger.Error("Discovery failed to start", "error", err)
+		logger.Errorf("Discovery failed to start error=%v", err)
 	}
 
 	addrs := n.host.Addrs()
 	if len(addrs) > 0 {
-		logger.Info("Your Raag Node Multiaddress", "address", fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID()))
+		logger.Infof("Your Raag Node Multiaddress address=%s", fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID()))
 		if len(addrs) > 1 {
 			logger.Info("Additional addresses")
 			for _, addr := range addrs[1:] {
-				logger.Info("Additional address", "address", fmt.Sprintf("%s/p2p/%s", addr, n.host.ID()))
+				logger.Infof("Additional address address=%s", fmt.Sprintf("%s/p2p/%s", addr, n.host.ID()))
 			}
 		}
 	} else {
-		logger.Warn("No listening addresses found", "host", n.cfg.Host, "port", n.cfg.Port)
+		logger.Warnf("No listening addresses found host=%s port=%d", n.cfg.Host, n.cfg.Port)
 	}
 
 	<-ctx.Done()
@@ -170,7 +189,7 @@ func (n *NetworkManager) Connect(ctx context.Context, addrInfo peer.AddrInfo) er
 		return fmt.Errorf("failed to connect: %w", err)
 	}
 
-	logger.Info("Connecting to peer", "peer_id", addrInfo.ID)
+	logger.Infof("Connecting to peer peer_id=%s", addrInfo.ID)
 	if n.discovery != nil {
 		n.discovery.RefreshTrackerRegistration(ctx)
 	}
@@ -186,7 +205,7 @@ func (n *NetworkManager) Disconnect(peerID peer.ID) error {
 	delete(n.peers, peerID)
 	n.peersLock.Unlock()
 
-	logger.Info("Disconnected from peer", "peer_id", peerID)
+	logger.Infof("Disconnected from peer peer_id=%s", peerID)
 	return nil
 }
 
@@ -212,13 +231,13 @@ func (n *NetworkManager) GetAllKnownPeers() []peer.AddrInfo {
 }
 
 func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) error {
-	logger.Info("ShareSong function called", "peer_info", peerInfo, "song", song)
+	logger.Infof("ShareSong function called peer_info=%v song=%v", peerInfo, song)
 	dataChan := make(chan []byte)
 	go func() {
 		defer close(dataChan)
 		file, err := os.Open(song.Path)
 		if err != nil {
-			logger.Error("Error opening file", "error", err)
+			logger.Errorf("Error opening file error=%v", err)
 			return
 		}
 		defer file.Close()
@@ -227,7 +246,7 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 		for {
 			n, err := file.Read(buffer)
 			if err != nil && err != io.EOF {
-				logger.Error("Error reading file", "error", err)
+				logger.Errorf("Error reading file error=%v", err)
 				return
 			}
 			if n == 0 {
@@ -262,26 +281,26 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	defer stream.Close()
 
 	peerID := stream.Conn().RemotePeer()
-	logger.Info("handleStream called", "peer_id", peerID)
+	logger.Infof("handleStream called peer_id=%s", peerID)
 
 	buf := make([]byte, 1024)
 	size, err := stream.Read(buf)
 	if err != nil {
 		if err == io.EOF {
-			logger.Info("Stream closed by peer before sending data", "peer_id", peerID)
+			logger.Infof("Stream closed by peer before sending data peer_id=%s", peerID)
 		} else {
-			logger.Error("Error reading metadata from peer", "peer_id", peerID, "error", err)
+			logger.Errorf("Error reading metadata from peer peer_id=%s error=%v", peerID, err)
 		}
 		return
 	}
 
 	if size == 0 {
-		logger.Info("Received empty stream from peer, ignoring", "peer_id", peerID)
+		logger.Infof("Received empty stream from peer, ignoring peer_id=%s", peerID)
 		return
 	}
 
 	mdata := string(buf[:size])
-	logger.Info("Received metadata", "metadata", mdata)
+	logger.Infof("Received metadata metadata=%s", mdata)
 	songInfo := strings.Split(mdata, "|")
 	if len(songInfo) < 3 {
 		logger.Error("Invalid song metadata")
@@ -300,16 +319,16 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 		saveDir = "."
 	}
 	if err := os.MkdirAll(saveDir, 0o755); err != nil {
-		logger.Error("Error creating directory", "error", err)
+		logger.Errorf("Error creating directory error=%v", err)
 		return
 	}
 
 	filePath := filepath.Join(saveDir, fileName)
-	logger.Info("Preparing to save file", "file_path", filePath)
+	logger.Infof("Preparing to save file file_path=%s", filePath)
 
 	file, err := os.Create(filePath)
 	if err != nil {
-		logger.Error("Error creating file", "error", err)
+		logger.Errorf("Error creating file error=%v", err)
 		return
 	}
 	defer file.Close()
@@ -317,12 +336,12 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	logger.Info("Copying song data from stream to file")
 	bytesWritten, err := io.Copy(file, stream)
 	if err != nil {
-		logger.Error("Error saving song", "error", err)
+		logger.Errorf("Error saving song error=%v", err)
 		return
 	}
 
-	logger.Info("Song data saved", "bytes_written", bytesWritten)
-	logger.Info("Successfully received and saved song", "title", title, "peer_id", peerID, "file_path", filePath)
+	logger.Infof("Song data saved bytes_written=%d", bytesWritten)
+	logger.Infof("Successfully received and saved song title=%s peer_id=%s file_path=%s", title, peerID, filePath)
 }
 
 func (n *NetworkManager) handlePeerConnect(peerID peer.ID, addr multiaddr.Multiaddr) {
@@ -343,7 +362,7 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 	}
 	if _, ok := n.peers[peerID]; !ok {
 		n.peers[peerID] = struct{}{}
-		logger.Info("Peer connected", "peer_id", peerID, "address", addr)
+		logger.Infof("Peer connected peer_id=%s address=%s", peerID, addr)
 		if n.OnPeerJoin != nil {
 			n.OnPeerJoin(peerID)
 		}
@@ -363,7 +382,7 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 
 	if _, ok := n.peers[peerID]; ok {
 		delete(n.peers, peerID)
-		logger.Info("Peer has disconnected", "peer_id", peerID, "address", addr.String())
+		logger.Infof("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
 		if n.OnPeerLeave != nil {
 			n.OnPeerLeave(peerID)
 		}

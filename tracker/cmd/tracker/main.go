@@ -9,6 +9,7 @@ import (
 )
 
 func main() {
+	logger.NewLogger("raag::tracker")
 	rootCmd := &cobra.Command{
 		Use:   "tracker",
 		Short: "Raag centralized tracker server",
@@ -20,7 +21,7 @@ func main() {
 
 	rootCmd.Flags().Int("port", 8080, "Tracker server port")
 	if err := rootCmd.Execute(); err != nil {
-		logger.Error("failed to execute command", "error", err)
+		logger.Errorf("failed to execute command error=%v", err)
 		os.Exit(1)
 	}
 }

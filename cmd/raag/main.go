@@ -42,14 +42,14 @@ func main() {
 				tuiValue, _ := cmd.Flags().GetBool("tui")
 				if tuiEnabled && tuiValue {
 					if err := initializeApp(cmd); err != nil {
-						logger.Error("Error initializing", "error", err)
+						logger.Errorf("Error initializing error=%v", err)
 						return
 					}
 					startTUI()
 				} else {
 					// Default: initialize and connect (keep network running)
 					if err := initializeApp(cmd); err != nil {
-						logger.Error("Error initializing", "error", err)
+						logger.Errorf("Error initializing error=%v", err)
 						return
 					}
 					logger.Info("Starting peer discovery...")
@@ -94,7 +94,7 @@ func main() {
 	rootCmd.AddCommand(statusCommand())
 
 	if err := rootCmd.Execute(); err != nil {
-		logger.Error("Command execution failed", "error", err)
+		logger.Errorf("Command execution failed error=%v", err)
 	}
 }
 
@@ -113,7 +113,7 @@ func initializeApp(cmd *cobra.Command) error {
 
 	store, err = storage.New()
 	if err != nil {
-		logger.Warn("Could not initialize storage", "error", err)
+		logger.Warnf("Could not initialize storage error=%v", err)
 	}
 
 	lib, err = library.NewLibrary(cfg.MusicDir)
@@ -125,9 +125,9 @@ func initializeApp(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	p.SetVolume(float64(cfg.Volume))
 
-	netMgr, err = network.NewNetwork(cfg, lib, cfg.MusicDir)
+	p.SetVolume(float64(cfg.Volume))
+	netMgr, err = network.NewNetwork(cfg, v, lib, cfg.MusicDir)
 	if err != nil {
 		return err
 	}
@@ -135,16 +135,15 @@ func initializeApp(cmd *cobra.Command) error {
 	pm = playlist.NewManager()
 	if store != nil {
 		if err := store.LoadPlaylists(pm); err != nil {
-			logger.Warn("Could not load playlists", "error", err)
+			logger.Warnf("Could not load playlists error=%v", err)
 		}
 	}
 
 	ctx, cancelCtx = context.WithCancel(context.Background())
-
 	// Start network in background
 	go func() {
 		if err := netMgr.Start(ctx); err != nil {
-			logger.Error("Network error", "error", err)
+			logger.Errorf("Network error error=%v", err)
 		}
 	}()
 
@@ -162,11 +161,11 @@ func initializeApp(cmd *cobra.Command) error {
 
 func startTUI() {
 	if cfg == nil {
-		logger.Error("Configuration not initialized")
+		logger.Errorf("Configuration not initialized")
 		os.Exit(1)
 	}
 	if err := tui.Start(lib, p, netMgr, pm); err != nil {
-		logger.Error("Error in TUI", "error", err)
+		logger.Errorf("Error in TUI error=%v", err)
 	}
 	shutdown()
 }
@@ -187,12 +186,12 @@ func shutdown() {
 		state.Position = p.GetPosition()
 	}
 	if err := store.SaveState(state); err != nil {
-		logger.Warn("Could not save state", "error", err)
+		logger.Warnf("Could not save state error=%v", err)
 	}
 	if err := store.SavePlaylists(pm); err != nil {
-		logger.Warn("Could not save playlists", "error", err)
+		logger.Warnf("Could not save playlists error=%v", err)
 	}
 	if err := config.SaveConfig(v, cfg); err != nil {
-		logger.Error("Error saving config", "error", err)
+		logger.Errorf("Error saving config error=%v", err)
 	}
 }

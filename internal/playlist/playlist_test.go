@@ -8,7 +8,7 @@ import (
 
 func TestNewManager(t *testing.T) {
 	m := NewManager()
-	if m == nil {
+	if m == nil || m.Playlists == nil {
 		t.Error("NewManager() should not return nil")
 	}
 	if len(m.Playlists) != 0 {
