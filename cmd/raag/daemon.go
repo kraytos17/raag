@@ -55,60 +55,65 @@ func runDaemon(cmd *cobra.Command) {
 
 	v, err := config.InitViper(cmd)
 	if err != nil {
-		logger.Error("failed to initialize config", "error", err)
+		logger.Errorf("failed to initialize config error=%v", err)
 		os.Exit(1)
 	}
 
 	cfg, err := config.LoadConfig(v)
 	if err != nil {
-		logger.Error("failed to load config", "error", err)
+		logger.Errorf("failed to load config error=%v", err)
 		os.Exit(1)
 	}
 	if daemonTrackerURL != "" {
 		cfg.TrackerURL = daemonTrackerURL
+		if err := config.SaveConfig(v, cfg); err != nil {
+			logger.Warnf("failed to save tracker URL to config error=%v", err)
+		} else {
+			logger.Infof("saved tracker URL to config url=%s", daemonTrackerURL)
+		}
 	}
 
 	store, err := storage.New()
 	if err != nil {
-		logger.Warn("could not initialize storage", "error", err)
+		logger.Warnf("could not initialize storage error=%v", err)
 	}
 
 	lib, err := library.NewLibrary(cfg.MusicDir)
 	if err != nil {
-		logger.Error("failed to initialize library", "error", err)
+		logger.Errorf("failed to initialize library error=%v", err)
 		os.Exit(1)
 	}
 
 	p, err := player.NewPlayer()
 	if err != nil {
-		logger.Error("failed to initialize player", "error", err)
+		logger.Errorf("failed to initialize player error=%v", err)
 		os.Exit(1)
 	}
 	p.SetVolume(float64(cfg.Volume))
 
-	netMgr, err := network.NewNetwork(cfg, lib, cfg.MusicDir)
+	netMgr, err := network.NewNetwork(cfg, v, lib, cfg.MusicDir)
 	if err != nil {
-		logger.Error("failed to initialize network", "error", err)
+		logger.Errorf("failed to initialize network error=%v", err)
 		os.Exit(1)
 	}
 
 	pm = playlist.NewManager()
 	if store != nil {
 		if err := store.LoadPlaylists(pm); err != nil {
-			logger.Warn("could not load playlists", "error", err)
+			logger.Warnf("could not load playlists error=%v", err)
 		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		if err := netMgr.Start(ctx); err != nil {
-			logger.Error("network error", "error", err)
+			logger.Errorf("network error error=%v", err)
 		}
 	}()
 
 	socketServer := NewSocketServer(netMgr)
 	if err := socketServer.Start(); err != nil {
-		logger.Error("failed to start socket server", "error", err)
+		logger.Errorf("failed to start socket server error=%v", err)
 		os.Exit(1)
 	}
 

@@ -45,16 +45,22 @@ func InitViper(cmd *cobra.Command) (*viper.Viper, error) {
 	}
 	configPath := filepath.Join(configDir, "raag")
 	configFile := filepath.Join(configPath, "config.yaml")
+	if err := os.MkdirAll(configPath, 0o755); err != nil {
+		return nil, fmt.Errorf("could not create config dir: %w", err)
+	}
 
 	v.SetConfigType("yaml")
 	v.SetConfigFile(configFile)
 	setDefaults(v)
 
-	if err := v.ReadInConfig(); err != nil {
-		if err := os.MkdirAll(configPath, 0o755); err != nil {
-			return nil, fmt.Errorf("could not create config dir: %w", err)
+	if _, err := os.Stat(configFile); err == nil {
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("could not read config file: %w", err)
 		}
-		if err := v.SafeWriteConfigAs(configFile); err != nil {
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("could not check config file: %w", err)
+	} else {
+		if err := v.WriteConfigAs(configFile); err != nil {
 			return nil, fmt.Errorf("could not write default config: %w", err)
 		}
 	}
@@ -167,5 +173,11 @@ func SaveConfig(v *viper.Viper, cfg *Config) error {
 	v.Set("ui.offline", cfg.Offline)
 	v.Set("ui.log_level", cfg.LogLevel)
 
+	return v.WriteConfig()
+}
+
+// UpdateBootstrapPeers updates just the bootstrap_peers in config file
+func UpdateBootstrapPeers(v *viper.Viper, peers []string) error {
+	v.Set("discovery.bootstrap_peers", peers)
 	return v.WriteConfig()
 }
