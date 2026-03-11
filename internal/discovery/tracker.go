@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
+	"net/url"
+	pathpkg "path"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -30,16 +31,12 @@ func (t *TrackerClient) FetchPeers(ctx context.Context) ([]peer.AddrInfo, error)
 		return nil, fmt.Errorf("no tracker URL configured")
 	}
 
-	peersURL := t.trackerURL
-	if !strings.HasSuffix(peersURL, "/peers") {
-		if strings.HasSuffix(peersURL, "/") {
-			peersURL = peersURL + "peers"
-		} else {
-			peersURL = peersURL + "/peers"
-		}
+	peersURL, err := joinTrackerPath(t.trackerURL, "peers")
+	if err != nil {
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", peersURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, peersURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -80,18 +77,9 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string) e
 		return nil
 	}
 
-	trackerURL := t.trackerURL
-	var registerURL string
-	if strings.HasSuffix(trackerURL, "/peers") {
-		registerURL = trackerURL[:len(trackerURL)-len("/peers")] + "/register"
-	} else if strings.HasSuffix(trackerURL, "/peers/") {
-		registerURL = trackerURL[:len(trackerURL)-len("/peers/")] + "/register"
-	} else {
-		if trackerURL[len(trackerURL)-1] == '/' {
-			registerURL = trackerURL + "register"
-		} else {
-			registerURL = trackerURL + "/register"
-		}
+	registerURL, err := joinTrackerPath(t.trackerURL, "register")
+	if err != nil {
+		return err
 	}
 
 	data := struct {
@@ -103,12 +91,12 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string) e
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", registerURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registerURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
 
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := t.client.Do(req)
 	if err != nil {
 		return err
@@ -119,4 +107,21 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string) e
 		return fmt.Errorf("tracker registration failed: %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func joinTrackerPath(baseURL, path string) (string, error) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid tracker URL: %w", err)
+	}
+	cleanPath := pathpkg.Clean(parsed.Path)
+	if cleanPath == "/peers" || cleanPath == "/register" {
+		parsed.Path = pathpkg.Dir(cleanPath)
+	}
+
+	joined, err := url.JoinPath(parsed.String(), path)
+	if err != nil {
+		return "", fmt.Errorf("invalid tracker path: %w", err)
+	}
+	return joined, nil
 }

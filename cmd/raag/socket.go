@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	appconfig "github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/network"
 	"github.com/p-society/raag/internal/socket"
@@ -33,14 +34,18 @@ func NewSocketServer(nm *network.NetworkManager) *SocketServer {
 }
 
 func getSocketPath() string {
-	home, err := os.UserHomeDir()
+	socketPath, err := appconfig.SocketPath()
 	if err != nil {
-		home = os.TempDir()
+		return filepath.Join(os.TempDir(), SocketName)
 	}
 
-	configDir := filepath.Join(home, ".config", "raag")
+	configDir, err := appconfig.Dir()
+	if err != nil {
+		return socketPath
+	}
+
 	os.MkdirAll(configDir, 0o700)
-	return filepath.Join(configDir, SocketName)
+	return socketPath
 }
 
 func (s *SocketServer) Start() error {

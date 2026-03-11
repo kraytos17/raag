@@ -77,7 +77,7 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 		maxPeers = 100 // Default max peers
 	}
 
-	discoveryMgr := discovery.NewManager(host, cfg.TrackerURL, maxPeers, cfg.Host)
+	discoveryMgr := discovery.NewManager(host, cfg.TrackerURL, maxPeers, cfg.Host, cfg.Rendezvous, cfg.DHTEnabled, cfg.BootstrapPeers)
 	nm := &NetworkManager{
 		host:      host,
 		cfg:       cfg,
@@ -90,13 +90,7 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 
 	discoveryMgr.SetNetworkManager(nm)
 	discoveryMgr.SetOnPeerSave(func(peers []peer.AddrInfo) {
-		var peerAddrs []string
-		for _, p := range peers {
-			for _, addr := range p.Addrs {
-				fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + p.ID.String())).String()
-				peerAddrs = append(peerAddrs, fullAddr)
-			}
-		}
+		peerAddrs := discovery.AddrInfoStrings(peers)
 		if len(peerAddrs) > 0 {
 			if err := config.UpdateBootstrapPeers(v, peerAddrs); err != nil {
 				logger.Warnf("Failed to update bootstrap_peers in config error=%v", err)
@@ -214,13 +208,29 @@ func (n *NetworkManager) GetPeerID() peer.ID {
 }
 
 func (n *NetworkManager) GetMultiaddr() string {
-	return fmt.Sprintf("/ip4/%s/tcp/%v/p2p/%s", n.cfg.Host, n.cfg.Port, n.host.ID())
+	addrs := n.host.Addrs()
+	if len(addrs) == 0 {
+		return fmt.Sprintf("/p2p/%s", n.host.ID())
+	}
+
+	best := addrs[0]
+	for _, addr := range addrs {
+		if isUsableAddr(addr.String()) {
+			best = addr
+			break
+		}
+	}
+	return fmt.Sprintf("%s/p2p/%s", best, n.host.ID())
 }
 
 func (n *NetworkManager) GetPeerCount() int {
 	n.peersLock.RLock()
 	defer n.peersLock.RUnlock()
 	return len(n.peers)
+}
+
+func isUsableAddr(addr string) bool {
+	return !strings.Contains(addr, "/127.0.0.1/") && !strings.Contains(addr, "/0.0.0.0/")
 }
 
 func (n *NetworkManager) GetAllKnownPeers() []peer.AddrInfo {

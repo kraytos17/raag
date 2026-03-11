@@ -8,12 +8,7 @@ import (
 	"time"
 
 	"github.com/p-society/raag/internal/config"
-	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/logger"
-	"github.com/p-society/raag/internal/network"
-	"github.com/p-society/raag/internal/player"
-	"github.com/p-society/raag/internal/playlist"
-	"github.com/p-society/raag/internal/storage"
 	"github.com/p-society/raag/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -58,7 +53,6 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Errorf("failed to initialize config error=%v", err)
 		os.Exit(1)
 	}
-
 	cfg, err := config.LoadConfig(v)
 	if err != nil {
 		logger.Errorf("failed to load config error=%v", err)
@@ -76,40 +70,21 @@ func runDaemon(cmd *cobra.Command) {
 		}
 	}
 
-	store, err := storage.New()
+	logger.SetLevel(cfg.LogLevel)
+	rt, err := bootstrapRuntime(cmd)
 	if err != nil {
-		logger.Warnf("could not initialize storage error=%v", err)
-	}
-
-	lib, err := library.NewLibrary(cfg.MusicDir)
-	if err != nil {
-		logger.Errorf("failed to initialize library error=%v", err)
+		logger.Errorf("failed to bootstrap runtime error=%v", err)
 		os.Exit(1)
 	}
 
-	p, err := player.NewPlayer()
-	if err != nil {
-		logger.Errorf("failed to initialize player error=%v", err)
-		os.Exit(1)
-	}
-
-	p.SetVolume(float64(cfg.Volume))
-	netMgr, err := network.NewNetwork(cfg, v, lib, cfg.MusicDir)
-	if err != nil {
-		logger.Errorf("failed to initialize network error=%v", err)
-		os.Exit(1)
-	}
-
-	pm = playlist.NewManager()
-	if store != nil {
-		if err := store.LoadPlaylists(pm); err != nil {
-			logger.Warnf("could not load playlists error=%v", err)
-		}
-	}
-
+	applyRuntime(rt)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		if err := netMgr.Start(ctx); err != nil {
+			if err == context.Canceled {
+				logger.Info("network stopped")
+				return
+			}
 			logger.Errorf("network error error=%v", err)
 		}
 	}()
@@ -121,7 +96,7 @@ func runDaemon(cmd *cobra.Command) {
 	}
 
 	logger.Info("Raag daemon started. Use Ctrl+C to stop.")
-	showTUI := daemonTUI && !daemonNoTUI
+	showTUI := shouldStartTUI(cmd, cfg, true, daemonNoTUI)
 	if showTUI {
 		go func() {
 			tui.Start(lib, p, netMgr, pm)

@@ -2,6 +2,7 @@ package logger
 
 import (
 	"os"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
@@ -39,6 +40,25 @@ func NewLogger(prefix string) {
 
 	logger.SetStyles(styles)
 	logger.SetLevel(log.InfoLevel)
+}
+
+func SetLevel(level string) {
+	if logger == nil {
+		NewLogger("raag")
+	}
+
+	switch strings.ToLower(level) {
+	case "debug":
+		logger.SetLevel(log.DebugLevel)
+	case "warn", "warning":
+		logger.SetLevel(log.WarnLevel)
+	case "error":
+		logger.SetLevel(log.ErrorLevel)
+	case "fatal":
+		logger.SetLevel(log.FatalLevel)
+	default:
+		logger.SetLevel(log.InfoLevel)
+	}
 }
 
 func Debug(msg string, args ...any) {

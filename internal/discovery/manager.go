@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -15,8 +16,6 @@ import (
 	"github.com/p-society/raag/internal/logger"
 )
 
-const RendezvousString = "raag-music"
-
 type Manager struct {
 	host           host.Host
 	dht            *dht.IpfsDHT
@@ -28,21 +27,27 @@ type Manager struct {
 	maxPeers       int
 	trackerURL     string
 	listenHost     string
+	rendezvous     string
+	dhtEnabled     bool
+	bootstrapPeers []string
 	networkManager interface {
 		NotifyPeerConnected(peerID peer.ID, addr string)
 	}
 	onPeerSave func(peers []peer.AddrInfo)
 }
 
-func NewManager(h host.Host, trackerURL string, maxPeers int, listenHost string) *Manager {
+func NewManager(h host.Host, trackerURL string, maxPeers int, listenHost string, rendezvous string, dhtEnabled bool, bootstrapPeers []string) *Manager {
 	return &Manager{
-		host:        h,
-		peers:       make(map[peer.ID]*peer.AddrInfo),
-		persistence: NewPeerPersistence(),
-		tracker:     NewTrackerClient(trackerURL),
-		maxPeers:    maxPeers,
-		trackerURL:  trackerURL,
-		listenHost:  listenHost,
+		host:           h,
+		peers:          make(map[peer.ID]*peer.AddrInfo),
+		persistence:    NewPeerPersistence(),
+		tracker:        NewTrackerClient(trackerURL),
+		maxPeers:       maxPeers,
+		trackerURL:     trackerURL,
+		listenHost:     listenHost,
+		rendezvous:     rendezvous,
+		dhtEnabled:     dhtEnabled,
+		bootstrapPeers: slices.Clone(bootstrapPeers),
 	}
 }
 
@@ -65,12 +70,20 @@ func (m *Manager) Start(ctx context.Context) error {
 	logger.Info("Starting peer discovery from tracker...")
 	m.discoverFromTracker(ctx)
 	m.registerSelfWithTracker(ctx)
+	if err := m.connectBootstrapPeers(ctx); err != nil {
+		logger.Warnf("Failed to connect configured bootstrap peers error=%v", err)
+	}
 
 	if m.listenHost == "127.0.0.1" || m.listenHost == "localhost" {
 		logger.Info("Skipping mDNS discovery (localhost mode)")
 	} else {
 		logger.Info("Starting mDNS discovery in background...")
 		go m.discoverViaMDNS(ctx)
+	}
+
+	if !m.dhtEnabled {
+		logger.Info("DHT discovery disabled")
+		return nil
 	}
 
 	logger.Info("Initializing DHT with existing peer connections...")
@@ -132,6 +145,9 @@ func (m *Manager) UpdateTrackerURL(ctx context.Context, newURL string) {
 }
 
 func (m *Manager) AddBootstrapPeer(ctx context.Context, peerAddr peer.AddrInfo) error {
+	if !m.dhtEnabled {
+		return fmt.Errorf("DHT discovery is disabled")
+	}
 	if m.dht == nil {
 		return fmt.Errorf("DHT not initialized")
 	}
@@ -311,6 +327,29 @@ func (m *Manager) persistPeers() {
 	}
 }
 
+func (m *Manager) connectBootstrapPeers(ctx context.Context) error {
+	var connectErr error
+	for _, multiaddrStr := range m.bootstrapPeers {
+		addrInfo, err := peer.AddrInfoFromString(multiaddrStr)
+		if err != nil {
+			logger.Warnf("Ignoring invalid bootstrap peer multiaddr=%s error=%v", multiaddrStr, err)
+			continue
+		}
+		if addrInfo.ID == m.host.ID() {
+			continue
+		}
+
+		m.savePeer(*addrInfo, true)
+		if err := m.host.Connect(ctx, *addrInfo); err != nil {
+			logger.Warnf("Failed to connect bootstrap peer peer=%s error=%v", addrInfo.ID, err)
+			connectErr = err
+			continue
+		}
+		logger.Infof("Connected configured bootstrap peer peer=%s", addrInfo.ID)
+	}
+	return connectErr
+}
+
 func (m *Manager) initDHT(ctx context.Context) error {
 	connectedPeers := m.host.Network().Peers()
 	var bootstrapPeers []peer.AddrInfo
@@ -397,7 +436,7 @@ func (m *Manager) advertisePeriodically(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if m.discovery != nil {
-				m.discovery.Advertise(ctx, RendezvousString)
+				m.discovery.Advertise(ctx, m.rendezvous)
 				logger.Info("DHT re-advertised presence")
 			}
 		}
@@ -433,7 +472,7 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 	}
 
 	logger.Info("DHT: Advertising presence...")
-	m.discovery.Advertise(ctx, RendezvousString)
+	m.discovery.Advertise(ctx, m.rendezvous)
 	logger.Info("DHT: Advertisement complete")
 
 	logger.Info("DHT: Waiting for peer connections...")
@@ -449,7 +488,7 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 		queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
-		peerChan, err := m.discovery.FindPeers(queryCtx, RendezvousString)
+		peerChan, err := m.discovery.FindPeers(queryCtx, m.rendezvous)
 		if err != nil {
 			logger.Warnf("DHT FindPeers error error=%v", err)
 			time.Sleep(10 * time.Second)
@@ -507,7 +546,7 @@ func (m *Manager) discoverViaDHTRetry(ctx context.Context) {
 
 func (m *Manager) discoverViaMDNS(ctx context.Context) {
 	notifee := &mdnsNotifee{manager: m}
-	service := mdns.NewMdnsService(m.host, RendezvousString, notifee)
+	service := mdns.NewMdnsService(m.host, m.rendezvous, notifee)
 	if err := service.Start(); err != nil {
 		logger.Errorf("mDNS discovery failed error=%v", err)
 		return
