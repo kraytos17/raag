@@ -1,474 +1,322 @@
-<h1 align="center">
-    Raag CLI
-</h1>
+# Raag
 
-<div align="center">
-    Raag is a decentralized, P2P music streaming CLI application for local WiFi networks.
-</div>
+Raag is a terminal-first music player with local library management, playlists, and peer discovery over libp2p.
+It can run as a local app, or as a long-lived daemon that exposes status and peer information over a Unix socket.
 
-<div align="center">
-    <h3>P-Society Handles</h3>
-    <h3 align="center">
-        <a href="https://dev-psoc.netlify.app/">Website</a>
-        <span> | </span>
-        <a href="https://discord.gg/UhmKJGMnan">Community Discord</a>
-        <span> | </span>
-        <a href="https://github.com/p-society/gc-server/blob/main/docs/CONTRIBUTING.md">Contribute</a>
-    </h3>
-</div>
+## What It Does
 
-----------------------------------------
+- plays local music from a configured music directory
+- manages playlists and a simple queue
+- starts a Bubble Tea TUI when requested or when `ui.tui_enabled` is set
+- discovers peers with mDNS, DHT, and an optional tracker
+- persists config in `~/.config/raag/config.yaml`
+- persists discovered peers in `~/.config/raag/peers.json`
 
-## Table of Contents
+## Current Shape
 
-1. [Features](#features)
-2. [Architecture](#architecture)
-3. [Installation](#installation)
-4. [Quick Start](#quick-start)
-5. [CLI Reference](#cli-reference)
-6. [Configuration](#configuration)
-7. [Network Modes](#network-modes)
-8. [Network Setup](#network-setup)
-9. [Troubleshooting](#troubleshooting)
-10. [Contributing](#contributing)
-11. [License](#license)
+Raag currently has two practical workflows:
 
-----------------------------------------
+1. `raag` or `raag --tui` for a local in-process session
+2. `raag daemon` for a background process plus daemon-backed queries like `status`, `peers list`, and `peers info`
 
-## Features
+The daemon workflow is the most stable path for networking and peer inspection.
 
-- **CLI Music Player**: Play, pause, queue, and manage your local music library
-- **P2P Music Streaming**: Stream music from peers on your local network
-- **Multiple Discovery Methods**:
-  - **mDNS**: Automatic peer discovery on local network (requires `--wifi` mode)
-  - **DHT**: Distributed Hash Table for peer finding
-  - **Tracker**: Optional centralized tracker for reliable discovery
-- **TUI Mode**: Interactive terminal user interface with Bubble Tea
-- **Playlist Management**: Create, manage, and share playlists
-- **Persistent Peers**: Automatically remember and reconnect to known peers
+## Recommended Usage
 
-----------------------------------------
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                              Raag                                    │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────┐    ┌──────────────┐    ┌─────────────────────────┐   │
-│  │   CLI    │───▶│NetworkManager│───▶│     Discovery           │   │
-│  │ Commands │    │              │    │  ┌─────┐ ┌─────┐ ┌────┐ │   │
-│  └──────────┘    │  - libp2p   │    │  │ mDNS│ │ DHT │ │Trk │ │   │
-│                  │  - Protocol  │    │  └─────┘ └─────┘ └────┘ │   │
-│  ┌──────────┐    │  - Streaming│    └──────────┬──────────────┘   │
-│  │   TUI    │───▶│              │───────────────▼                   │
-│  │ (Bubble  │    └──────────────┘         ┌──────┐                 │
-│  │  Tea)    │                            │ Peers│                 │
-│  └──────────┘                            └──────┘                 │
-│                                                                      │
-│  ┌──────────┐    ┌──────────────┐    ┌─────────────────────────┐   │
-│  │  Player  │    │   Library    │    │    Storage              │   │
-│  │ (AVPlayer)│   │  (Metadata) │    │  (Playlists, Config)   │   │
-│  └──────────┘    └──────────────┘    └─────────────────────────┘   │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Components
-
-| Component | Description |
-|-----------|-------------|
-| **CLI Commands** | Playback control, peer management, library operations |
-| **NetworkManager** | libp2p host, connection management, music streaming |
-| **Discovery** | mDNS (local), DHT (distributed), Tracker (centralized) |
-| **Player** | Audio playback using AVPlayer |
-| **Library** | Music file scanning and metadata extraction |
-| **Storage** | Playlist persistence, configuration, peer cache |
-
-### Discovery Methods Comparison
-
-| Method | Requires Network | Setup | Best For |
-|--------|------------------|-------|----------|
-| **mDNS** | Local WiFi | `--wifi` flag | Multi-laptop on same network |
-| **DHT** | Internet | Bootstrap peers | Large-scale P2P |
-| **Tracker** | Any | Run tracker binary | Reliable discovery |
-| **None** | None | Default (offline) | Local playback only |
-
-----------------------------------------
-
-## Installation
-
-### Prerequisites
-
-- **Go 1.21 or later**
-- **FFmpeg** (for audio playback)
-
-### Build from Source
+Use one of these first:
 
 ```bash
-# Clone the repository
+# local interactive session
+./bin/raag --tui
+
+# offline daemon
+./bin/raag daemon --offline --host 127.0.0.1 --no-tui
+
+# LAN daemon
+./bin/raag daemon --wifi --host 0.0.0.0 --no-tui
+```
+
+Then inspect with:
+
+```bash
+./bin/raag status
+./bin/raag peers list
+./bin/raag peers info
+```
+
+## Requirements
+
+- Go `1.26`
+- a terminal with audio output support
+- local audio files in one of the currently supported formats:
+  - `.mp3`
+  - `.flac`
+  - `.wav`
+  - `.ogg`
+  - `.ogv`
+
+## Build
+
+```bash
 git clone https://github.com/p-society/raag.git
 cd raag
 
-# Build raag binary
-go build -o raag ./cmd/raag
-
-# Build tracker binary (optional, for centralized discovery)
-go build -o tracker ./tracker/cmd/tracker
+go build -o bin/raag ./cmd/raag
+go build -o bin/tracker ./tracker/cmd/tracker
 ```
-
-### Directory Structure
-
-```
-raag/
-├── bin/
-│   ├── raag           # Main binary
-│   └── tracker        # Tracker binary (optional)
-├── music/             # Your music files
-├── cmd/raag/          # CLI entry point
-├── internal/          # Core packages
-│   ├── config/        # Configuration management
-│   ├── discovery/     # P2P discovery (mDNS, DHT, Tracker)
-│   ├── library/       # Music library
-│   ├── network/       # libp2p networking
-│   ├── player/       # Audio playback
-│   ├── playlist/     # Playlist management
-│   └── tui/          # Terminal UI
-├── tracker/           # Centralized tracker server
-└── README.md
-```
-
-----------------------------------------
 
 ## Quick Start
 
-### Step 1: Prepare Your Music
+### Offline only
+
+Headless daemon:
 
 ```bash
-# Create music directory and add your music files
-mkdir -p music
-cp your_songs.mp3 music/
+./bin/raag daemon --offline --host 127.0.0.1 --no-tui
 ```
 
-### Step 2: Build
+Interactive local run:
 
 ```bash
-go build -o raag ./cmd/raag
+./bin/raag --tui
 ```
 
-### Step 3: Run with TUI (Interactive Mode)
+Useful local checks:
 
 ```bash
-./raag --tui
+./bin/raag status
+./bin/raag config show
 ```
 
-### Step 4: Or Run Daemon Mode
+### Wi-Fi / LAN discovery
+
+On each laptop on the same LAN:
 
 ```bash
-# Basic daemon (local playback only)
-./raag daemon --no-tui
-
-# With TUI
-./raag daemon --tui
+./bin/raag daemon --wifi --host 0.0.0.0 --no-tui
 ```
 
-### Step 5: Networked Mode (P2P Streaming)
-
-**Option A: Multiple Laptops on Same WiFi (mDNS)**
+Then inspect peers from any node:
 
 ```bash
-# Laptop 1
-./raag daemon --wifi --host 0.0.0.0 --no-tui
-
-# Laptop 2 (on same WiFi)
-./raag daemon --wifi --host 0.0.0.0 --no-tui
+./bin/raag peers list
+./bin/raag peers info
 ```
 
-**Option B: With Tracker**
+### Tracker-backed discovery
+
+Start the tracker on one machine:
 
 ```bash
-# Terminal 1: Start tracker
-./tracker
-
-# Terminal 2: Start daemon with tracker
-./raag daemon --wifi --host 0.0.0.0 --tracker http://localhost:8080 --no-tui
-
-# Terminal 3: Another daemon
-./raag daemon --wifi --host 0.0.0.0 --tracker http://localhost:8080 --no-tui
+./bin/tracker
 ```
 
-### Step 6: Control Playback
+Then point daemons at it:
 
 ```bash
-# Play a song
-./raag play "song name"
-
-# Check peers
-./raag peers list
-
-# Stream from peer
-./raag play "peer:song name"
+./bin/raag daemon --wifi --host 0.0.0.0 --tracker http://<tracker-ip>:8080 --no-tui
 ```
 
-----------------------------------------
+## Architecture
 
-## CLI Reference
-
-### Global Flags
-
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--config` | - | `~/.config/raag/config.yaml` | Config file path |
-| `--musicdir` | - | `./music` | Music directory |
-| `--offline` | - | `true` | Run in offline mode |
-| `--wifi` | - | `false` | Enable WiFi mode (mDNS + full transports) |
-| `--tui` | - | `false` | Start in TUI mode |
-| `--host` | - | `127.0.0.1` | Host to bind to (`0.0.0.0` for all interfaces) |
-| `--port` | - | `0` | Listen port (0 = random) |
-| `--fixed-port` | - | `0` | Fixed port (0 = random) |
-| `--tracker` | - | `""` | Tracker URL for discovery |
-| `--dht` | - | `true` | Enable DHT discovery |
-| `--max-peers` | - | `100` | Maximum peers to maintain |
-| `--bootstrap` | - | `[]` | Bootstrap peers (multiaddr) |
-| `--rendezvous` | - | `raag-music-share` | Rendezvous string for DHT |
-| `--pid` | - | `/raag/1.0.0` | Protocol ID |
-
-### Playback Commands
-
-#### play
-```bash
-# Play a song from library
-./raag play "song name"
-
-# Play from a specific peer
-./raag play "QmPeerID:song name"
+```text
+CLI / TUI
+   |
+   v
+bootstrapRuntime
+   |
+   +-- config (Viper + YAML)
+   +-- library scan
+   +-- player
+   +-- playlist manager
+   +-- network manager
+            |
+            +-- libp2p host
+            +-- mDNS discovery
+            +-- DHT discovery
+            +-- tracker client
+            +-- peer persistence
 ```
 
-#### pause
-```bash
-./raag pause
-```
+## Installation Layout
 
-#### resume
-```bash
-./raag resume
-```
+Generated runtime files live under `~/.config/raag/`:
 
-#### stop
-```bash
-./raag stop
-```
+- `config.yaml` - persisted application config
+- `daemon.sock` - Unix socket for daemon-backed queries
+- `peers.json` - persisted peer addresses
+- `playlists.json` - saved playlists
+- `state.json` - saved player state metadata
 
-#### next
-```bash
-./raag next
-```
+## Commands
 
-#### previous
-```bash
-./raag previous
-```
-
-#### queue
-```bash
-# View current queue
-./raag queue
-```
-
-#### volume
-```bash
-# Set volume (0-100)
-./raag volume 75
-
-# Get current volume
-./raag volume
-```
-
-#### seek
-```bash
-# Seek to position (seconds)
-./raag seek 60
-```
-
-#### nowplaying
-```bash
-./raag nowplaying
-```
-
-### Daemon Command
+### Root
 
 ```bash
-# Basic daemon
-./raag daemon --no-tui
-
-# With TUI
-./raag daemon --tui
-
-# Networked mode
-./raag daemon --wifi --host 0.0.0.0 --no-tui
-
-# With tracker
-./raag daemon --wifi --host 0.0.0.0 --tracker http://localhost:8080 --no-tui
+./bin/raag [flags]
+./bin/raag [command]
 ```
 
-### Peers Commands
+Available commands:
 
-#### peers list
+- `config`
+- `daemon`
+- `library`
+- `next`
+- `nowplaying`
+- `pause`
+- `peers`
+- `play`
+- `playlist`
+- `previous`
+- `queue`
+- `resume`
+- `seek`
+- `share`
+- `status`
+- `stop`
+- `volume`
+
+### Global flags
+
+These are available on the root command and inherited by subcommands.
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `--config` | config under `$HOME/.config/raag/config.yaml` | explicit config file path |
+| `--musicdir` | `./music` | music library directory |
+| `--offline` | `true` | run without peer discovery |
+| `--wifi` | `false` | enable LAN/network mode |
+| `--tui` | `false` | request TUI startup |
+| `--tracker` | empty | tracker URL |
+| `--fixed-port` | `0` | stable libp2p listen port |
+| `--dht` | `true` | enable DHT discovery |
+| `--max-peers` | `100` | peer cap for discovery state |
+| `--bootstrap` | empty | DHT bootstrap peer multiaddrs |
+| `--host` | `127.0.0.1` | bind host |
+| `--port` | `0` | random port when unset |
+| `--rendezvous` | `raag-music-share` | discovery namespace |
+| `--pid` | `/raag/1.0.0` | libp2p protocol id |
+
+### Daemon
+
 ```bash
-# List all connected peers
-./raag peers list
+./bin/raag daemon [flags]
 ```
 
-#### peers info
+Daemon-specific flags:
+
+- `--tracker`
+- `--tui`
+- `--no-tui`
+
+Example:
+
 ```bash
-# Show self peer info
-./raag peers info
+./bin/raag daemon --wifi --host 0.0.0.0 --fixed-port 4001 --no-tui
 ```
 
-#### peers connect
+### Peers
+
 ```bash
-# Connect to a peer via multiaddr
-./raag peers connect /ip4/192.168.1.100/tcp/4001/p2p/QmPeerID
+./bin/raag peers list
+./bin/raag peers info
+./bin/raag peers connect <multiaddr>
+./bin/raag peers disconnect <peer-id>
+./bin/raag peers tracker <url>
+./bin/raag peers bootstrap <multiaddr>
 ```
 
-#### peers disconnect
+Notes:
+
+- `peers list` shows currently connected peers
+- `peers info` shows self info, connected peers, and known peers
+- `peers tracker` updates tracker usage in the running app session
+- `peers bootstrap` adds one bootstrap peer to discovery
+
+### Config
+
 ```bash
-# Disconnect from a peer
-./raag peers disconnect QmPeerID
+./bin/raag config show
+./bin/raag config set <key> <value>
+./bin/raag config reset
 ```
 
-#### peers tracker
+Supported `config set` keys:
+
+- `musicdir`
+- `volume`
+- `tui`
+- `wifi`
+- `offline`
+- `rendezvous`
+- `host`
+- `port`
+- `loglevel`
+
+Examples:
+
 ```bash
-# Set tracker URL
-./raag peers tracker http://localhost:8080
+./bin/raag config set volume 70
+./bin/raag config set tui true
+./bin/raag config set host 0.0.0.0
+./bin/raag config set loglevel debug
 ```
 
-#### peers bootstrap
+### Library
+
 ```bash
-# Add bootstrap peer
-./raag peers bootstrap /ip4/192.168.1.100/tcp/4001/p2p/QmPeerID
+./bin/raag library list
+./bin/raag library search <query>
+./bin/raag library rescan
+./bin/raag library add <path>
+./bin/raag library remove <title>
 ```
 
-### Library Commands
+### Playlist
 
-#### library list
 ```bash
-# List all songs
-./raag library list
+./bin/raag playlist create <name>
+./bin/raag playlist delete <name>
+./bin/raag playlist list
+./bin/raag playlist add <playlist> <song>
+./bin/raag playlist remove <playlist> <index>
+./bin/raag playlist songs <playlist>
+./bin/raag playlist play <playlist>
 ```
 
-#### library search
+### Playback commands
+
 ```bash
-# Search for songs
-./raag library search "query"
+./bin/raag play <song>
+./bin/raag pause
+./bin/raag resume
+./bin/raag stop
+./bin/raag next
+./bin/raag previous
+./bin/raag queue
+./bin/raag volume [0-100]
+./bin/raag seek <seconds>
+./bin/raag nowplaying
 ```
 
-#### library rescan
+### Share
+
 ```bash
-# Rescan music directory
-./raag library rescan
+./bin/raag share <peer-multiaddr> <song-title>
 ```
 
-#### library add
+### Status
+
 ```bash
-# Add song to library
-./raag library add /path/to/song.mp3
+./bin/raag status
 ```
 
-#### library remove
-```bash
-# Remove song from library
-./raag library remove "song name"
-```
-
-### Playlist Commands
-
-#### playlist create
-```bash
-./raag playlist create myplaylist
-```
-
-#### playlist delete
-```bash
-./raag playlist delete myplaylist
-```
-
-#### playlist list
-```bash
-# List all playlists
-./raag playlist list
-```
-
-#### playlist add
-```bash
-# Add song to playlist
-./raag playlist add myplaylist "song name"
-```
-
-#### playlist remove
-```bash
-# Remove song from playlist
-./raag playlist remove myplaylist 0
-```
-
-#### playlist songs
-```bash
-# List songs in playlist
-./raag playlist songs myplaylist
-```
-
-#### playlist play
-```bash
-# Play playlist
-./raag playlist play myplaylist
-```
-
-### Config Commands
-
-#### config show
-```bash
-# Show current config
-./raag config show
-```
-
-#### config set
-```bash
-# Set config value
-./raag config set discovery.tracker_url http://localhost:8080
-./raag config set playback.volume 75
-./raag config set network.host 0.0.0.0
-```
-
-#### config reset
-```bash
-# Reset config to defaults
-./raag config reset
-```
-
-### Utility Commands
-
-#### share
-```bash
-# Generate shareable peer info
-./raag share
-```
-
-#### status
-```bash
-# Show daemon status
-./raag status
-```
-
-----------------------------------------
+If the daemon socket is available, `status` reads from the daemon. Otherwise it initializes a local runtime and reports standalone status.
 
 ## Configuration
 
-### Config File Location
-
-Default: `~/.config/raag/config.yaml`
-
-### Sample Configuration
+Default config values:
 
 ```yaml
 network:
@@ -495,374 +343,179 @@ ui:
   log_level: info
 ```
 
-### CLI Flag Precedence
+### Precedence
 
-Viper uses this priority order (highest to lowest):
+Effective precedence is:
 
-1. **CLI flags** (e.g., `--wifi`, `--host 0.0.0.0`)
-2. **Environment variables** (e.g., `RAAG_WIFI=true`)
-3. **Config file** (e.g., `config.yaml`)
-4. **Default values** (hardcoded in code)
+1. CLI flags
+2. config file values
+3. built-in defaults
 
-**Example:**
-```bash
-# CLI flag overrides config file
-./raag daemon --wifi --host 0.0.0.0  # Uses wifi=true even if config has offline=true
-```
+Special runtime behavior:
 
-### Persisting CLI Flags
-
-Some flags are automatically saved to config:
-
-| Flag | Persists? | Notes |
-|------|-----------|-------|
-| `--tracker` | Yes | Saved to `discovery.tracker_url` |
-| `--wifi` | No | Runtime override only |
-| `--host` | No | Runtime override only |
-| `--musicdir` | No | Runtime override only |
-
-----------------------------------------
+- passing `--wifi` forces `offline=false` for that run
+- `--tracker` on `raag daemon` is saved back into `config.yaml`
+- discovered peer addresses are saved into `discovery.bootstrap_peers`
 
 ## Network Modes
 
-### Offline Mode (Default)
+### Offline mode
+
+Use this when you only want local playback and no discovery.
 
 ```bash
-./raag daemon --no-tui
+./bin/raag daemon --offline --host 127.0.0.1 --no-tui
 ```
 
-- Only local playback
-- Limited libp2p transports
-- No peer discovery
-- Config: `offline: true`
+### Wi-Fi mode
 
-### WiFi Mode
+Use this for real LAN addresses and mDNS discovery.
 
 ```bash
-./raag daemon --wifi --host 0.0.0.0 --no-tui
+./bin/raag daemon --wifi --host 0.0.0.0 --no-tui
 ```
 
-- Full libp2p transports
-- mDNS peer discovery (local network)
-- DHT enabled
-- Config: `wifi_mode: true`
+### Wi-Fi mode without DHT
 
-### Tracker Mode
+Useful when you only want mDNS and optional tracker discovery.
 
 ```bash
-# Start tracker
-./tracker
-
-# Connect daemons to tracker
-./raag daemon --wifi --host 0.0.0.0 --tracker http://localhost:8080 --no-tui
+./bin/raag daemon --wifi --host 0.0.0.0 --dht=false --no-tui
 ```
 
-- Centralized peer registry
-- More reliable than pure mDNS
-- Works across networks
+### Custom rendezvous namespace
 
-### Mode Comparison
+All nodes must use the same rendezvous string to discover one another through DHT/mDNS.
 
-| Feature | Offline | WiFi | Tracker |
-|---------|---------|------|---------|
-| Local Playback | ✅ | ✅ | ✅ |
-| mDNS Discovery | ❌ | ✅ | ✅ |
-| DHT Discovery | ❌ | ✅ | ✅ |
-| Tracker Discovery | ❌ | ✅ | ✅ |
-| P2P Streaming | ❌ | ✅ | ✅ |
+```bash
+./bin/raag daemon --wifi --host 0.0.0.0 --rendezvous raag-team-a --no-tui
+```
 
-----------------------------------------
+### Bootstrap peers
 
-## Network Setup
+You can seed DHT startup with explicit peers:
 
-### Setting Up mDNS (Multiple Laptops)
+```bash
+./bin/raag daemon \
+  --wifi \
+  --host 0.0.0.0 \
+  --bootstrap /ip4/192.168.0.10/tcp/4001/p2p/<peer-id> \
+  --bootstrap /ip4/192.168.0.11/tcp/4001/p2p/<peer-id> \
+  --no-tui
+```
 
-mDNS enables automatic peer discovery on local networks without any central server.
+## mDNS Testing Across Multiple Laptops
 
-**Requirements:**
-- 2+ laptops on the same WiFi network
-- Firewall allows mDNS (port 5353)
+For pure mDNS, use multiple physical machines on the same LAN.
+Loopback-only local testing is not representative.
 
-**Steps:**
+On every laptop:
 
-1. **Build the binary**
-   ```bash
-   go build -o raag ./cmd/raag
-   ```
+```bash
+./bin/raag daemon --wifi --host 0.0.0.0 --no-tui
+```
 
-2. **Copy to all laptops**
-   ```bash
-   scp raag laptop2:/path/to/raag
-   ```
+Then verify on any laptop:
 
-3. **Run on each laptop**
-   ```bash
-   # Laptop 1
-   ./raag daemon --wifi --host 0.0.0.0 --no-tui
+```bash
+./bin/raag peers list
+./bin/raag peers info
+```
 
-   # Laptop 2
-   ./raag daemon --wifi --host 0.0.0.0 --no-tui
+Expected behavior:
 
-   # Laptop 3
-   ./raag daemon --wifi --host 0.0.0.0 --no-tui
-   ```
+- self address should show a real LAN address, not only `127.0.0.1`
+- `network_peers` should reflect current remote libp2p peers
+- with 4 terminals total, fully connected nodes should report 3 remote peers
 
-4. **Verify**
-   ```bash
-   # On any laptop
-   ./raag peers list
-   ```
+## Logs And Counters
 
-You should see peers from other laptops within ~10 seconds.
+A typical DHT line looks like this:
 
-### Setting Up Tracker
+```text
+DHT status: routing_table_size=3 connected_peers=3 network_peers=3
+```
 
-The tracker provides centralized peer discovery as a fallback.
+Meaning:
 
-**Steps:**
+- `routing_table_size` - peers currently present in the DHT routing table
+- `connected_peers` - peers Raag currently tracks as connected
+- `network_peers` - live remote peers from libp2p's network view
 
-1. **Build tracker**
-   ```bash
-   go build -o tracker ./tracker/cmd/tracker
-   ```
+These numbers can differ briefly because DHT memory, app bookkeeping, and live transport connections are different layers.
 
-2. **Start tracker** (one machine, keeps running)
-   ```bash
-   ./tracker
-   ```
+## Operational Notes
 
-3. **Connect daemons**
-   ```bash
-   # Get tracker's IP first
-   hostname -I
+- `GetMultiaddr()` now reports actual bound libp2p addresses instead of config placeholders
+- `ui.tui_enabled` is honored when no explicit `--tui` / `--no-tui` override is provided
+- `ui.log_level` is applied at startup
+- `discovery.dht_enabled`, `network.rendezvous`, and `discovery.bootstrap_peers` are now active runtime settings
 
-   # On all machines, use tracker's IP
-   ./raag daemon --wifi --host 0.0.0.0 --tracker http://192.168.1.X:8080 --no-tui
-   ```
+## Known Limitations
 
-4. **Verify**
-   ```bash
-   ./raag peers list
-   ```
-
-### Setting Up DHT with Bootstrap Peers
-
-For DHT to work, you need at least one bootstrap peer.
-
-**Steps:**
-
-1. **Get a peer's multiaddr**
-   ```bash
-   ./raag peers info
-   # Output: /ip4/192.168.1.100/tcp/4001/p2p/QmPeerID
-   ```
-
-2. **Use as bootstrap**
-   ```bash
-   ./raag daemon --bootstrap /ip4/192.168.1.100/tcp/4001/p2p/QmPeerID --no-tui
-   ```
-
-3. **Or add to config**
-   ```yaml
-   discovery:
-     bootstrap_peers:
-       - /ip4/192.168.1.100/tcp/4001/p2p/QmPeerID
-   ```
-
-----------------------------------------
+- the daemon-backed workflow is the most reliable path today for networking, peer inspection, and status queries
+- some direct playback and library subcommands still assume an initialized in-process runtime, so `raag`, `raag --tui`, or `raag daemon` should be started first when validating end-to-end behavior
+- peer discovery state and live libp2p connections can diverge briefly, so `routing_table_size`, `connected_peers`, and `network_peers` should not always be expected to match exactly at every instant
 
 ## Troubleshooting
 
-### No Peers Discovered
+### No peers discovered
 
-**Symptoms:** `./raag peers list` shows 0 peers
+- for offline mode, this is expected
+- for LAN discovery, use `--wifi --host 0.0.0.0`
+- verify all nodes share the same `--rendezvous`
+- try the tracker if mDNS is flaky
 
-**Solutions:**
+### `network_peers` lower than expected
 
-1. **Check network mode**
-   ```bash
-   # Should show wifi=true, host=0.0.0.0
-   ./raag status
-   ```
+- one remote peer may be discovered but not currently connected
+- compare `peers info` output across all nodes
+- manually test with `peers connect <multiaddr>`
+- make sure the displayed value is taken from the latest build
 
-2. **Restart with correct flags**
-   ```bash
-   ./raag daemon --wifi --host 0.0.0.0 --no-tui
-   ```
+### mDNS not working
 
-3. **Try tracker mode**
-   ```bash
-   ./tracker  # In one terminal
-   ./raag daemon --wifi --host 0.0.0.0 --tracker http://localhost:8080 --no-tui
-   ```
+- test across real laptops on the same network
+- avoid loopback-only assumptions
+- check firewall rules for multicast/UDP 5353
 
-### Port Already in Use
+### Port conflicts
 
-**Symptoms:** `Error: port already in use`
+Use either a random port:
 
-**Solutions:**
+```bash
+./bin/raag daemon --port 0 --no-tui
+```
 
-1. **Use random port**
-   ```bash
-   ./raag daemon --port 0 --no-tui
-   ```
+Or a fixed one:
 
-2. **Use fixed port**
-   ```bash
-   ./raag daemon --fixed-port 4001 --no-tui
-   ```
+```bash
+./bin/raag daemon --fixed-port 4001 --no-tui
+```
 
-### mDNS Not Working
+### Playback/library commands
 
-**Symptoms:** Peers not discovered on local network
+Raag's most reliable workflows today are:
 
-**Solutions:**
+- `raag` / `raag --tui` for an in-process session
+- `raag daemon` for background networking and daemon-backed inspection commands
 
-1. **Verify --wifi flag**
-   ```bash
-   # Must use --wifi, not just --offline=false
-   ./raag daemon --wifi --host 0.0.0.0 --no-tui
-   ```
+If you are debugging command behavior, start there first.
 
-2. **Check firewall**
-   ```bash
-   # Linux - allow mDNS
-   sudo ufw allow 5353/udp
-   ```
+## Development
 
-3. **Same network?** mDNS doesn't work across different networks or VPN
+Build and validate:
 
-4. **Try tracker** as fallback
-
-### Config Not Saving
-
-**Symptoms:** CLI flags work but don't persist after restart
-
-**Solutions:**
-
-1. **Check config file location**
-   ```bash
-   cat ~/.config/raag/config.yaml
-   ```
-
-2. **Check file permissions**
-   ```bash
-   ls -la ~/.config/raag/
-   ```
-
-3. **Manually set config**
-   ```bash
-   ./raag config set discovery.tracker_url http://localhost:8080
-   ```
-
-### Audio Not Playing
-
-**Symptoms:** Songs show in library but don't play
-
-**Solutions:**
-
-1. **Check FFmpeg installation**
-   ```bash
-   ffmpeg -version
-   ```
-
-2. **Check file format**
-   ```bash
-   # Supported: MP3, FLAC, WAV, OGG, M4A
-   file music/song.mp3
-   ```
-
-3. **Check volume**
-   ```bash
-   ./raag volume 100
-   ```
-
-### DHT Routing Table Empty
-
-**Symptoms:** `routing_table_size=0` in logs
-
-**Solutions:**
-
-1. **This is normal initially** - DHT populates over time
-2. **Add bootstrap peers** to speed up
-3. **Use tracker** for faster initial discovery
-
-### Network Peers Shows Negative
-
-**Symptoms:** `network_peers=-1`
-
-**Solutions:**
-
-1. **This is a display bug**, actual peers are fine
-2. **Check with:**
-   ```bash
-   ./raag peers list
-   ```
-
-----------------------------------------
+```bash
+go build ./...
+go test ./...
+staticcheck ./...
+```
 
 ## Contributing
 
-Contributions are welcome! Please see our [Contributing Guide](https://github.com/p-society/gc-server/blob/main/docs/CONTRIBUTING.md).
-
-### Development Setup
-
-```bash
-# Clone and setup
-git clone https://github.com/p-society/raag.git
-cd raag
-
-# Install dependencies
-go mod download
-
-# Run tests
-go test ./...
-
-# Run with hot reload (optional)
-```
-
-### Code Structure
-
-```
-internal/
-├── config/       # Viper configuration
-├── discovery/   # P2P discovery (mDNS, DHT, Tracker)
-├── library/      # Music file scanning
-├── logger/       # Logging (charmbracelet/log)
-├── metadata/     # Audio metadata
-├── network/      # libp2p networking
-├── player/       # Audio playback
-├── playlist/     # Playlist management
-├── socket/       # Unix socket IPC
-├── storage/      # Data persistence
-└── tui/         # Terminal UI
-```
-
-----------------------------------------
+Contributions are welcome. Please use the project issue tracker and PR flow in the repository.
 
 ## License
 
-Raag is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
-
----
-
-<div align="center">
-    <br/>
-    <img src='https://github.com/p-society/raag/assets/119437069/43759dc5-7386-4bc9-9598-bb95ad90ad8f' width='70' height='70'>
-    <img src='https://github.com/p-society/raag/assets/119437069/108a1ce3-107d-4a43-ad63-d34a007beab3' width='70' height='70' style='border-radius: 10px;'>
-    <img src='https://github.com/p-society/raag/assets/119437069/c6e0493e-07b5-4af1-a35c-04c3012247e1' width='70' height='70' style='border-radius: 10px;'>
-    <img src='https://github.com/p-society/raag/assets/119437069/b69a92ce-e818-4fac-b44a-5d0f58f909a5' width='70' height='70' style='border-radius: 10px;'>
-    <br/>
-</div>
-
-### Current Contributors
-
-<a href="https://github.com/p-society/raag/graphs/contributors">
-    <img src="https://contributors-img.web.app/image?repo=p-society/raag" />
-</a>
-
-Made with [contributors-img](https://contributors-img.web.app).
-
-## Subscribe to Updates
-
-Join our [Discord Server](https://discord.gg/UhmKJGMnan) and subscribe to this repository to get updates about Raag.
+Raag is licensed under the Apache License 2.0.
