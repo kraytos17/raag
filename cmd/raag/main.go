@@ -110,6 +110,9 @@ func initializeApp(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	if cmd.Root().Flags().Changed("wifi") {
+		cfg.Offline = false
+	}
 
 	store, err = storage.New()
 	if err != nil {

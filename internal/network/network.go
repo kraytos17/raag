@@ -58,7 +58,7 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(listenAddr)
 	opts = append(opts, libp2p.ListenAddrs(sourceMultiAddr), libp2p.Identity(prvKey))
-	if cfg.Offline {
+	if cfg.Offline && !cfg.Wifi {
 		logger.Info("Using offline mode with limited transports")
 		opts = append(opts, libp2p.DefaultTransports)
 		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 15, time.Minute)))

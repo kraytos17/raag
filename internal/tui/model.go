@@ -303,7 +303,6 @@ func (m *Model) renderPlaylistView() string {
 			output.WriteString(ListItemStyle.Render("  "+name) + "\n")
 		}
 	}
-
 	if len(playlists) == 0 {
 		output.WriteString(HelpStyle.Render("No playlists. Use CLI to create one."))
 	}
