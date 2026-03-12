@@ -56,7 +56,7 @@ func main() {
 	rootCmd.PersistentFlags().String("musicdir", "./music", "Directory containing music files")
 	rootCmd.PersistentFlags().Bool("network", false, "Enable network mode for peer discovery")
 	rootCmd.PersistentFlags().Bool("tui", false, "Start in TUI mode")
-	rootCmd.PersistentFlags().String("tracker", "", "Centralized tracker URL for peer discovery")
+	rootCmd.PersistentFlags().String("tracker", constants.DefaultTrackerURL, "Centralized tracker URL for peer discovery")
 	rootCmd.PersistentFlags().Int("port", constants.DefaultPort, "Node listen port (use 0 for random)")
 	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery")
 	rootCmd.PersistentFlags().Int("max-peers", constants.DefaultMaxPeers, "Maximum number of peers to maintain")

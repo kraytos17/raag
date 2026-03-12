@@ -30,7 +30,7 @@ for fast CLI queries. Use 'raag peers list' and other commands to query.
 
 Examples:
   raag daemon --tracker http://localhost:8080
-  raag daemon --tracker http://localhost:8080 --no-tui`,
+  raag daemon --tracker http://raag-production.up.railway.app`,
 		Run: func(cmd *cobra.Command, args []string) {
 			runDaemon(cmd)
 		},
