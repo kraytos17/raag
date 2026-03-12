@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/p-society/raag/internal/constants"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -13,9 +14,7 @@ type Config struct {
 	// Network
 	Host       string
 	Port       int
-	FixedPort  int
 	Rendezvous string
-	ProtocolID string
 
 	// Discovery
 	TrackerURL     string
@@ -29,32 +28,23 @@ type Config struct {
 
 	// UI
 	TUI      bool
-	Wifi     bool
-	Offline  bool
+	Network  bool
 	LogLevel string
 }
-
-// DefaultPort for peer connections (used when FixedPort is not specified)
-// Using a well-known port makes it easier for firewall configuration
-// Users can change this via --port flag or --fixed-port for stability
-const DefaultPort = 45678
 
 func DefaultConfig() Config {
 	return Config{
 		Host:           "127.0.0.1",
-		Port:           DefaultPort,
-		FixedPort:      0,
-		Rendezvous:     "raag-music-share",
-		ProtocolID:     "/raag/1.0.0",
+		Port:           constants.DefaultPort,
+		Rendezvous:     constants.DefaultRendezvous,
 		TrackerURL:     "",
 		DHTEnabled:     true,
-		MaxPeers:       100,
+		MaxPeers:       constants.DefaultMaxPeers,
 		BootstrapPeers: []string{},
 		MusicDir:       "./music",
-		Volume:         50,
+		Volume:         constants.DefaultVolume,
 		TUI:            true,
-		Wifi:           false,
-		Offline:        true,
+		Network:        false,
 		LogLevel:       "info",
 	}
 }
@@ -101,9 +91,7 @@ func setDefaults(v *viper.Viper) {
 	defaults := DefaultConfig()
 	v.SetDefault("network.host", defaults.Host)
 	v.SetDefault("network.port", defaults.Port)
-	v.SetDefault("network.fixed_port", defaults.FixedPort)
 	v.SetDefault("network.rendezvous", defaults.Rendezvous)
-	v.SetDefault("network.protocol_id", defaults.ProtocolID)
 	v.SetDefault("discovery.tracker_url", defaults.TrackerURL)
 	v.SetDefault("discovery.dht_enabled", defaults.DHTEnabled)
 	v.SetDefault("discovery.max_peers", defaults.MaxPeers)
@@ -111,8 +99,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("playback.music_dir", defaults.MusicDir)
 	v.SetDefault("playback.volume", defaults.Volume)
 	v.SetDefault("ui.tui_enabled", defaults.TUI)
-	v.SetDefault("ui.wifi_mode", defaults.Wifi)
-	v.SetDefault("ui.offline", defaults.Offline)
+	v.SetDefault("ui.network", defaults.Network)
 	v.SetDefault("ui.log_level", defaults.LogLevel)
 }
 
@@ -121,9 +108,7 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	// Network flags
 	v.BindPFlag("network.host", root.PersistentFlags().Lookup("host"))
 	v.BindPFlag("network.port", root.PersistentFlags().Lookup("port"))
-	v.BindPFlag("network.fixed_port", root.PersistentFlags().Lookup("fixed-port"))
 	v.BindPFlag("network.rendezvous", root.PersistentFlags().Lookup("rendezvous"))
-	v.BindPFlag("network.protocol_id", root.PersistentFlags().Lookup("pid"))
 
 	// Discovery flags
 	v.BindPFlag("discovery.tracker_url", root.PersistentFlags().Lookup("tracker"))
@@ -136,8 +121,7 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 
 	// UI flags
 	v.BindPFlag("ui.tui_enabled", root.PersistentFlags().Lookup("tui"))
-	v.BindPFlag("ui.wifi_mode", root.PersistentFlags().Lookup("wifi"))
-	v.BindPFlag("ui.offline", root.PersistentFlags().Lookup("offline"))
+	v.BindPFlag("ui.network", root.PersistentFlags().Lookup("network"))
 }
 
 // LoadConfig loads configuration from Viper instance
@@ -145,9 +129,7 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 	cfg := &Config{
 		Host:       v.GetString("network.host"),
 		Port:       v.GetInt("network.port"),
-		FixedPort:  v.GetInt("network.fixed_port"),
 		Rendezvous: v.GetString("network.rendezvous"),
-		ProtocolID: v.GetString("network.protocol_id"),
 
 		TrackerURL:     v.GetString("discovery.tracker_url"),
 		DHTEnabled:     v.GetBool("discovery.dht_enabled"),
@@ -158,37 +140,27 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 		Volume:   v.GetInt("playback.volume"),
 
 		TUI:      v.GetBool("ui.tui_enabled"),
-		Wifi:     v.GetBool("ui.wifi_mode"),
-		Offline:  v.GetBool("ui.offline"),
+		Network:  v.GetBool("ui.network"),
 		LogLevel: v.GetString("ui.log_level"),
 	}
 
-	// If port is 0 (not set in config), use default port for networked mode
-	// This prevents issues where old config files have port=0
-	if cfg.Port == 0 && !cfg.Offline {
-		cfg.Port = DefaultPort
-	}
+	// Validate port
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, fmt.Errorf("invalid port number: %d", cfg.Port)
 	}
-	if cfg.FixedPort < 0 || cfg.FixedPort > 65535 {
-		return nil, fmt.Errorf("invalid fixed port number: %d", cfg.FixedPort)
+	// If port is 0 (not set in config), use default port for networked mode
+	if cfg.Port == 0 && cfg.Network {
+		cfg.Port = constants.DefaultPort
 	}
+
 	return cfg, nil
 }
 
 // SaveConfig saves current configuration to file
 func SaveConfig(v *viper.Viper, cfg *Config) error {
-	// Update Viper with config values
 	v.Set("network.host", cfg.Host)
-	// Don't save port=0 for networked mode - use default instead
-	if cfg.Port == 0 && !cfg.Offline {
-		cfg.Port = DefaultPort
-	}
 	v.Set("network.port", cfg.Port)
-	v.Set("network.fixed_port", cfg.FixedPort)
 	v.Set("network.rendezvous", cfg.Rendezvous)
-	v.Set("network.protocol_id", cfg.ProtocolID)
 
 	v.Set("discovery.tracker_url", cfg.TrackerURL)
 	v.Set("discovery.dht_enabled", cfg.DHTEnabled)
@@ -199,8 +171,7 @@ func SaveConfig(v *viper.Viper, cfg *Config) error {
 	v.Set("playback.volume", cfg.Volume)
 
 	v.Set("ui.tui_enabled", cfg.TUI)
-	v.Set("ui.wifi_mode", cfg.Wifi)
-	v.Set("ui.offline", cfg.Offline)
+	v.Set("ui.network", cfg.Network)
 	v.Set("ui.log_level", cfg.LogLevel)
 
 	return v.WriteConfig()

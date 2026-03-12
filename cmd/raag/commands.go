@@ -928,8 +928,7 @@ func configShowCommand() *cobra.Command {
 				logger.Infof("music_dir value=%s", defaults.MusicDir)
 				logger.Infof("volume value=%d", defaults.Volume)
 				logger.Infof("tui_enabled value=%v", defaults.TUI)
-				logger.Infof("wifi_mode value=%v", defaults.Wifi)
-				logger.Infof("offline value=%v", defaults.Offline)
+				logger.Infof("network value=%v", defaults.Network)
 				logger.Infof("rendezvous value=%s", defaults.Rendezvous)
 				logger.Infof("host value=%s", defaults.Host)
 				logger.Infof("port value=%d", defaults.Port)
@@ -941,8 +940,7 @@ func configShowCommand() *cobra.Command {
 			logger.Infof("music_dir value=%s", cfg.MusicDir)
 			logger.Infof("volume value=%d", cfg.Volume)
 			logger.Infof("tui_enabled value=%v", cfg.TUI)
-			logger.Infof("wifi_mode value=%v", cfg.Wifi)
-			logger.Infof("offline value=%v", cfg.Offline)
+			logger.Infof("network value=%v", cfg.Network)
 			logger.Infof("rendezvous value=%s", cfg.Rendezvous)
 			logger.Infof("host value=%s", cfg.Host)
 			logger.Infof("port value=%d", cfg.Port)
@@ -986,20 +984,13 @@ func configSetCommand() *cobra.Command {
 					return
 				}
 				cfg.TUI = v
-			case "wifi":
+			case "network":
 				v, err := strconv.ParseBool(value)
 				if err != nil {
-					logger.Errorf("wifi must be true or false error=invalid value")
+					logger.Errorf("network must be true or false error=invalid value")
 					return
 				}
-				cfg.Wifi = v
-			case "offline":
-				v, err := strconv.ParseBool(value)
-				if err != nil {
-					logger.Errorf("offline must be true or false error=invalid value")
-					return
-				}
-				cfg.Offline = v
+				cfg.Network = v
 			case "rendezvous":
 				cfg.Rendezvous = value
 			case "host":
@@ -1019,7 +1010,7 @@ func configSetCommand() *cobra.Command {
 				cfg.LogLevel = value
 			default:
 				logger.Errorf("unknown config key key=%s", key)
-				logger.Infof("available keys: musicdir, volume, tui, wifi, offline, rendezvous, host, port, loglevel")
+				logger.Infof("available keys: musicdir, volume, tui, network, rendezvous, host, port, loglevel")
 				return
 			}
 
@@ -1054,13 +1045,10 @@ func configResetCommand() *cobra.Command {
 			cfg.MusicDir = defaults.MusicDir
 			cfg.Volume = defaults.Volume
 			cfg.TUI = defaults.TUI
-			cfg.Wifi = defaults.Wifi
-			cfg.Offline = defaults.Offline
+			cfg.Network = defaults.Network
 			cfg.Rendezvous = defaults.Rendezvous
 			cfg.Host = defaults.Host
 			cfg.Port = defaults.Port
-			cfg.FixedPort = defaults.FixedPort
-			cfg.ProtocolID = defaults.ProtocolID
 			cfg.TrackerURL = defaults.TrackerURL
 			cfg.DHTEnabled = defaults.DHTEnabled
 			cfg.MaxPeers = defaults.MaxPeers

@@ -34,9 +34,6 @@ func loadConfigOnly(cmd *cobra.Command) (*viper.Viper, *config.Config, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	if cmd.Root().Flags().Changed("wifi") {
-		cfg.Offline = false
-	}
 
 	logger.SetLevel(cfg.LogLevel)
 	return v, cfg, nil
