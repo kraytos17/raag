@@ -203,6 +203,73 @@ func isUsableAddr(addr string) bool {
 		strings.Contains(addr, "/ip4/")
 }
 
+func isReachableAddr(addr string) bool {
+	addrLower := strings.ToLower(addr)
+	if strings.Contains(addrLower, "/127.0.0.1/") || strings.Contains(addrLower, "/localhost/") {
+		return false
+	}
+	if strings.HasPrefix(addrLower, "/ip4/172.") {
+		octets := strings.SplitSeq(addrLower, "/")
+		for octet := range octets {
+			if len(octet) == 3 && octet[0] == '1' && octet[1] == '7' && octet[2] == '2' {
+				return false
+			}
+		}
+	}
+	if strings.Contains(addrLower, "/172.1") || strings.Contains(addrLower, "/172.2") || strings.Contains(addrLower, "/172.3") {
+		return false
+	}
+	if strings.Contains(addrLower, "/192.168.122.") || strings.Contains(addrLower, "/192.168.124.") {
+		return false
+	}
+	if strings.Contains(addrLower, "/10.") && !strings.Contains(addrLower, "/192.168.") {
+		return false
+	}
+	if strings.HasPrefix(addrLower, "/ip4/169.254.") {
+		return false
+	}
+	if strings.HasPrefix(addrLower, "/ip4/224.") || strings.HasPrefix(addrLower, "/ip4/225.") || strings.HasPrefix(addrLower, "/ip4/226.") {
+		return false
+	}
+	return true
+}
+
+func filterReachableAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+	var filtered []multiaddr.Multiaddr
+	for _, addr := range addrs {
+		if isReachableAddr(addr.String()) {
+			filtered = append(filtered, addr)
+		} else {
+			logger.Debugf("Filtered unreachable address: %s", addr.String())
+		}
+	}
+	if len(filtered) == 0 && len(addrs) > 0 {
+		logger.Debugf("All addresses filtered, using original list")
+		return addrs
+	}
+	return filtered
+}
+
+func prioritizeAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+	var lan, wan, relay, other []multiaddr.Multiaddr
+	for _, addr := range addrs {
+		addrStr := strings.ToLower(addr.String())
+		if strings.Contains(addrStr, "/192.168.") || strings.Contains(addrStr, "/192.168.0.") {
+			lan = append(lan, addr)
+		} else if strings.Contains(addrStr, "/p2p-circuit") {
+			relay = append(relay, addr)
+		} else if strings.Contains(addrStr, "/ip4/") {
+			wan = append(wan, addr)
+		} else {
+			other = append(other, addr)
+		}
+	}
+
+	result := append(append(lan, wan...), other...)
+	result = append(result, relay...)
+	return result
+}
+
 func (m *Manager) getAuthData() (string, error) {
 	if m.authToken == nil && m.authKeyPair != nil {
 		token, err := auth.GenerateToken(m.host.ID(), m.authKeyPair)
@@ -363,6 +430,14 @@ func (m *Manager) tryConnectToPeer(p peer.AddrInfo) {
 }
 
 func (m *Manager) connectWithRetry(p peer.AddrInfo) {
+	if len(p.Addrs) > 0 {
+		filteredAddrs := filterReachableAddresses(p.Addrs)
+		prioritizedAddrs := prioritizeAddresses(filteredAddrs)
+		p.Addrs = prioritizedAddrs
+		logger.Debugf("Filtered peer addresses from %d to %d peer=%s",
+			len(p.Addrs), len(prioritizedAddrs), p.ID)
+	}
+
 	maxRetries := 3
 	retryDelays := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
 	for attempt := range maxRetries {
