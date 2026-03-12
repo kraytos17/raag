@@ -93,7 +93,7 @@ func runDaemon(cmd *cobra.Command) {
 	}
 
 	logger.Infof("Raag daemon started. Use Ctrl+C to stop.")
-	showTUI := shouldStartTUI(cmd, cfg, true, daemonNoTUI)
+	showTUI := shouldStartTUI(cmd, daemonNoTUI)
 	if showTUI {
 		go func() {
 			tui.Start(lib, p, netMgr, pm)
