@@ -68,7 +68,6 @@ func (t *Tracker) Start() error {
 	if err := t.initLibp2p(); err != nil {
 		return fmt.Errorf("failed to init libp2p: %w", err)
 	}
-
 	if t.dhtEnabled {
 		if err := t.initDHT(ctx); err != nil {
 			logger.Warnf("Failed to init DHT: %v", err)
@@ -79,14 +78,28 @@ func (t *Tracker) Start() error {
 
 	logger.Infof("Tracker HTTP server starting on port %d", t.httpPort)
 	logger.Infof("Tracker libp2p listening on %s", t.multiaddr())
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", t.httpPort),
+		Handler: t,
+	}
 
 	go func() {
-		if err := http.ListenAndServe(fmt.Sprintf(":%d", t.httpPort), t); err != nil {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Errorf("HTTP server failed: %v", err)
+			cancel()
 		}
 	}()
-
 	<-ctx.Done()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Warnf("HTTP server shutdown error: %v", err)
+	}
+	if t.host != nil {
+		t.host.Close()
+	}
+
 	return nil
 }
 

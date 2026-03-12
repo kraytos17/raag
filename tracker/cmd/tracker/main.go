@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
@@ -32,6 +35,9 @@ func main() {
 Example:
   ./tracker --http-port 8080 --libp2p-port 45678 --relay --dht`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
 			config := tracker.TrackerConfig{
 				HTTPPort:     cfg.httpPort,
 				Libp2pPort:   cfg.libp2pPort,
@@ -43,7 +49,26 @@ Example:
 			if cfg.authToken != "" {
 				logger.Infof("Authorization enabled - tokens required for peer registration")
 			}
-			return t.Start()
+
+			go func() {
+				if err := t.Start(); err != nil {
+					logger.Errorf("Tracker error: %v", err)
+					cancel()
+				}
+			}()
+
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+			select {
+			case <-ctx.Done():
+				logger.Infof("Tracker shutting down...")
+				return nil
+			case sig := <-sigChan:
+				logger.Infof("Received signal %v, shutting down...", sig)
+				cancel()
+				return nil
+			}
 		},
 	}
 
