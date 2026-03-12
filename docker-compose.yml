@@ -1,0 +1,19 @@
+version: "3.8"
+services:
+  tracker:
+    build: .
+    container_name: raag-tracker
+    environment:
+      - TRACKER_HTTP_PORT=8080
+      - TRACKER_LIBP2P_PORT=45678
+      - TRACKER_RELAY=true
+      - TRACKER_DHT=true
+    ports:
+      - "8080:8080"
+      - "45678:45678"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

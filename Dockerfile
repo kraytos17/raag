@@ -13,4 +13,9 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /app
 COPY --from=builder /app/tracker .
 
-CMD ["./tracker", "--http-port", "8080", "--libp2p-port", "45678", "--relay", "--dht"]
+ENV TRACKER_HTTP_PORT=8080
+ENV TRACKER_LIBP2P_PORT=45678
+ENV TRACKER_RELAY=true
+ENV TRACKER_DHT=true
+
+CMD ["sh", "-c", "./tracker --http-port ${TRACKER_HTTP_PORT:-8080} --libp2p-port ${TRACKER_LIBP2P_PORT:-45678} --relay ${TRACKER_RELAY:-true} --dht ${TRACKER_DHT:-true}"]

@@ -127,33 +127,42 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 // LoadConfig loads configuration from Viper instance
 func LoadConfig(v *viper.Viper) (*Config, error) {
 	cfg := &Config{
-		Host:       v.GetString("network.host"),
-		Port:       v.GetInt("network.port"),
-		Rendezvous: v.GetString("network.rendezvous"),
-
-		TrackerURL:     v.GetString("discovery.tracker_url"),
+		Host:           v.GetString("network.host"),
+		Port:           v.GetInt("network.port"),
+		Rendezvous:     v.GetString("network.rendezvous"),
+		TrackerURL:     getTrackerURL(v),
 		DHTEnabled:     v.GetBool("discovery.dht_enabled"),
 		MaxPeers:       v.GetInt("discovery.max_peers"),
 		BootstrapPeers: v.GetStringSlice("discovery.bootstrap_peers"),
-
-		MusicDir: v.GetString("playback.music_dir"),
-		Volume:   v.GetInt("playback.volume"),
-
-		TUI:      v.GetBool("ui.tui_enabled"),
-		Network:  v.GetBool("ui.network"),
-		LogLevel: v.GetString("ui.log_level"),
+		MusicDir:       v.GetString("playback.music_dir"),
+		Volume:         v.GetInt("playback.volume"),
+		TUI:            v.GetBool("ui.tui_enabled"),
+		Network:        v.GetBool("ui.network"),
+		LogLevel:       v.GetString("ui.log_level"),
 	}
 
-	// Validate port
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, fmt.Errorf("invalid port number: %d", cfg.Port)
 	}
-	// If port is 0 (not set in config), use default port for networked mode
 	if cfg.Port == 0 && cfg.Network {
 		cfg.Port = constants.DefaultPort
 	}
 
 	return cfg, nil
+}
+
+// getTrackerURL returns the tracker URL with priority:
+// 1. CLI flag (via config file)
+// 2. Environment variable
+// 3. Default value
+func getTrackerURL(v *viper.Viper) string {
+	if url := v.GetString("discovery.tracker_url"); url != "" {
+		return url
+	}
+	if url := os.Getenv(constants.EnvTrackerURL); url != "" {
+		return url
+	}
+	return constants.DefaultTrackerURL
 }
 
 // SaveConfig saves current configuration to file
