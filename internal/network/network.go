@@ -62,8 +62,8 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 		logger.Infof("Using offline mode with limited transports")
 		opts = append(opts, libp2p.DefaultTransports)
 		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 15, time.Minute)))
-	} else if cfg.Wifi {
-		logger.Infof("Using WiFi mode with default transports")
+	} else if cfg.Wifi || !cfg.Offline {
+		logger.Infof("Using default transports (wifi=%v, offline=%v)", cfg.Wifi, cfg.Offline)
 		opts = append(opts, libp2p.DefaultTransports)
 	}
 
@@ -130,6 +130,10 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 			for _, addr := range addrs[1:] {
 				logger.Infof("Additional address address=%s", fmt.Sprintf("%s/p2p/%s", addr, n.host.ID()))
 			}
+		}
+		// Warn about firewall if in networked mode (not offline)
+		if !n.cfg.Offline {
+			logger.Infof("TIP: If peers cannot connect, ensure firewall allows incoming connections on port %d (TCP)", n.cfg.Port)
 		}
 	} else {
 		logger.Warnf("No listening addresses found host=%s port=%d", n.cfg.Host, n.cfg.Port)
