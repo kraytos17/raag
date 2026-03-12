@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -45,7 +44,7 @@ type NetworkManager struct {
 func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string) (*NetworkManager, error) {
 	logger.Infof("Network config offline=%v wifi=%v host=%s port=%d rendezvous=%s", cfg.Offline, cfg.Wifi, cfg.Host, cfg.Port, cfg.Rendezvous)
 
-	prvKey, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
+	prvKey, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
