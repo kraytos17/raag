@@ -33,7 +33,8 @@ type Manager struct {
 	networkManager interface {
 		NotifyPeerConnected(peerID peer.ID, addr string)
 	}
-	onPeerSave func(peers []peer.AddrInfo)
+	onPeerSave    func(peers []peer.AddrInfo)
+	mdnsPeerCount uint64
 }
 
 func NewManager(h host.Host, trackerURL string, maxPeers int, listenHost string, rendezvous string, dhtEnabled bool, bootstrapPeers []string) *Manager {
@@ -67,7 +68,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		logger.Errorf("Failed to load persisted peers error=%v", err)
 	}
 
-	logger.Info("Starting peer discovery from tracker...")
+	logger.Infof("Starting peer discovery from tracker...")
 	m.discoverFromTracker(ctx)
 	m.registerSelfWithTracker(ctx)
 	if err := m.connectBootstrapPeers(ctx); err != nil {
@@ -75,18 +76,19 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	if m.listenHost == "127.0.0.1" || m.listenHost == "localhost" {
-		logger.Info("Skipping mDNS discovery (localhost mode)")
+		logger.Infof("Skipping mDNS discovery (localhost mode)")
 	} else {
-		logger.Info("Starting mDNS discovery in background...")
+		logger.Infof("Starting mDNS discovery in background...")
 		go m.discoverViaMDNS(ctx)
+		go m.logMDNSStatus(ctx)
 	}
 
 	if !m.dhtEnabled {
-		logger.Info("DHT discovery disabled")
+		logger.Infof("DHT discovery disabled")
 		return nil
 	}
 
-	logger.Info("Initializing DHT with existing peer connections...")
+	logger.Infof("Initializing DHT with existing peer connections...")
 	if err := m.initDHT(ctx); err != nil {
 		logger.Errorf("Failed to initialize DHT error=%v", err)
 	}
@@ -190,12 +192,9 @@ func (m *Manager) discoverFromTrackerWithRetry(ctx context.Context) {
 			return
 		default:
 			if err := m.discoverFromTracker(ctx); err != nil {
-				logger.Warn("Tracker discovery failed, retrying", "error", err, "retryDelay", retryDelay)
+				logger.Warnf("Tracker discovery failed, retrying error=%v retryDelay=%v", err, retryDelay)
 				time.Sleep(retryDelay)
-				retryDelay *= 2
-				if retryDelay > maxRetryDelay {
-					retryDelay = maxRetryDelay
-				}
+				retryDelay = min(retryDelay*2, maxRetryDelay)
 			} else {
 				retryDelay = 1 * time.Second // Reset on success
 				time.Sleep(5 * time.Minute)  // Check tracker periodically
@@ -382,9 +381,9 @@ func (m *Manager) initDHT(ctx context.Context) error {
 	}
 
 	m.discovery = routing.NewRoutingDiscovery(kademliaDHT)
-	logger.Info("DHT initialized successfully")
+	logger.Infof("DHT initialized successfully")
 	logger.Infof("DHT routing table size (initial) size=%d", m.dht.RoutingTable().Size())
-	logger.Info("Note: DHT routing table populates asynchronously as peers are discovered")
+	logger.Infof("Note: DHT routing table populates asynchronously as peers are discovered")
 	return nil
 }
 
@@ -437,7 +436,7 @@ func (m *Manager) advertisePeriodically(ctx context.Context) {
 		case <-ticker.C:
 			if m.discovery != nil {
 				m.discovery.Advertise(ctx, m.rendezvous)
-				logger.Info("DHT re-advertised presence")
+				logger.Infof("DHT re-advertised presence")
 			}
 		}
 	}
@@ -471,19 +470,19 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 		return
 	}
 
-	logger.Info("DHT: Advertising presence...")
+	logger.Infof("DHT: Advertising presence...")
 	m.discovery.Advertise(ctx, m.rendezvous)
-	logger.Info("DHT: Advertisement complete")
+	logger.Infof("DHT: Advertisement complete")
 
-	logger.Info("DHT: Waiting for peer connections...")
+	logger.Infof("DHT: Waiting for peer connections...")
 	hasPeers := m.waitForPeers(10 * time.Second)
 	m.populateDHTFromConnectedPeers()
 
 	if !hasPeers {
-		logger.Info("DHT: No peers connected yet, starting discovery anyway")
+		logger.Infof("DHT: No peers connected yet, starting discovery anyway")
 	}
 
-	logger.Info("DHT: Starting peer discovery...")
+	logger.Infof("DHT: Starting peer discovery...")
 	for {
 		queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -538,7 +537,7 @@ func (m *Manager) discoverViaDHTRetry(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			logger.Info("DHT: Running periodic discovery...")
+			logger.Infof("DHT: Running periodic discovery...")
 			m.discoverViaDHT(ctx)
 		}
 	}
@@ -552,9 +551,26 @@ func (m *Manager) discoverViaMDNS(ctx context.Context) {
 		return
 	}
 
-	logger.Info("mDNS service started, running continuously...")
+	logger.Infof("mDNS service started, running continuously...")
 	<-ctx.Done()
-	logger.Info("mDNS discovery stopped")
+	logger.Infof("mDNS discovery stopped")
+}
+
+func (m *Manager) logMDNSStatus(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.mu.RLock()
+			mdnsCount := m.mdnsPeerCount
+			m.mu.RUnlock()
+			logger.Infof("mDNS status: discovered_peers=%d", mdnsCount)
+		}
+	}
 }
 
 type mdnsNotifee struct {
@@ -565,6 +581,10 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	if pi.ID == n.manager.host.ID() {
 		return
 	}
+
+	n.manager.mu.Lock()
+	n.manager.mdnsPeerCount++
+	n.manager.mu.Unlock()
 	logger.Infof("mDNS discovered peer peer=%s", pi.ID)
 	n.manager.savePeer(pi, false)
 }

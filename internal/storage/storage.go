@@ -77,13 +77,13 @@ func (s *Storage) LoadPlaylists(pm *playlist.Manager) error {
 		return fmt.Errorf("error reading playlists file: %w", err)
 	}
 	if len(data) == 0 {
-		logger.Warn("playlists file is empty, starting with no playlists")
+		logger.Warnf("playlists file is empty, starting with no playlists")
 		return nil
 	}
 
 	var storageData StorageData
 	if err := json.Unmarshal(data, &storageData); err != nil {
-		logger.Warn("corrupted playlists file, resetting", "error", err)
+		logger.Warnf("corrupted playlists file, resetting error=%v", err)
 		return nil
 	}
 	for _, pl := range storageData.Playlists {
