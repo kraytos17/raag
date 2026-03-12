@@ -21,7 +21,7 @@ go build -o bin/raag ./cmd/raag
 ./bin/raag --tui
 
 # Networked mode (peers can connect automatically)
-./bin/raag --network --host 192.168.1.x
+./bin/raag --network
 ```
 
 ## Usage Modes
@@ -39,8 +39,8 @@ go build -o bin/raag ./cmd/raag
 ### Networked (Recommended for LAN)
 
 ```bash
-# On each device, use your actual LAN IP
-./bin/raag --network --host 192.168.1.x
+# On each device - defaults to 0.0.0.0 (all interfaces)
+./bin/raag --network
 ```
 
 That's it! Raag will:
@@ -119,23 +119,23 @@ ipconfig getifaddr en0
 |-----|---------|-------------|
 | `musicdir` | `./music` | Music directory |
 | `volume` | `50` | Volume level (0-100) |
-| `host` | `127.0.0.1` | Bind address |
+| `host` | `0.0.0.0` | Bind address (all interfaces) |
 | `port` | `45678` | Listen port |
 | `network` | `false` | Enable network mode for peer discovery |
-| `wifi` | `false` | (removed - use --network instead) |
 | `tui` | `true` | Start TUI |
 | `loglevel` | `info` | Log level |
 | `rendezvous` | `raag-music-share` | Discovery namespace |
+| `tracker.url` | `http://raag.dedyn.io` | Tracker URL for cross-network discovery |
 
 ## CLI Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--network` | `false` | Enable network mode for peer discovery |
-| `--host` | `127.0.0.1` | Your LAN IP (for networked mode) |
+| `--host` | `0.0.0.0` | Bind address (all interfaces) |
 | `--port` | `45678` | Listen port |
 | `--dht` | `true` | Enable DHT discovery |
-| `--tracker` | - | Tracker URL |
+| `--tracker` | `http://raag.dedyn.io` | Tracker URL for cross-network discovery |
 | `--tui` | `false` | Start TUI |
 
 ## Network Discovery Options
@@ -144,25 +144,25 @@ ipconfig getifaddr en0
 
 Automatic discovery on local network - no configuration needed:
 ```bash
-./bin/raag --network --host 192.168.1.x
+./bin/raag --network
 ```
 
 ### DHT
 
 Distributed hash table discovery:
 ```bash
-./bin/raag --network --host 192.168.1.x --dht=true
+./bin/raag --network --dht=true
 ```
 
 ### Tracker (Recommended for Cross-Network)
 
 Enhanced tracker with libp2p relay and DHT for peer discovery across different networks:
 ```bash
-# Start tracker on a public server
+# Start tracker on a public server (e.g., Railway, Oracle Cloud)
 ./bin/tracker --http-port 8080 --libp2p-port 45678
 
-# Point clients to tracker
-./bin/raag --network --host <your-ip> --tracker http://<tracker-ip>:8080
+# Point clients to tracker (default: http://raag.dedyn.io)
+./bin/raag --network --tracker http://<tracker-ip>
 ```
 
 **Tracker Features:**
@@ -206,21 +206,22 @@ Raag automatically handles NAT and firewall traversal:
 
 When both devices are behind NAT (home networks):
 
-1. **Start tracker on a public server:**
+1. **Start tracker on a public server** (e.g., Railway, Oracle Cloud):
    ```bash
    ./bin/tracker --http-port 8080 --libp2p-port 45678
    ```
 
 2. **Connect clients:**
    ```bash
-   # Device A (home network)
-   ./bin/raag --network --host 192.168.1.100 --tracker http://<public-ip>:8080
+   # Device A (home network) - uses default tracker URL
+   ./bin/raag --network
 
-   # Device B (another home network)
-   ./bin/raag --network --host 10.0.0.50 --tracker http://<public-ip>:8080
+   # Device B (another home network) - uses default tracker URL
+   ./bin/raag --network
    ```
 
 The tracker acts as a relay peer, enabling connections between NAT-ed devices.
+Default tracker: `http://raag.dedyn.io`
 
 ## Architecture
 
@@ -264,11 +265,11 @@ Runtime files in `~/.config/raag/`:
 
 ```bash
 # Ensure you're in networked mode
-./bin/raag --network --host 192.168.1.x
+./bin/raag --network
 
-# Check you're using actual LAN IP (not 127.0.0.1)
+# Check you're binding to all interfaces (default: 0.0.0.0)
 # Verify same network on all devices
-# Try tracker mode as fallback
+# Try tracker mode as fallback: ./bin/raag --network --tracker http://<tracker-ip>
 ```
 
 ### Connection failed
@@ -283,7 +284,7 @@ sudo ufw allow 45678/tcp
 
 Check logs for connection status:
 ```bash
-./bin/raag --network --host 192.168.1.x
+./bin/raag --network
 ```
 
 Look for:
