@@ -63,8 +63,13 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 		opts = append(opts, libp2p.DefaultTransports)
 		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 15, time.Minute)))
 	} else if cfg.Wifi || !cfg.Offline {
-		logger.Infof("Using default transports (wifi=%v, offline=%v)", cfg.Wifi, cfg.Offline)
+		logger.Infof("Using networked mode with NAT traversal (wifi=%v, offline=%v)", cfg.Wifi, cfg.Offline)
 		opts = append(opts, libp2p.DefaultTransports)
+		opts = append(opts, libp2p.EnableRelay())
+		opts = append(opts, libp2p.EnableHolePunching())
+		opts = append(opts, libp2p.NATPortMap())
+		opts = append(opts, libp2p.EnableNATService())
+		logger.Infof("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
 	}
 
 	host, err := libp2p.New(opts...)
