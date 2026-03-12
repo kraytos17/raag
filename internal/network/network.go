@@ -63,6 +63,7 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 		opts = append(opts, libp2p.EnableHolePunching())
 		opts = append(opts, libp2p.NATPortMap())
 		opts = append(opts, libp2p.EnableNATService())
+		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 100, 2*time.Minute)))
 		logger.Infof("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
 	} else {
 		logger.Infof("Using offline mode with limited transports")
@@ -232,14 +233,14 @@ func (n *NetworkManager) GetMultiaddr() string {
 		return fmt.Sprintf("/p2p/%s", n.host.ID())
 	}
 
-	best := addrs[0]
 	for _, addr := range addrs {
 		if isUsableAddr(addr.String()) {
-			best = addr
-			break
+			return fmt.Sprintf("%s/p2p/%s", addr, n.host.ID())
 		}
 	}
-	return fmt.Sprintf("%s/p2p/%s", best, n.host.ID())
+
+	logger.Debugf("No usable LAN address found, using first address: %s", addrs[0].String())
+	return fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID())
 }
 
 func isUsableAddr(addr string) bool {
