@@ -387,6 +387,9 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 	if _, ok := n.peers[peerID]; !ok {
 		n.peers[peerID] = struct{}{}
 		logger.Infof("Peer connected peer_id=%s address=%s", peerID, addr)
+		if n.discovery != nil {
+			n.discovery.MarkPeerConnected(peerID)
+		}
 		if n.OnPeerJoin != nil {
 			n.OnPeerJoin(peerID)
 		}

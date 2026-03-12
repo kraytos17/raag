@@ -40,8 +40,10 @@ type Manager struct {
 	networkManager   interface {
 		NotifyPeerConnected(peerID peer.ID, addr string)
 	}
-	onPeerSave    func(peers []peer.AddrInfo)
-	mdnsPeerCount uint64
+	onPeerSave      func(peers []peer.AddrInfo)
+	mdnsPeerCount   uint64
+	connectingPeers map[peer.ID]bool
+	connectedPeers  map[peer.ID]time.Time
 }
 
 func NewManager(h host.Host, trackerURL string, maxPeers int, listenHost string, rendezvous string, dhtEnabled bool, bootstrapPeers []string) *Manager {
@@ -51,17 +53,19 @@ func NewManager(h host.Host, trackerURL string, maxPeers int, listenHost string,
 	}
 
 	return &Manager{
-		host:           h,
-		peers:          make(map[peer.ID]*peer.AddrInfo),
-		persistence:    NewPeerPersistence(),
-		tracker:        NewTrackerClient(trackerURL),
-		maxPeers:       maxPeers,
-		trackerURL:     trackerURL,
-		listenHost:     listenHost,
-		rendezvous:     rendezvous,
-		dhtEnabled:     dhtEnabled,
-		bootstrapPeers: slices.Clone(bootstrapPeers),
-		authKeyPair:    authKeyPair,
+		host:            h,
+		peers:           make(map[peer.ID]*peer.AddrInfo),
+		persistence:     NewPeerPersistence(),
+		tracker:         NewTrackerClient(trackerURL),
+		maxPeers:        maxPeers,
+		trackerURL:      trackerURL,
+		listenHost:      listenHost,
+		rendezvous:      rendezvous,
+		dhtEnabled:      dhtEnabled,
+		bootstrapPeers:  slices.Clone(bootstrapPeers),
+		authKeyPair:     authKeyPair,
+		connectingPeers: make(map[peer.ID]bool),
+		connectedPeers:  make(map[peer.ID]time.Time),
 	}
 }
 
@@ -74,6 +78,14 @@ func (m *Manager) SetNetworkManager(nm interface {
 
 func (m *Manager) SetOnPeerSave(callback func(peers []peer.AddrInfo)) {
 	m.onPeerSave = callback
+}
+
+func (m *Manager) MarkPeerConnected(peerID peer.ID) {
+	m.mu.Lock()
+	m.connectedPeers[peerID] = time.Now()
+	delete(m.connectingPeers, peerID)
+	m.mu.Unlock()
+	logger.Debugf("Marked peer as connected peer=%s", peerID)
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -403,6 +415,9 @@ func (m *Manager) addAsBootstrap(ctx context.Context, p peer.AddrInfo) {
 
 func (m *Manager) savePeer(p peer.AddrInfo, skipAutoConnect bool) {
 	m.mu.Lock()
+
+	_, alreadyConnected := m.connectedPeers[p.ID]
+	_, alreadyConnecting := m.connectingPeers[p.ID]
 	if _, exists := m.peers[p.ID]; !exists {
 		if len(m.peers) >= m.maxPeers {
 			m.mu.Unlock()
@@ -414,8 +429,12 @@ func (m *Manager) savePeer(p peer.AddrInfo, skipAutoConnect bool) {
 
 		m.persistPeers()
 		logger.Infof("Saved new peer peer=%s", p.ID)
-		if !skipAutoConnect {
+		if !skipAutoConnect && !alreadyConnected && !alreadyConnecting {
 			m.tryConnectToPeer(p)
+		} else if alreadyConnecting {
+			logger.Debugf("Peer already connecting, skipping duplicate connection attempt peer=%s", p.ID)
+		} else if alreadyConnected {
+			logger.Debugf("Peer already connected, skipping connection attempt peer=%s", p.ID)
 		}
 	} else {
 		m.mu.Unlock()
@@ -430,6 +449,21 @@ func (m *Manager) tryConnectToPeer(p peer.AddrInfo) {
 }
 
 func (m *Manager) connectWithRetry(p peer.AddrInfo) {
+	m.mu.Lock()
+	if m.connectingPeers[p.ID] {
+		m.mu.Unlock()
+		logger.Debugf("Already connecting to peer, skipping peer=%s", p.ID)
+		return
+	}
+	m.connectingPeers[p.ID] = true
+	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		delete(m.connectingPeers, p.ID)
+		m.mu.Unlock()
+	}()
+
 	if len(p.Addrs) > 0 {
 		filteredAddrs := filterReachableAddresses(p.Addrs)
 		prioritizedAddrs := prioritizeAddresses(filteredAddrs)
@@ -456,6 +490,11 @@ func (m *Manager) connectWithRetry(p peer.AddrInfo) {
 		}
 
 		logger.Infof("Connected to discovered peer peer=%s", p.ID)
+
+		m.mu.Lock()
+		m.connectedPeers[p.ID] = time.Now()
+		m.mu.Unlock()
+
 		if m.dht != nil {
 			dhtCtx, dhtCancel := context.WithTimeout(ctx, 10*time.Second)
 			defer dhtCancel()
@@ -642,8 +681,8 @@ func (m *Manager) logRoutingTableSize(ctx context.Context) {
 				m.mu.RUnlock()
 
 				dhtSize := m.dht.RoutingTable().Size()
-				networkPeers := len(m.host.Network().Peers())
-				logger.Infof("DHT status: routing_table_size=%d connected_peers=%d network_peers=%d",
+				networkPeers := max(len(m.host.Network().Peers()) - 1, 0)
+				logger.Infof("DHT status: routing_table_size=%d total_discovered_peers=%d active_connections=%d",
 					dhtSize, connectedCount, networkPeers)
 			}
 		}
@@ -691,6 +730,14 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 					goto nextRound
 				}
 				if p.ID == "" || p.ID == m.host.ID() {
+					continue
+				}
+
+				m.mu.RLock()
+				_, alreadyKnown := m.peers[p.ID]
+				m.mu.RUnlock()
+
+				if alreadyKnown {
 					continue
 				}
 				if discovered[p.ID] {
@@ -768,8 +815,17 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	}
 
 	n.manager.mu.Lock()
-	n.manager.mdnsPeerCount++
+	_, alreadyKnown := n.manager.peers[pi.ID]
+	if !alreadyKnown {
+		n.manager.mdnsPeerCount++
+	}
 	n.manager.mu.Unlock()
+
+	if alreadyKnown {
+		logger.Debugf("mDNS found already known peer, skipping peer=%s", pi.ID)
+		return
+	}
+	
 	logger.Infof("mDNS discovered peer peer=%s", pi.ID)
 	n.manager.savePeer(pi, false)
 }
