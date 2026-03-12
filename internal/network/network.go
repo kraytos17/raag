@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/config"
+	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/discovery"
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/logger"
@@ -42,7 +43,7 @@ type NetworkManager struct {
 }
 
 func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string) (*NetworkManager, error) {
-	logger.Infof("Network config offline=%v wifi=%v host=%s port=%d rendezvous=%s", cfg.Offline, cfg.Wifi, cfg.Host, cfg.Port, cfg.Rendezvous)
+	logger.Infof("Network config network=%v host=%s port=%d rendezvous=%s", cfg.Network, cfg.Host, cfg.Port, cfg.Rendezvous)
 
 	prvKey, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
 	if err != nil {
@@ -51,24 +52,22 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 
 	var opts []libp2p.Option
 	listenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.Host, cfg.Port)
-	if cfg.FixedPort > 0 {
-		listenAddr = fmt.Sprintf("/ip4/%s/tcp/%d", cfg.Host, cfg.FixedPort)
-	}
 
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(listenAddr)
 	opts = append(opts, libp2p.ListenAddrs(sourceMultiAddr), libp2p.Identity(prvKey))
-	if cfg.Offline && !cfg.Wifi {
-		logger.Infof("Using offline mode with limited transports")
-		opts = append(opts, libp2p.DefaultTransports)
-		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 15, time.Minute)))
-	} else if cfg.Wifi || !cfg.Offline {
-		logger.Infof("Using networked mode with NAT traversal (wifi=%v, offline=%v)", cfg.Wifi, cfg.Offline)
+
+	if cfg.Network {
+		logger.Infof("Using networked mode with NAT traversal")
 		opts = append(opts, libp2p.DefaultTransports)
 		opts = append(opts, libp2p.EnableRelay())
 		opts = append(opts, libp2p.EnableHolePunching())
 		opts = append(opts, libp2p.NATPortMap())
 		opts = append(opts, libp2p.EnableNATService())
 		logger.Infof("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
+	} else {
+		logger.Infof("Using offline mode with limited transports")
+		opts = append(opts, libp2p.DefaultTransports)
+		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 15, time.Minute)))
 	}
 
 	host, err := libp2p.New(opts...)
@@ -78,7 +77,7 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 
 	maxPeers := cfg.MaxPeers
 	if maxPeers == 0 {
-		maxPeers = 100 // Default max peers
+		maxPeers = constants.DefaultMaxPeers
 	}
 
 	discoveryMgr := discovery.NewManager(host, cfg.TrackerURL, maxPeers, cfg.Host, cfg.Rendezvous, cfg.DHTEnabled, cfg.BootstrapPeers)
@@ -121,7 +120,7 @@ func NewConnectionManager(low, high int, gracePeriod time.Duration) *connmgr.Bas
 }
 
 func (n *NetworkManager) Start(ctx context.Context) error {
-	n.host.SetStreamHandler(protocol.ID(n.cfg.ProtocolID), n.handleStream)
+	n.host.SetStreamHandler(protocol.ID(constants.ProtocolID), n.handleStream)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
@@ -135,8 +134,7 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 				logger.Infof("Additional address address=%s", fmt.Sprintf("%s/p2p/%s", addr, n.host.ID()))
 			}
 		}
-		// Warn about firewall if in networked mode (not offline)
-		if !n.cfg.Offline {
+		if n.cfg.Network {
 			logger.Infof("TIP: If peers cannot connect, ensure firewall allows incoming connections on port %d (TCP)", n.cfg.Port)
 		}
 	} else {
@@ -281,7 +279,7 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 		}
 	}()
 
-	stream, err := n.host.NewStream(context.Background(), peerInfo.ID, protocol.ID(n.cfg.ProtocolID))
+	stream, err := n.host.NewStream(context.Background(), peerInfo.ID, protocol.ID(constants.ProtocolID))
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}

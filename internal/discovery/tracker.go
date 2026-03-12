@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	pathpkg "path"
-	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+	"github.com/p-society/raag/internal/constants"
 )
 
 type TrackerClient struct {
@@ -22,7 +22,7 @@ type TrackerClient struct {
 func NewTrackerClient(trackerURL string) *TrackerClient {
 	return &TrackerClient{
 		trackerURL: trackerURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
+		client:     &http.Client{Timeout: constants.HTTPClientTimeout},
 	}
 }
 
@@ -51,13 +51,18 @@ func (t *TrackerClient) FetchPeers(ctx context.Context) ([]peer.AddrInfo, error)
 		return nil, fmt.Errorf("tracker returned status %d", resp.StatusCode)
 	}
 
-	var multiaddrs []string
-	if err := json.NewDecoder(resp.Body).Decode(&multiaddrs); err != nil {
+	var peerResponses []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&peerResponses); err != nil {
 		return nil, fmt.Errorf("failed to decode tracker response: %w", err)
 	}
 
 	var peers []peer.AddrInfo
-	for _, addrStr := range multiaddrs {
+	for _, p := range peerResponses {
+		addrStr, ok := p["addr"].(string)
+		if !ok {
+			continue
+		}
+
 		ma, err := multiaddr.NewMultiaddr(addrStr)
 		if err != nil {
 			continue
@@ -72,7 +77,7 @@ func (t *TrackerClient) FetchPeers(ctx context.Context) ([]peer.AddrInfo, error)
 	return peers, nil
 }
 
-func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string) error {
+func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string, authData string) error {
 	if t.trackerURL == "" {
 		return nil
 	}
@@ -83,8 +88,12 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string) e
 	}
 
 	data := struct {
-		Addr string `json:"addr"`
-	}{Addr: multiaddrStr}
+		Addr     string `json:"addr"`
+		AuthData string `json:"auth_data,omitempty"`
+	}{
+		Addr:     multiaddrStr,
+		AuthData: authData,
+	}
 
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -103,10 +112,51 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string) e
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("unauthorized: tracker requires authentication")
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("tracker registration failed: %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (t *TrackerClient) FetchTrackerAddr(ctx context.Context) (string, string, error) {
+	if t.trackerURL == "" {
+		return "", "", fmt.Errorf("no tracker URL configured")
+	}
+
+	addrURL, err := joinTrackerPath(t.trackerURL, "addr")
+	if err != nil {
+		return "", "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addrURL, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("tracker request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("tracker returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Libp2pAddr   string `json:"libp2p_addr"`
+		RelayAddr    string `json:"relay_addr,omitempty"`
+		RelayEnabled bool   `json:"relay_enabled"`
+		DHTEnabled   bool   `json:"dht_enabled"`
+		HostID       string `json:"host_id,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", fmt.Errorf("failed to decode tracker response: %w", err)
+	}
+	return result.Libp2pAddr, result.RelayAddr, nil
 }
 
 func joinTrackerPath(baseURL, path string) (string, error) {
@@ -114,8 +164,9 @@ func joinTrackerPath(baseURL, path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid tracker URL: %w", err)
 	}
+
 	cleanPath := pathpkg.Clean(parsed.Path)
-	if cleanPath == "/peers" || cleanPath == "/register" {
+	if cleanPath == "/peers" || cleanPath == "/register" || cleanPath == "/addr" {
 		parsed.Path = pathpkg.Dir(cleanPath)
 	}
 

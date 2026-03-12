@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/p-society/raag/internal/constants"
 )
 
 type AppConfig struct {
 	MusicDir   string `json:"music_dir"`
 	Volume     int    `json:"volume"`
 	TUIEnabled bool   `json:"tui_enabled"`
-	WifiMode   bool   `json:"wifi_mode"`
-	Offline    bool   `json:"offline"`
+	Network    bool   `json:"network"`
 	Rendezvous string `json:"rendezvous"`
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
@@ -22,11 +23,10 @@ type AppConfig struct {
 func DefaultConfig() *AppConfig {
 	return &AppConfig{
 		MusicDir:   "./music",
-		Volume:     50,
+		Volume:     constants.DefaultVolume,
 		TUIEnabled: false,
-		WifiMode:   false,
-		Offline:    true,
-		Rendezvous: "raag-music-share",
+		Network:    false,
+		Rendezvous: constants.DefaultRendezvous,
 		Host:       "127.0.0.1",
 		Port:       0,
 		LogLevel:   "info",

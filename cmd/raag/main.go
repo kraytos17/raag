@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/p-society/raag/internal/config"
+	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/network"
@@ -53,18 +54,15 @@ func main() {
 
 	rootCmd.PersistentFlags().String("config", "", "config file (default is $HOME/.config/raag/config.yaml)")
 	rootCmd.PersistentFlags().String("musicdir", "./music", "Directory containing music files")
-	rootCmd.PersistentFlags().Bool("offline", true, "Run in offline mode")
-	rootCmd.PersistentFlags().Bool("wifi", false, "Enable Wi-Fi connectivity")
+	rootCmd.PersistentFlags().Bool("network", false, "Enable network mode for peer discovery")
 	rootCmd.PersistentFlags().Bool("tui", false, "Start in TUI mode")
 	rootCmd.PersistentFlags().String("tracker", "", "Centralized tracker URL for peer discovery")
-	rootCmd.PersistentFlags().Int("fixed-port", 0, "Fixed port for listening (0 for random, recommended: 45678 for firewall config)")
+	rootCmd.PersistentFlags().Int("port", constants.DefaultPort, "Node listen port (use 0 for random)")
 	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery")
-	rootCmd.PersistentFlags().Int("max-peers", 100, "Maximum number of peers to maintain")
+	rootCmd.PersistentFlags().Int("max-peers", constants.DefaultMaxPeers, "Maximum number of peers to maintain")
 	rootCmd.PersistentFlags().StringSlice("bootstrap", []string{}, "DHT bootstrap peers (multiaddr)")
 	rootCmd.PersistentFlags().String("host", "127.0.0.1", "The host address to listen on")
-	rootCmd.PersistentFlags().Int("port", 45678, "Node listen port (default 45678, use 0 for random)")
-	rootCmd.PersistentFlags().String("rendezvous", "raag-music-share", "Unique string to identify Raag nodes")
-	rootCmd.PersistentFlags().String("pid", "/raag/1.0.0", "Protocol ID for stream headers")
+	rootCmd.PersistentFlags().String("rendezvous", constants.DefaultRendezvous, "Unique string to identify Raag nodes")
 
 	// Add subcommands
 	rootCmd.AddCommand(playCommand())

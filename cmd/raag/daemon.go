@@ -58,9 +58,6 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Errorf("failed to load config error=%v", err)
 		os.Exit(1)
 	}
-	if cmd.Root().Flags().Changed("wifi") {
-		cfg.Offline = false
-	}
 	if daemonTrackerURL != "" {
 		cfg.TrackerURL = daemonTrackerURL
 		if err := config.SaveConfig(v, cfg); err != nil {

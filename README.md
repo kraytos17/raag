@@ -21,7 +21,7 @@ go build -o bin/raag ./cmd/raag
 ./bin/raag --tui
 
 # Networked mode (peers can connect automatically)
-./bin/raag --offline=false --host 192.168.1.x
+./bin/raag --network --host 192.168.1.x
 ```
 
 ## Usage Modes
@@ -33,14 +33,14 @@ go build -o bin/raag ./cmd/raag
 ./bin/raag --tui
 
 # Headless (no TUI)
-./bin/raag --offline --host 127.0.0.1
+./bin/raag --host 127.0.0.1
 ```
 
 ### Networked (Recommended for LAN)
 
 ```bash
 # On each device, use your actual LAN IP
-./bin/raag --offline=false --host 192.168.1.x
+./bin/raag --network --host 192.168.1.x
 ```
 
 That's it! Raag will:
@@ -121,8 +121,8 @@ ipconfig getifaddr en0
 | `volume` | `50` | Volume level (0-100) |
 | `host` | `127.0.0.1` | Bind address |
 | `port` | `45678` | Listen port |
-| `offline` | `true` | Enable/disable networking |
-| `wifi` | `false` | WiFi mode |
+| `network` | `false` | Enable network mode for peer discovery |
+| `wifi` | `false` | (removed - use --network instead) |
 | `tui` | `true` | Start TUI |
 | `loglevel` | `info` | Log level |
 | `rendezvous` | `raag-music-share` | Discovery namespace |
@@ -131,10 +131,9 @@ ipconfig getifaddr en0
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--offline` | `true` | Set to `false` for networking |
+| `--network` | `false` | Enable network mode for peer discovery |
 | `--host` | `127.0.0.1` | Your LAN IP (for networked mode) |
 | `--port` | `45678` | Listen port |
-| `--wifi` | `false` | Enable WiFi mode |
 | `--dht` | `true` | Enable DHT discovery |
 | `--tracker` | - | Tracker URL |
 | `--tui` | `false` | Start TUI |
@@ -145,26 +144,49 @@ ipconfig getifaddr en0
 
 Automatic discovery on local network - no configuration needed:
 ```bash
-./bin/raag --offline=false --host 192.168.1.x
+./bin/raag --network --host 192.168.1.x
 ```
 
 ### DHT
 
 Distributed hash table discovery:
 ```bash
-./bin/raag --offline=false --host 192.168.1.x --dht=true
+./bin/raag --network --host 192.168.1.x --dht=true
 ```
 
-### Tracker
+### Tracker (Recommended for Cross-Network)
 
-Centralized peer tracking:
+Enhanced tracker with libp2p relay and DHT for peer discovery across different networks:
 ```bash
-# Start tracker
-./bin/tracker
+# Start tracker on a public server
+./bin/tracker --http-port 8080 --libp2p-port 45678
 
-# Point raag to tracker
-./bin/raag --offline=false --host 192.168.1.x --tracker http://<tracker-ip>:8080
+# Point clients to tracker
+./bin/raag --network --host <your-ip> --tracker http://<tracker-ip>:8080
 ```
+
+**Tracker Features:**
+- HTTP API for peer registration and discovery
+- libp2p relay for NAT traversal (circuit relay)
+- DHT bootstrap node for decentralized peer discovery
+- ed25519-based authentication for secure peer registration
+
+**Tracker Options:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--http-port` | 8080 | HTTP API listen port |
+| `--libp2p-port` | 45678 | libp2p listen port |
+| `--relay` | true | Enable circuit relay for NAT clients |
+| `--dht` | true | Enable DHT bootstrap node |
+
+**Authentication:**
+All peer registrations require ed25519-based authentication tokens.
+
+1. **Client generates auth key pair** on first startup
+2. **Client creates signed token** containing peer ID, public key, timestamp, and signature
+3. **Tracker validates token** using the public key and signature
+
+This ensures only authorized peers can join the network.
 
 ## NAT Traversal
 
@@ -174,10 +196,31 @@ Raag automatically handles NAT and firewall traversal:
 |---------|---------|
 | Hole Punching | Direct NAT traversal |
 | UPnP | Auto port opening on router |
-| Circuit Relay | Fallback via relay peers |
+| Circuit Relay | Relay via tracker or public peers |
 | AutoNAT | Network reachability detection |
+| DHT Bootstrap | Connect via tracker relay |
 
 **No manual firewall configuration required!**
+
+### Cross-Network Setup (Behind NAT/Firewall)
+
+When both devices are behind NAT (home networks):
+
+1. **Start tracker on a public server:**
+   ```bash
+   ./bin/tracker --http-port 8080 --libp2p-port 45678
+   ```
+
+2. **Connect clients:**
+   ```bash
+   # Device A (home network)
+   ./bin/raag --network --host 192.168.1.100 --tracker http://<public-ip>:8080
+
+   # Device B (another home network)
+   ./bin/raag --network --host 10.0.0.50 --tracker http://<public-ip>:8080
+   ```
+
+The tracker acts as a relay peer, enabling connections between NAT-ed devices.
 
 ## Architecture
 
@@ -221,7 +264,7 @@ Runtime files in `~/.config/raag/`:
 
 ```bash
 # Ensure you're in networked mode
-./bin/raag --offline=false --host 192.168.1.x
+./bin/raag --network --host 192.168.1.x
 
 # Check you're using actual LAN IP (not 127.0.0.1)
 # Verify same network on all devices
@@ -240,7 +283,7 @@ sudo ufw allow 45678/tcp
 
 Check logs for connection status:
 ```bash
-./bin/raag --offline=false --host 192.168.1.x
+./bin/raag --network --host 192.168.1.x
 ```
 
 Look for:
