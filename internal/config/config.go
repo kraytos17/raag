@@ -43,7 +43,7 @@ func DefaultConfig() Config {
 		BootstrapPeers: []string{},
 		MusicDir:       "./music",
 		Volume:         constants.DefaultVolume,
-		TUI:            true,
+		TUI:            false,
 		Network:        false,
 		LogLevel:       "info",
 	}

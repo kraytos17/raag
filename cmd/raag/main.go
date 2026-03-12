@@ -42,7 +42,7 @@ func main() {
 					logger.Errorf("Error initializing error=%v", err)
 					return
 				}
-				if shouldStartTUI(cmd, cfg, false, false) {
+				if shouldStartTUI(cmd, false) {
 					startTUI()
 					return
 				}
