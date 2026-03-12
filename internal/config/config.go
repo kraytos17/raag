@@ -163,6 +163,11 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 		LogLevel: v.GetString("ui.log_level"),
 	}
 
+	// If port is 0 (not set in config), use default port for networked mode
+	// This prevents issues where old config files have port=0
+	if cfg.Port == 0 && !cfg.Offline {
+		cfg.Port = DefaultPort
+	}
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, fmt.Errorf("invalid port number: %d", cfg.Port)
 	}
@@ -176,6 +181,10 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 func SaveConfig(v *viper.Viper, cfg *Config) error {
 	// Update Viper with config values
 	v.Set("network.host", cfg.Host)
+	// Don't save port=0 for networked mode - use default instead
+	if cfg.Port == 0 && !cfg.Offline {
+		cfg.Port = DefaultPort
+	}
 	v.Set("network.port", cfg.Port)
 	v.Set("network.fixed_port", cfg.FixedPort)
 	v.Set("network.rendezvous", cfg.Rendezvous)
