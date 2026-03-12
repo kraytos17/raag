@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,9 +168,9 @@ func (m *Manager) refreshRegistration(ctx context.Context) {
 		return
 	}
 
-	multiaddr := addrs[0].Encapsulate(multiaddr.StringCast("/p2p/" + m.host.ID().String())).String()
-
-	authData, err := m.getAuthData(ctx)
+	usableAddr := m.selectUsableAddress(addrs)
+	multiaddr := usableAddr.Encapsulate(multiaddr.StringCast("/p2p/" + m.host.ID().String())).String()
+	authData, err := m.getAuthData()
 	if err != nil {
 		logger.Warnf("Failed to generate auth data: %v", err)
 		authData = ""
@@ -182,7 +183,27 @@ func (m *Manager) refreshRegistration(ctx context.Context) {
 	}
 }
 
-func (m *Manager) getAuthData(ctx context.Context) (string, error) {
+func (m *Manager) selectUsableAddress(addrs []multiaddr.Multiaddr) multiaddr.Multiaddr {
+	for _, addr := range addrs {
+		addrStr := addr.String()
+		if isUsableAddr(addrStr) {
+			logger.Debugf("Selected usable address for registration: %s", addrStr)
+			return addr
+		}
+	}
+
+	logger.Debugf("No usable LAN address found, using first address: %s", addrs[0].String())
+	return addrs[0]
+}
+
+func isUsableAddr(addr string) bool {
+	return !strings.Contains(addr, "/127.0.0.1/") &&
+		!strings.Contains(addr, "/0.0.0.0/") &&
+		!strings.Contains(addr, "/localhost/") &&
+		strings.Contains(addr, "/ip4/")
+}
+
+func (m *Manager) getAuthData() (string, error) {
 	if m.authToken == nil && m.authKeyPair != nil {
 		token, err := auth.GenerateToken(m.host.ID(), m.authKeyPair)
 		if err != nil {
@@ -190,11 +211,9 @@ func (m *Manager) getAuthData(ctx context.Context) (string, error) {
 		}
 		m.authToken = token
 	}
-
 	if m.authToken == nil {
 		return "", fmt.Errorf("no auth key pair available")
 	}
-
 	return auth.SerializeToken(m.authToken)
 }
 
@@ -340,30 +359,44 @@ func (m *Manager) tryConnectToPeer(p peer.AddrInfo) {
 	if p.ID == m.host.ID() {
 		return
 	}
+	go m.connectWithRetry(p)
+}
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (m *Manager) connectWithRetry(p peer.AddrInfo) {
+	maxRetries := 3
+	retryDelays := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+	for attempt := range maxRetries {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		logger.Debugf("Attempting to connect to discovered peer peer=%s", p.ID)
+		logger.Debugf("Attempting to connect to peer peer=%s attempt=%d/%d", p.ID, attempt+1, maxRetries)
 		if err := m.host.Connect(ctx, p); err != nil {
-			logger.Warnf("Failed to connect to discovered peer peer=%s error=%v", p.ID, err)
-		} else {
-			logger.Infof("Connected to discovered peer peer=%s", p.ID)
-			if m.dht != nil {
-				if err := m.dht.Bootstrap(ctx); err != nil {
-					logger.Warnf("DHT bootstrap after peer connect error=%v", err)
-				}
+			if attempt < maxRetries-1 {
+				logger.Warnf("Connection failed, retrying in %v peer=%s error=%v", retryDelays[attempt], p.ID, err)
+				time.Sleep(retryDelays[attempt])
+				continue
 			}
-			if m.networkManager != nil {
-				addr := ""
-				if len(p.Addrs) > 0 {
-					addr = p.Addrs[0].String()
-				}
-				m.networkManager.NotifyPeerConnected(p.ID, addr)
+			logger.Warnf("Failed to connect to peer after %d attempts peer=%s error=%v", maxRetries, p.ID, err)
+			return
+		}
+
+		logger.Infof("Connected to discovered peer peer=%s", p.ID)
+		if m.dht != nil {
+			dhtCtx, dhtCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer dhtCancel()
+			if err := m.dht.Bootstrap(dhtCtx); err != nil {
+				logger.Warnf("DHT bootstrap after peer connect error=%v", err)
 			}
 		}
-	}()
+		if m.networkManager != nil {
+			addr := ""
+			if len(p.Addrs) > 0 {
+				addr = p.Addrs[0].String()
+			}
+			m.networkManager.NotifyPeerConnected(p.ID, addr)
+		}
+		return
+	}
 }
 
 // GetAllPeers returns all known peers (persisted)
