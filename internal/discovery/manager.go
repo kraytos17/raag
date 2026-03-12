@@ -74,7 +74,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.connectBootstrapPeers(ctx); err != nil {
 		logger.Warnf("Failed to connect configured bootstrap peers error=%v", err)
 	}
-
 	if m.listenHost == "127.0.0.1" || m.listenHost == "localhost" {
 		logger.Infof("Skipping mDNS discovery (localhost mode)")
 	} else {

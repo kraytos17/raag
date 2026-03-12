@@ -34,10 +34,15 @@ type Config struct {
 	LogLevel string
 }
 
+// DefaultPort for peer connections (used when FixedPort is not specified)
+// Using a well-known port makes it easier for firewall configuration
+// Users can change this via --port flag or --fixed-port for stability
+const DefaultPort = 45678
+
 func DefaultConfig() Config {
 	return Config{
 		Host:           "127.0.0.1",
-		Port:           0,
+		Port:           DefaultPort,
 		FixedPort:      0,
 		Rendezvous:     "raag-music-share",
 		ProtocolID:     "/raag/1.0.0",
