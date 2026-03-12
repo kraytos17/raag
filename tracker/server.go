@@ -65,7 +65,7 @@ func (t *Tracker) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := t.initLibp2p(ctx); err != nil {
+	if err := t.initLibp2p(); err != nil {
 		return fmt.Errorf("failed to init libp2p: %w", err)
 	}
 
@@ -90,7 +90,7 @@ func (t *Tracker) Start() error {
 	return nil
 }
 
-func (t *Tracker) initLibp2p(ctx context.Context) error {
+func (t *Tracker) initLibp2p() error {
 	prvKey, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
 	if err != nil {
 		return fmt.Errorf("failed to generate key: %w", err)
