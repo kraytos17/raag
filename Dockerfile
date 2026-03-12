@@ -8,4 +8,4 @@ RUN go build -o tracker ./tracker/cmd/tracker
 FROM alpine
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /app/tracker .
-CMD ["./tracker"]
+CMD ["./tracker --http-port 8080 --libp2p-port 45678 --relay --dht"]
