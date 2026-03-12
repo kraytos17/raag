@@ -5,7 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -o tracker ./tracker/cmd/tracker
+RUN go build -ldflags="-s -w" -o tracker ./tracker/cmd/tracker
 
 FROM alpine
 RUN apk --no-cache add ca-certificates
