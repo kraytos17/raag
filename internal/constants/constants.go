@@ -11,6 +11,10 @@ const (
 
 	// DefaultHTTPPort is the default HTTP API port
 	DefaultHTTPPort = 8080
+
+	// DefaultTrackerURL is the default tracker URL for peer discovery
+	// HACK :- CHANGE THIS LATER
+	DefaultTrackerURL = "http://raag.dedyn.io"
 )
 
 // Peer Discovery
