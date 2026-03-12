@@ -183,7 +183,7 @@ func (s *SocketServer) handleStatus() socket.Response {
 		Success: true,
 		Data: socket.DaemonStatus{
 			Running:   true,
-			PeerCount: s.nm.GetConnectedPeerCount(),
+			PeerCount: len(s.nm.GetPeers()),
 			Connected: s.nm.IsOnline(),
 			Uptime:    uptime.Truncate(time.Second).String(),
 			Version:   "1.0.0",

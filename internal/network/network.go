@@ -59,11 +59,11 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(listenAddr)
 	opts = append(opts, libp2p.ListenAddrs(sourceMultiAddr), libp2p.Identity(prvKey))
 	if cfg.Offline && !cfg.Wifi {
-		logger.Info("Using offline mode with limited transports")
+		logger.Infof("Using offline mode with limited transports")
 		opts = append(opts, libp2p.DefaultTransports)
 		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 15, time.Minute)))
 	} else if cfg.Wifi {
-		logger.Info("Using WiFi mode with default transports")
+		logger.Infof("Using WiFi mode with default transports")
 		opts = append(opts, libp2p.DefaultTransports)
 	}
 
@@ -126,7 +126,7 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 	if len(addrs) > 0 {
 		logger.Infof("Your Raag Node Multiaddress address=%s", fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID()))
 		if len(addrs) > 1 {
-			logger.Info("Additional addresses")
+			logger.Infof("Additional addresses")
 			for _, addr := range addrs[1:] {
 				logger.Infof("Additional address address=%s", fmt.Sprintf("%s/p2p/%s", addr, n.host.ID()))
 			}
@@ -139,32 +139,45 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (n *NetworkManager) GetPeers() []peer.AddrInfo {
+// withPeersLock executes the given function with the peers lock held for reading
+func (n *NetworkManager) withPeersLock(fn func(map[peer.ID]struct{})) {
 	n.peersLock.RLock()
 	defer n.peersLock.RUnlock()
+	fn(n.peers)
+}
 
+// GetPeers returns information about currently connected peers
+func (n *NetworkManager) GetPeers() []peer.AddrInfo {
 	peers := make([]peer.AddrInfo, 0)
-	for peerID := range n.peers {
-		if conns := n.host.Network().ConnsToPeer(peerID); len(conns) > 0 {
-			peers = append(peers, peer.AddrInfo{
-				ID:    peerID,
-				Addrs: []multiaddr.Multiaddr{conns[0].RemoteMultiaddr()},
-			})
+	n.withPeersLock(func(peersMap map[peer.ID]struct{}) {
+		for peerID := range peersMap {
+			if conns := n.host.Network().ConnsToPeer(peerID); len(conns) > 0 {
+				peers = append(peers, peer.AddrInfo{
+					ID:    peerID,
+					Addrs: []multiaddr.Multiaddr{conns[0].RemoteMultiaddr()},
+				})
+			}
 		}
-	}
+	})
 	return peers
 }
 
+// IsOnline returns true if there are any known peers
 func (n *NetworkManager) IsOnline() bool {
-	n.peersLock.RLock()
-	defer n.peersLock.RUnlock()
-	return len(n.peers) > 0
+	var isOnline bool
+	n.withPeersLock(func(peersMap map[peer.ID]struct{}) {
+		isOnline = len(peersMap) > 0
+	})
+	return isOnline
 }
 
-func (n *NetworkManager) GetConnectedPeerCount() int {
-	n.peersLock.RLock()
-	defer n.peersLock.RUnlock()
-	return len(n.peers)
+// GetPeerCount returns the number of known peers
+func (n *NetworkManager) GetPeerCount() int {
+	var count int
+	n.withPeersLock(func(peersMap map[peer.ID]struct{}) {
+		count = len(peersMap)
+	})
+	return count
 }
 
 func (n *NetworkManager) WaitForPeers(timeout time.Duration) bool {
@@ -223,12 +236,6 @@ func (n *NetworkManager) GetMultiaddr() string {
 	return fmt.Sprintf("%s/p2p/%s", best, n.host.ID())
 }
 
-func (n *NetworkManager) GetPeerCount() int {
-	n.peersLock.RLock()
-	defer n.peersLock.RUnlock()
-	return len(n.peers)
-}
-
 func isUsableAddr(addr string) bool {
 	return !strings.Contains(addr, "/127.0.0.1/") && !strings.Contains(addr, "/0.0.0.0/")
 }
@@ -283,7 +290,7 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 		}
 	}
 
-	logger.Info("ShareSong function completed successfully")
+	logger.Infof("ShareSong function completed successfully")
 	return nil
 }
 
@@ -313,7 +320,7 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	logger.Infof("Received metadata metadata=%s", mdata)
 	songInfo := strings.Split(mdata, "|")
 	if len(songInfo) < 3 {
-		logger.Error("Invalid song metadata")
+		logger.Errorf("Invalid song metadata")
 		return
 	}
 
@@ -343,7 +350,7 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	}
 	defer file.Close()
 
-	logger.Info("Copying song data from stream to file")
+	logger.Infof("Copying song data from stream to file")
 	bytesWritten, err := io.Copy(file, stream)
 	if err != nil {
 		logger.Errorf("Error saving song error=%v", err)
@@ -378,7 +385,7 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 		}
 		if !n.Online {
 			n.Online = true
-			logger.Info("Network: Online - peers connected")
+			logger.Infof("Network: Online - peers connected")
 			if n.OnStateChange != nil {
 				n.OnStateChange(true)
 			}
@@ -398,7 +405,7 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 		}
 		if len(n.peers) == 0 {
 			n.Online = false
-			logger.Info("Network: Offline - no peers connected")
+			logger.Infof("Network: Offline - no peers connected")
 			if n.OnStateChange != nil {
 				n.OnStateChange(false)
 			}

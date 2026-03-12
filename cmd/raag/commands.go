@@ -115,12 +115,12 @@ func queueCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			queue := p.GetQueue()
 			if len(queue) == 0 {
-				logger.Info("queue is empty")
+				logger.Infof("queue is empty")
 				return
 			}
 
 			current := p.GetCurrentSong()
-			logger.Info("current queue")
+			logger.Infof("current queue")
 			for i, song := range queue {
 				marker := "  "
 				if current != nil && current.Title == song.Title {
@@ -182,7 +182,7 @@ func nowplayingCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			song := p.GetCurrentSong()
 			if song == nil {
-				logger.Info("no song playing")
+				logger.Infof("no song playing")
 				return
 			}
 
@@ -250,13 +250,13 @@ func peersListCommand() *cobra.Command {
 				waited = true
 			}
 			if waited {
-				count := netMgr.GetConnectedPeerCount()
+				count := len(netMgr.GetPeers())
 				logger.Infof("connected peers found count=%d", count)
 			}
 
 			peers := netMgr.GetPeers()
 			if len(peers) == 0 {
-				logger.Info("no peers connected")
+				logger.Infof("no peers connected")
 				knownPeers := netMgr.GetAllKnownPeers()
 				if len(knownPeers) > 0 {
 					logger.Infof("known peers from discovery count=%d", len(knownPeers))
@@ -326,7 +326,7 @@ func peersInfoCommand() *cobra.Command {
 			peerID := netMgr.GetPeerID()
 			multiaddr := netMgr.GetMultiaddr()
 
-			logger.Info("self info")
+			logger.Infof("self info")
 			logger.Infof("peer id id=%s", peerID)
 			logger.Infof("multiaddr addr=%s", multiaddr)
 
@@ -339,7 +339,7 @@ func peersInfoCommand() *cobra.Command {
 			allKnownPeers := netMgr.GetAllKnownPeers()
 			logger.Infof("connected peers count=%d", len(connectedPeers))
 			if len(connectedPeers) == 0 {
-				logger.Info("no peers connected")
+				logger.Infof("no peers connected")
 			}
 			for _, p := range connectedPeers {
 				logger.Infof("peer id=%s", p.ID)
@@ -347,7 +347,7 @@ func peersInfoCommand() *cobra.Command {
 
 			logger.Infof("known peers from discovery count=%d", len(allKnownPeers))
 			if len(allKnownPeers) == 0 {
-				logger.Info("no known peers")
+				logger.Infof("no known peers")
 			}
 			for _, p := range allKnownPeers {
 				status := "Connected"
@@ -382,7 +382,7 @@ func trySocketAndPrintPeersInfo() bool {
 
 	self, ok := data["self"].(map[string]any)
 	if ok {
-		logger.Info("self info")
+		logger.Infof("self info")
 		logger.Infof("peer id id=%v", self["peer_id"])
 		logger.Infof("multiaddr addr=%v", self["multiaddr"])
 	}
@@ -391,7 +391,7 @@ func trySocketAndPrintPeersInfo() bool {
 	if ok {
 		logger.Infof("connected peers count=%d", len(connectedPeers))
 		if len(connectedPeers) == 0 {
-			logger.Info("no peers connected")
+			logger.Infof("no peers connected")
 		}
 		for _, p := range connectedPeers {
 			peerMap := p.(map[string]any)
@@ -403,7 +403,7 @@ func trySocketAndPrintPeersInfo() bool {
 	if ok {
 		logger.Infof("known peers from discovery count=%d", len(knownPeers))
 		if len(knownPeers) == 0 {
-			logger.Info("no known peers")
+			logger.Infof("no known peers")
 		}
 		for _, p := range knownPeers {
 			peerMap := p.(map[string]any)
@@ -478,7 +478,7 @@ func peersTrackerCommand() *cobra.Command {
 
 			ctx := context.Background()
 			netMgr.UpdateTrackerURL(ctx, trackerURL)
-			logger.Info("tracker URL updated successfully")
+			logger.Infof("tracker URL updated successfully")
 		},
 	}
 }
@@ -496,7 +496,7 @@ func peersBootstrapCommand() *cobra.Command {
 			if err := netMgr.AddBootstrapPeer(ctx, multiaddrStr); err != nil {
 				logger.Errorf("failed to add bootstrap peer error=%v", err)
 			} else {
-				logger.Info("bootstrap peer added successfully")
+				logger.Infof("bootstrap peer added successfully")
 			}
 		},
 	}
@@ -524,7 +524,7 @@ func libraryListCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			songs := lib.ListSongs()
 			if len(songs) == 0 {
-				logger.Info("library is empty")
+				logger.Infof("library is empty")
 				return
 			}
 
@@ -571,7 +571,7 @@ func libraryRescanCommand() *cobra.Command {
 		Use:   "rescan",
 		Short: "Rescan music directory",
 		Run: func(cmd *cobra.Command, args []string) {
-			logger.Info("rescanning music library")
+			logger.Infof("rescanning music library")
 			musicDir := lib.GetMusicDir()
 			if err := lib.ScanMusicLibrary(musicDir); err != nil {
 				logger.Errorf("failed to rescan library error=%v", err)
@@ -687,11 +687,11 @@ func playlistListCommand() *cobra.Command {
 
 			names := pm.List()
 			if len(names) == 0 {
-				logger.Info("no playlists found")
+				logger.Infof("no playlists found")
 				return
 			}
 
-			logger.Info("playlists")
+			logger.Infof("playlists")
 			for _, name := range names {
 				logger.Infof("playlist name=%s", name)
 			}
@@ -867,9 +867,9 @@ func statusCommand() *cobra.Command {
 				return
 			}
 
-			logger.Info("daemon status (standalone mode)")
+			logger.Infof("daemon status (standalone mode)")
 			logger.Infof("running value=%v", true)
-			logger.Infof("peer count count=%d", netMgr.GetConnectedPeerCount())
+			logger.Infof("peer count count=%d", len(netMgr.GetPeers()))
 			logger.Infof("network online status=%v", netMgr.IsOnline())
 		},
 	}
@@ -895,7 +895,7 @@ func trySocketAndPrintStatus() bool {
 		return false
 	}
 
-	logger.Info("daemon status")
+	logger.Infof("daemon status")
 	logger.Infof("running value=%v", data["running"])
 	logger.Infof("peer count count=%v", data["peer_count"])
 	logger.Infof("network online status=%v", data["network_online"])
@@ -924,7 +924,7 @@ func configShowCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			if cfg == nil {
 				defaults := config.DefaultConfig()
-				logger.Info("current configuration (default)")
+				logger.Infof("current configuration (default)")
 				logger.Infof("music_dir value=%s", defaults.MusicDir)
 				logger.Infof("volume value=%d", defaults.Volume)
 				logger.Infof("tui_enabled value=%v", defaults.TUI)
@@ -937,7 +937,7 @@ func configShowCommand() *cobra.Command {
 				return
 			}
 
-			logger.Info("current configuration")
+			logger.Infof("current configuration")
 			logger.Infof("music_dir value=%s", cfg.MusicDir)
 			logger.Infof("volume value=%d", cfg.Volume)
 			logger.Infof("tui_enabled value=%v", cfg.TUI)
@@ -1019,7 +1019,7 @@ func configSetCommand() *cobra.Command {
 				cfg.LogLevel = value
 			default:
 				logger.Errorf("unknown config key key=%s", key)
-				logger.Info("available keys: musicdir, volume, tui, wifi, offline, rendezvous, host, port, loglevel")
+				logger.Infof("available keys: musicdir, volume, tui, wifi, offline, rendezvous, host, port, loglevel")
 				return
 			}
 
@@ -1073,7 +1073,7 @@ func configResetCommand() *cobra.Command {
 			}
 
 			logger.SetLevel(cfg.LogLevel)
-			logger.Info("configuration reset to defaults")
+			logger.Infof("configuration reset to defaults")
 		},
 	}
 }

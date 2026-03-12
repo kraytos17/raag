@@ -45,7 +45,7 @@ func main() {
 					startTUI()
 					return
 				}
-				logger.Info("Starting peer discovery...")
+				logger.Infof("Starting peer discovery...")
 				<-ctx.Done()
 			}
 		},
@@ -101,7 +101,7 @@ func initializeApp(cmd *cobra.Command) error {
 	go func() {
 		if err := netMgr.Start(ctx); err != nil {
 			if err == context.Canceled {
-				logger.Info("Network stopped")
+				logger.Infof("Network stopped")
 				return
 			}
 			logger.Errorf("Network error error=%v", err)
@@ -112,7 +112,7 @@ func initializeApp(cmd *cobra.Command) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		logger.Info("Received termination signal, shutting down")
+		logger.Infof("Received termination signal, shutting down")
 		shutdown()
 		os.Exit(0)
 	}()

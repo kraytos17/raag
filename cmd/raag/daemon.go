@@ -24,7 +24,7 @@ func daemonCommand() *cobra.Command {
 		Use:   "daemon",
 		Short: "Run raag as a background daemon",
 		Long: `Start the raag daemon in background mode.
-		
+
 The daemon maintains live peer connections and exposes a Unix socket
 for fast CLI queries. Use 'raag peers list' and other commands to query.
 
@@ -43,7 +43,7 @@ Examples:
 }
 
 func runDaemon(cmd *cobra.Command) {
-	logger.Info("starting Raag daemon")
+	logger.Infof("starting Raag daemon")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -82,7 +82,7 @@ func runDaemon(cmd *cobra.Command) {
 	go func() {
 		if err := netMgr.Start(ctx); err != nil {
 			if err == context.Canceled {
-				logger.Info("network stopped")
+				logger.Infof("network stopped")
 				return
 			}
 			logger.Errorf("network error error=%v", err)
@@ -95,7 +95,7 @@ func runDaemon(cmd *cobra.Command) {
 		os.Exit(1)
 	}
 
-	logger.Info("Raag daemon started. Use Ctrl+C to stop.")
+	logger.Infof("Raag daemon started. Use Ctrl+C to stop.")
 	showTUI := shouldStartTUI(cmd, cfg, true, daemonNoTUI)
 	if showTUI {
 		go func() {
@@ -105,11 +105,11 @@ func runDaemon(cmd *cobra.Command) {
 	}
 
 	<-sigCh
-	logger.Info("shutting down daemon")
+	logger.Infof("shutting down daemon")
 
 	socketServer.Stop()
 	cancel()
 
 	time.Sleep(1 * time.Second)
-	logger.Info("daemon stopped")
+	logger.Infof("daemon stopped")
 }

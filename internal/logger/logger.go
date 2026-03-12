@@ -61,38 +61,6 @@ func SetLevel(level string) {
 	}
 }
 
-func Debug(msg string, args ...any) {
-	if len(args) == 0 {
-		logger.Debug(msg)
-	} else {
-		logger.Debug(msg, args...)
-	}
-}
-
-func Info(msg string, args ...any) {
-	if len(args) == 0 {
-		logger.Info(msg)
-	} else {
-		logger.Info(msg, args...)
-	}
-}
-
-func Warn(msg string, args ...any) {
-	if len(args) == 0 {
-		logger.Warn(msg)
-	} else {
-		logger.Warn(msg, args...)
-	}
-}
-
-func Error(msg string, args ...any) {
-	if len(args) == 0 {
-		logger.Error(msg)
-	} else {
-		logger.Error(msg, args...)
-	}
-}
-
 func With(args ...any) *log.Logger {
 	return logger.With(args...)
 }
@@ -111,4 +79,18 @@ func Warnf(format string, args ...any) {
 
 func Errorf(format string, args ...any) {
 	logger.Errorf(format, args...)
+}
+
+// Err logs an error message with the given error if not nil
+func Err(msg string, err error) {
+	if err != nil {
+		logger.Errorf("%s error=%v", msg, err)
+	}
+}
+
+// WarnErr logs a warning message with the given error if not nil
+func WarnErr(msg string, err error) {
+	if err != nil {
+		logger.Warnf("%s error=%v", msg, err)
+	}
 }
