@@ -125,7 +125,7 @@ ipconfig getifaddr en0
 | `tui` | `true` | Start TUI |
 | `loglevel` | `info` | Log level |
 | `rendezvous` | `raag-music-share` | Discovery namespace |
-| `tracker.url` | `http://raag.dedyn.io` | Tracker URL for cross-network discovery |
+| `tracker.url` | `https://raag-production.up.railway.app` | Tracker URL (can be overridden via env or flag) |
 
 ## CLI Flags
 
@@ -135,8 +135,58 @@ ipconfig getifaddr en0
 | `--host` | `0.0.0.0` | Bind address (all interfaces) |
 | `--port` | `45678` | Listen port |
 | `--dht` | `true` | Enable DHT discovery |
-| `--tracker` | `http://raag.dedyn.io` | Tracker URL for cross-network discovery |
+| `--tracker` | (see env var) | Tracker URL for cross-network discovery |
 | `--tui` | `false` | Start TUI |
+
+## Environment Variables (Production)
+
+For production deployments, use environment variables instead of hardcoding values:
+
+### Client (raag)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRACKER_URL` | `https://raag-production.up.railway.app` | Tracker URL for peer discovery |
+| `RAAG_HOST` | `0.0.0.0` | Bind address |
+| `RAAG_PORT` | `45678` | Listen port |
+| `RAAG_MUSIC_DIR` | `./music` | Music directory |
+| `RAAG_LOG_LEVEL` | `info` | Log level |
+
+**Example:**
+```bash
+export TRACKER_URL="https://your-custom-tracker.example.com"
+export RAAG_PORT="45678"
+./bin/raag --network
+```
+
+### Docker Deployment
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRACKER_HTTP_PORT` | `8080` | HTTP API listen port |
+| `TRACKER_LIBP2P_PORT` | `45678` | libp2p listen port |
+| `TRACKER_RELAY` | `true` | Enable circuit relay |
+| `TRACKER_DHT` | `true` | Enable DHT bootstrap node |
+
+**Docker example:**
+```bash
+docker run -e TRACKER_HTTP_PORT=9090 -e TRACKER_RELAY=true raag-tracker
+```
+
+**Docker Compose:**
+```yaml
+services:
+  tracker:
+    image: raag-tracker
+    environment:
+      - TRACKER_HTTP_PORT=8080
+      - TRACKER_LIBP2P_PORT=45678
+      - TRACKER_RELAY=true
+      - TRACKER_DHT=true
+    ports:
+      - "8080:8080"
+      - "45678:45678"
+```
 
 ## Network Discovery Options
 
@@ -161,8 +211,12 @@ Enhanced tracker with libp2p relay and DHT for peer discovery across different n
 # Start tracker on a public server (e.g., Railway, Oracle Cloud)
 ./bin/tracker --http-port 8080 --libp2p-port 45678
 
-# Point clients to tracker (default: http://raag.dedyn.io)
-./bin/raag --network --tracker http://<tracker-ip>
+# Point clients to tracker (default: https://raag-production.up.railway.app)
+./bin/raag --network
+
+# Override tracker URL via environment variable
+export TRACKER_URL="https://your-tracker.example.com"
+./bin/raag --network
 ```
 
 **Tracker Features:**

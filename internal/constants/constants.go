@@ -12,9 +12,12 @@ const (
 	// DefaultHTTPPort is the default HTTP API port
 	DefaultHTTPPort = 8080
 
-	// DefaultTrackerURL is the default tracker URL for peer discovery
-	// HACK :- CHANGE THIS LATER
-	DefaultTrackerURL = "http://raag.dedyn.io"
+	// DefaultTrackerURL is the default tracker URL for peer discovery (fallback)
+	// Can be overridden via TRACKER_URL environment variable or --tracker flag
+	DefaultTrackerURL = "https://raag-production.up.railway.app"
+
+	// EnvTrackerURL is the environment variable name for tracker URL
+	EnvTrackerURL = "TRACKER_URL"
 )
 
 // Peer Discovery

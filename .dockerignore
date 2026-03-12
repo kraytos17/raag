@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+*.exe
+*.test
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Documentation
+README.md
+CONTRIBUTING.md
+
+# Tests
+*_test.go
+coverage.out
+
+# Temporary files
+*.log
+*.tmp
+.DS_Store
