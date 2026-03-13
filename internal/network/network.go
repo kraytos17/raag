@@ -577,6 +577,12 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 		if n.discovery != nil {
 			n.discovery.MarkPeerConnected(peerID)
 		}
+
+		go func() {
+			if err := n.SendHelloToPeer(context.Background(), peerID); err != nil {
+				logger.Debugf("Auto-hello failed for peer peer_id=%s error=%v", peerID, err)
+			}
+		}()
 		if n.OnPeerJoin != nil {
 			n.OnPeerJoin(peerID)
 		}
@@ -597,6 +603,13 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 	if _, ok := n.peers[peerID]; ok {
 		delete(n.peers, peerID)
 		logger.Infof("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
+
+		go func() {
+			if err := n.SendGoodbye(context.Background(), peerID); err != nil {
+				logger.Debugf("Failed to send goodbye to peer peer_id=%s error=%v", peerID, err)
+			}
+		}()
+
 		if n.OnPeerLeave != nil {
 			n.OnPeerLeave(peerID)
 		}
@@ -661,6 +674,23 @@ func (n *NetworkManager) SendHelloToPeer(ctx context.Context, peerID peer.ID) er
 	return n.SendPing(ctx, peerID)
 }
 
+// SendGoodbye sends a "left" message to a peer before disconnecting
+func (n *NetworkManager) SendGoodbye(ctx context.Context, peerID peer.ID) error {
+	stream, err := n.host.NewStream(ctx, peerID, protocol.ID(constants.PingProtocolID))
+	if err != nil {
+		return fmt.Errorf("failed to open goodbye stream: %w", err)
+	}
+	defer stream.Close()
+
+	goodbyeMsg := BuildPingMessage(n.host.ID().String(), PingTypeLeft, "goodbye")
+	if err := WritePingMessage(stream, goodbyeMsg); err != nil {
+		return fmt.Errorf("failed to send goodbye: %w", err)
+	}
+
+	logger.Infof("Sent goodbye to peer peer_id=%s", peerID)
+	return nil
+}
+
 // handlePingStream handles incoming ping/presence messages
 func (n *NetworkManager) handlePingStream(stream network.Stream) {
 	pingMsg, err := ReadPingMessage(stream)
@@ -673,7 +703,8 @@ func (n *NetworkManager) handlePingStream(stream network.Stream) {
 	logger.Infof("Received ping message type=%s from peer peer_id=%s message=%s",
 		pingMsg.Type, pingMsg.PeerID, pingMsg.Message)
 
-	if pingMsg.Type == PingTypeHello {
+	switch pingMsg.Type {
+	case PingTypeHello:
 		pongMsg := BuildPingMessage(n.host.ID().String(), PingTypePong, "pong")
 		if err := WritePingMessage(stream, pongMsg); err != nil {
 			logger.Warnf("Failed to send pong to peer peer_id=%s error=%v", stream.Conn().RemotePeer(), err)
@@ -681,6 +712,8 @@ func (n *NetworkManager) handlePingStream(stream network.Stream) {
 			return
 		}
 		logger.Infof("Sent pong to peer peer_id=%s", stream.Conn().RemotePeer())
+	case PingTypeLeft:
+		logger.Infof("Peer %s has left the network", pingMsg.PeerID)
 	}
 	stream.Close()
 }
