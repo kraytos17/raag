@@ -9,6 +9,7 @@ services:
       - "45678:45678"
     environment:
       PORT: "8080"
+      # AUTH_KEY: "your-key"  # Comma-separated for multiple keys
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
@@ -30,6 +31,15 @@ Optionally provides circuit relay for NAT traversal between peers.
 Example:
   ./tracker --http-port 8080 --libp2p-port 45678 --relay`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if authKeyEnv := os.Getenv(constants.EnvAuthKey); authKeyEnv != "" {
+				envKeys := strings.SplitSeq(authKeyEnv, ",")
+				for k := range envKeys {
+					k = strings.TrimSpace(k)
+					if k != "" {
+						cfg.authPublicKeys = append(cfg.authPublicKeys, k)
+					}
+				}
+			}
 			config := tracker.TrackerConfig{
 				HTTPPort:       cfg.httpPort,
 				Libp2pPort:     cfg.libp2pPort,

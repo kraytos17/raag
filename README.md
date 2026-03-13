@@ -400,22 +400,50 @@ make build-tracker
 ./bin/tracker --http-port 8080 --libp2p-port 45678 --auth-key <derived-auth-public-key>
 ```
 
+### Environment Variables
+
+The tracker supports the following environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `PORT` | HTTP API listen port (defaults to 8080) |
+| `AUTH_KEY` | Trusted auth key(s) for peer authentication. Comma-separated for multiple keys. |
+
+Examples:
+
+```bash
+# Single key
+AUTH_KEY=263e6f196c27a0599bc79ef8146ed279bbc098b9143b3ebbd461f24e5f790a1e
+
+# Multiple keys
+AUTH_KEY=key1,key2,key3
+```
+
 ### Docker
 
 Build and run:
 
 ```bash
 docker build -t raag-tracker .
-docker run --rm -e PORT=8080 -p 8080:8080 -p 45678:45678 raag-tracker
+docker run --rm -e PORT=8080 -e AUTH_KEY=<your-key> -p 8080:8080 -p 45678:45678 raag-tracker
 ```
 
 The provided `Dockerfile` builds the tracker binary, exposes ports `8080` and `45678`, and starts the tracker with `PORT`-aware HTTP binding.
 
-If you want auth enabled in Docker, override the default command and add `--auth-key` values explicitly.
+For multiple keys, use comma-separated:
+```bash
+-e AUTH_KEY=key1,key2,key3
+```
 
 ### Docker Compose
 
-The provided `docker-compose.yml` starts the tracker service and exposes both ports. To enable authentication, add the trusted keys to the container command or wrap the container with a custom compose override.
+The provided `docker-compose.yml` starts the tracker service and exposes both ports. To enable authentication, uncomment and set the `AUTH_KEY` environment variable:
+
+```yaml
+environment:
+  PORT: "8080"
+  AUTH_KEY: "your-key-here"  # Comma-separated for multiple keys
+```
 
 ### Railway
 
@@ -426,12 +454,23 @@ Recommended Railway setup:
 1. Deploy this repo as a Dockerfile service
 2. Let Railway provide the HTTP `PORT` environment variable; the Docker entrypoint now honors it automatically
 3. Expose libp2p port `45678` if your deployment needs peer-to-peer reachability metadata
-4. Start the tracker with `--auth-key` values for every peer you want to trust
+4. Add the `AUTH_KEY` environment variable in Railway's Variables tab
 
-Example start command:
+**Railway Configuration:**
 
+| Variable | Value | Notes |
+|----------|-------|-------|
+| `PORT` | Auto-provided by Railway | Don't set manually |
+| `AUTH_KEY` | Your derived auth key | Add as a **Variable** (or **Secret** for production) |
+
+For multiple keys, separate with commas:
+```
+AUTH_KEY=key1,key2,key3
+```
+
+The start command remains default:
 ```bash
-./tracker --http-port 8080 --libp2p-port 45678 --auth-key <derived-auth-public-key>
+./tracker --http-port ${PORT:-8080} --libp2p-port 45678 --relay
 ```
 
 If `~/.config/raag/identity.key` is rotated or deleted on a client, its peer ID and derived auth key change accordingly, requiring an update to the tracker trust list.
