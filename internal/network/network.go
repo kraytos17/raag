@@ -68,7 +68,7 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 			return generateAndSaveKey(keyPath)
 		}
 
-		logger.Infof("Loaded existing identity key from %s", keyPath)
+		logger.Debugf("Loaded existing identity key from %s", keyPath)
 		return key, nil
 	}
 	if !os.IsNotExist(err) {
@@ -105,7 +105,7 @@ func generateAndSaveKey(keyPath string) (crypto.PrivKey, error) {
 	if err := os.WriteFile(keyPath, data, 0o600); err != nil {
 		logger.Warnf("Failed to save identity key: %v", err)
 	} else {
-		logger.Infof("Generated and saved new identity key to %s", keyPath)
+		logger.Debugf("Generated and saved new identity key to %s", keyPath)
 	}
 	return key, nil
 }
@@ -141,7 +141,7 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 }
 
 func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string, identity crypto.PrivKey) (*NetworkManager, error) {
-	logger.Infof("Network config network=%v host=%s port=%d rendezvous=%s", cfg.Network, cfg.Host, cfg.Port, cfg.Rendezvous)
+	logger.Debugf("Network config network=%v host=%s port=%d rendezvous=%s", cfg.Network, cfg.Host, cfg.Port, cfg.Rendezvous)
 
 	prvKey := identity
 	var err error
@@ -159,7 +159,7 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 	quicMultiAddr, _ := multiaddr.NewMultiaddr(quicListenAddr)
 	opts = append(opts, libp2p.ListenAddrs(tcpMultiAddr, quicMultiAddr), libp2p.Identity(prvKey))
 	if cfg.Network {
-		logger.Infof("Using networked mode with NAT traversal")
+		logger.Debugf("Using networked mode with NAT traversal")
 		opts = append(opts, libp2p.DefaultTransports)
 		if resourceManager, err := newResourceManager(); err != nil {
 			logger.Warnf("Failed to initialize resource manager error=%v", err)
@@ -173,9 +173,9 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		opts = append(opts, libp2p.EnableNATService())
 		low, high := connectionWatermarks(cfg.MaxPeers)
 		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(low, high, 2*time.Minute)))
-		logger.Infof("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
+		logger.Debugf("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
 	} else {
-		logger.Infof("Using offline mode with limited transports")
+		logger.Debugf("Using offline mode with limited transports")
 		opts = append(opts, libp2p.DefaultTransports)
 		low, high := connectionWatermarks(15)
 		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(low, high, time.Minute)))
@@ -252,7 +252,7 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 
 	addrs := n.host.Addrs()
 	if len(addrs) > 0 {
-		logger.Infof("Your Raag Node Multiaddress address=%s", fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID()))
+		logger.Debugf("Your Raag Node Multiaddress address=%s", fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID()))
 		if len(addrs) > 1 {
 			logger.Debugf("Additional addresses")
 			for _, addr := range addrs[1:] {
@@ -327,7 +327,7 @@ func (n *NetworkManager) Connect(ctx context.Context, addrInfo peer.AddrInfo) er
 		return fmt.Errorf("failed to connect: %w", err)
 	}
 
-	logger.Infof("Connecting to peer peer_id=%s", addrInfo.ID)
+	logger.Debugf("Connecting to peer peer_id=%s", addrInfo.ID)
 	go func() {
 		if err := n.SendHelloToPeer(ctx, addrInfo.ID); err != nil {
 			logger.Debugf("Auto-hello failed for peer peer_id=%s error=%v", addrInfo.ID, err)
@@ -423,7 +423,7 @@ func (n *NetworkManager) SetDiscoveryTestIntervals(heartbeat, refresh, retryDela
 }
 
 func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) error {
-	logger.Infof("ShareSong function called peer_info=%v song=%v", peerInfo, song)
+	logger.Debugf("ShareSong function called peer_info=%v song=%v", peerInfo, song)
 	digest, fileSize, err := hashFile(song.Path)
 	if err != nil {
 		return fmt.Errorf("prepare transfer: %w", err)
@@ -457,13 +457,13 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 		return fmt.Errorf("failed to send song data: %w", err)
 	}
 
-	logger.Infof("ShareSong function completed successfully")
+	logger.Debugf("ShareSong function completed successfully")
 	return nil
 }
 
 func (n *NetworkManager) handleStream(stream network.Stream) {
 	peerID := stream.Conn().RemotePeer()
-	logger.Infof("handleStream called peer_id=%s", peerID)
+	logger.Debugf("handleStream called peer_id=%s", peerID)
 	meta, err := readTransferMetadata(stream)
 	if err != nil {
 		stream.Reset()
@@ -473,7 +473,7 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	defer stream.Close()
 
 	if meta.SizeBytes == 0 {
-		logger.Infof("Received empty file transfer from peer peer_id=%s", peerID)
+		logger.Debugf("Received empty file transfer from peer peer_id=%s", peerID)
 		return
 	}
 	if meta.SizeBytes > constants.TransferMaxFileSize {
@@ -515,7 +515,7 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 		}
 	}()
 
-	logger.Infof("Preparing to save file file_path=%s", filePath)
+	logger.Debugf("Preparing to save file file_path=%s", filePath)
 	if err := stream.SetReadDeadline(time.Now().Add(constants.TransferIdleTimeout)); err != nil {
 		logger.Debugf("failed to set read deadline error=%v", err)
 	}
@@ -562,7 +562,7 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 		}
 	}
 
-	logger.Infof("Song data saved bytes_written=%d", bytesWritten)
+	logger.Debugf("Song data saved bytes_written=%d", bytesWritten)
 	logger.Infof("Successfully received and saved song title=%s peer_id=%s file_path=%s", meta.Title, peerID, filePath)
 }
 
@@ -609,22 +609,34 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 
 func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Multiaddr) {
 	n.peersLock.Lock()
-	defer n.peersLock.Unlock()
+	_, peerInMap := n.peers[peerID]
+	delete(n.peers, peerID)
+	peerCount := len(n.peers)
+	n.peersLock.Unlock()
 
-	if _, ok := n.peers[peerID]; ok {
-		delete(n.peers, peerID)
-		logger.Infof("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
+	logger.Infof("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
+	if peerInMap {
 		logger.Infof("Peer %s has left the network", peerID)
+	}
 
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := n.SendGoodbye(ctx, peerID); err != nil {
+			logger.Debugf("Goodbye send result peer_id=%s error=%v", peerID, err)
+		}
+	}()
+
+	if peerCount == 0 {
+		n.peersLock.Lock()
+		n.Online = false
+		n.peersLock.Unlock()
+		logger.Infof("Network: Offline - no peers connected")
 		if n.OnPeerLeave != nil {
 			n.OnPeerLeave(peerID)
 		}
-		if len(n.peers) == 0 {
-			n.Online = false
-			logger.Infof("Network: Offline - no peers connected")
-			if n.OnStateChange != nil {
-				n.OnStateChange(false)
-			}
+		if n.OnStateChange != nil {
+			n.OnStateChange(false)
 		}
 	}
 }
@@ -697,6 +709,25 @@ func (n *NetworkManager) SendGoodbye(ctx context.Context, peerID peer.ID) error 
 	return nil
 }
 
+// SendGoodbyeToAll sends goodbye to all connected peers
+func (n *NetworkManager) SendGoodbyeToAll() {
+	peers := n.GetPeers()
+	if len(peers) == 0 {
+		return
+	}
+
+	logger.Infof("Sending goodbye to all peers count=%d", len(peers))
+	for _, p := range peers {
+		go func(peerID peer.ID) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := n.SendGoodbye(ctx, peerID); err != nil {
+				logger.Debugf("Goodbye to peer peer_id=%s error=%v", peerID, err)
+			}
+		}(p.ID)
+	}
+}
+
 // handlePingStream handles incoming ping/presence messages
 func (n *NetworkManager) handlePingStream(stream network.Stream) {
 	pingMsg, err := ReadPingMessage(stream)
@@ -706,7 +737,7 @@ func (n *NetworkManager) handlePingStream(stream network.Stream) {
 		return
 	}
 
-	logger.Infof("Received ping message type=%s from peer peer_id=%s message=%s",
+	logger.Debugf("Received ping message type=%s from peer peer_id=%s message=%s",
 		pingMsg.Type, pingMsg.PeerID, pingMsg.Message)
 
 	switch pingMsg.Type {
