@@ -117,7 +117,7 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	v.BindPFlag("discovery.bootstrap_peers", root.PersistentFlags().Lookup("bootstrap"))
 
 	// Playback flags
-	v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("musicdir"))
+	v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("music-dir"))
 
 	// UI flags
 	v.BindPFlag("ui.tui_enabled", root.PersistentFlags().Lookup("tui"))
@@ -143,9 +143,6 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, fmt.Errorf("invalid port number: %d", cfg.Port)
-	}
-	if cfg.Port == 0 && cfg.Network {
-		cfg.Port = constants.DefaultPort
 	}
 
 	return cfg, nil

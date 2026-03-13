@@ -4,23 +4,55 @@
 
 # Build artifacts
 bin/
+tracker
 *.exe
 *.test
+coverage.out
 
 # IDE
 .vscode/
 .idea/
 *.swp
+*.swo
 
 # Documentation
 README.md
 CONTRIBUTING.md
+LICENSE
 
 # Tests
 *_test.go
-coverage.out
+testdata/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Environment
+.env
+.env.*
+!.env.example
 
 # Temporary files
 *.log
 *.tmp
+*.temp
 .DS_Store
+Thumbs.db
+
+# Vendor (if using vendor directory)
+# vendor/
+
+# Music files (if in repo)
+music/
+*.mp3
+*.flac
+*.wav
+*.ogg

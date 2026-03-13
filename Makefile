@@ -1,4 +1,4 @@
-.PHONY: build run test clean install deps lint vet fmt build-tracker run-tracker update fix
+.PHONY: build run test clean install deps lint vet fmt build-tracker run-tracker update fix staticcheck
 
 BINARY_NAME=raag
 TRACKER_BINARY_NAME=tracker
@@ -44,5 +44,8 @@ update:
 
 fix:
 	$(GO_CMD) fix ./...
+
+staticcheck:
+	$(GO_CMD) run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
 all: clean deps build build-tracker

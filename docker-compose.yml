@@ -1,19 +1,35 @@
 version: "3.8"
 services:
   tracker:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TRACKER_HTTP_PORT: ${TRACKER_HTTP_PORT:-8080}
+        TRACKER_LIBP2P_PORT: ${TRACKER_LIBP2P_PORT:-45678}
     container_name: raag-tracker
     environment:
-      - TRACKER_HTTP_PORT=8080
-      - TRACKER_LIBP2P_PORT=45678
+      - TRACKER_HTTP_PORT=${TRACKER_HTTP_PORT:-8080}
+      - TRACKER_LIBP2P_PORT=${TRACKER_LIBP2P_PORT:-45678}
       - TRACKER_RELAY=true
       - TRACKER_DHT=true
     ports:
-      - "8080:8080"
-      - "45678:45678"
+      - "${TRACKER_HTTP_PORT:-8080}:${TRACKER_HTTP_PORT:-8080}"
+      - "${TRACKER_LIBP2P_PORT:-45678}:${TRACKER_LIBP2P_PORT:-45678}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - raag-network
+networks:
+  raag-network:
+    driver: bridge

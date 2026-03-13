@@ -96,11 +96,7 @@ func applyRuntime(rt *appRuntime) {
 	pm = rt.pm
 }
 
-func shouldStartTUI(cmd *cobra.Command, noTUI bool) bool {
-	if noTUI {
-		return false
-	}
-
+func shouldStartTUI(cmd *cobra.Command) bool {
 	tuiFlag := cmd.Flags().Lookup("tui")
 	rootTuiFlag := cmd.Root().Flags().Lookup("tui")
 	if tuiFlag != nil && tuiFlag.Value.String() == "true" {
