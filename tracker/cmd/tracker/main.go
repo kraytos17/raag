@@ -1,10 +1,7 @@
 package main
 
 import (
-	"context"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
@@ -19,66 +16,36 @@ func main() {
 		httpPort       int
 		libp2pPort     int
 		relayEnabled   bool
-		dhtEnabled     bool
-		authToken      string
-		bootstrapPeers []string
+		authPublicKeys []string
 	}
 
 	rootCmd := &cobra.Command{
 		Use:   "tracker",
-		Short: "Raag centralized tracker server with libp2p relay and DHT",
-		Long: `Raag Tracker serves as both:
-- HTTP API for peer registration and discovery
-- libp2p relay for NAT traversal
-- DHT bootstrap node for peer discovery
+		Short: "Raag tracker server with optional relay support",
+		Long: `Raag Tracker - Peer registry with optional relay for P2P network.
+
+This tracker handles peer registration and peer list distribution.
+Optionally provides circuit relay for NAT traversal between peers.
 
 Example:
-  ./tracker --http-port 8080 --libp2p-port 45678 --relay --dht`,
+  ./tracker --http-port 8080 --libp2p-port 45678 --relay`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
 			config := tracker.TrackerConfig{
-				HTTPPort:     cfg.httpPort,
-				Libp2pPort:   cfg.libp2pPort,
-				RelayEnabled: cfg.relayEnabled,
-				DHTEnabled:   cfg.dhtEnabled,
+				HTTPPort:       cfg.httpPort,
+				Libp2pPort:     cfg.libp2pPort,
+				RelayEnabled:   cfg.relayEnabled,
+				AuthPublicKeys: cfg.authPublicKeys,
 			}
 
 			t := tracker.NewTracker(config)
-			if cfg.authToken != "" {
-				logger.Infof("Authorization enabled - tokens required for peer registration")
-			}
-
-			go func() {
-				if err := t.Start(); err != nil {
-					logger.Errorf("Tracker error: %v", err)
-					cancel()
-				}
-			}()
-
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-			select {
-			case <-ctx.Done():
-				logger.Infof("Tracker shutting down...")
-				return nil
-			case sig := <-sigChan:
-				logger.Infof("Received signal %v, shutting down...", sig)
-				cancel()
-				return nil
-			}
+			return t.Start()
 		},
 	}
 
 	rootCmd.Flags().IntVar(&cfg.httpPort, "http-port", constants.DefaultHTTPPort, "HTTP API listen port")
-	rootCmd.Flags().IntVar(&cfg.libp2pPort, "libp2p-port", constants.DefaultPort, "libp2p listen port")
+	rootCmd.Flags().IntVar(&cfg.libp2pPort, "libp2p-port", constants.DefaultPort, "libp2p listen port (for relay)")
 	rootCmd.Flags().BoolVar(&cfg.relayEnabled, "relay", true, "Enable circuit relay for NAT traversal")
-	rootCmd.Flags().BoolVar(&cfg.dhtEnabled, "dht", true, "Enable DHT bootstrap node")
-	rootCmd.Flags().StringVar(&cfg.authToken, "auth-token", "", "Optional token for peer registration auth")
-	rootCmd.Flags().StringSliceVar(&cfg.bootstrapPeers, "bootstrap", []string{}, "DHT bootstrap peers (multiaddr)")
-
+	rootCmd.Flags().StringArrayVar(&cfg.authPublicKeys, "auth-key", nil, "Trusted ed25519 public key(s) for peer authentication (hex encoded, can be specified multiple times)")
 	if err := rootCmd.Execute(); err != nil {
 		logger.Errorf("failed to execute command error=%v", err)
 		os.Exit(1)

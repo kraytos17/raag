@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	appconfig "github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/network"
@@ -102,6 +104,18 @@ func (s *SocketServer) handleRequest(req socket.Request) socket.Response {
 		return s.handlePeersList()
 	case "peers info":
 		return s.handlePeersInfo()
+	case "network status":
+		return s.handleNetworkStatus()
+	case "network auth-key":
+		return s.handleNetworkAuthKey()
+	case "peers connect":
+		return s.handlePeersConnect(req)
+	case "peers disconnect":
+		return s.handlePeersDisconnect(req)
+	case "peers tracker":
+		return s.handlePeersTracker(req)
+	case "peers bootstrap":
+		return s.handlePeersBootstrap(req)
 	case "peers known":
 		return s.handlePeersKnown()
 	case "library list":
@@ -189,6 +203,74 @@ func (s *SocketServer) handleStatus() socket.Response {
 			Version:   "1.0.0",
 		},
 	}
+}
+
+func (s *SocketServer) handleNetworkStatus() socket.Response {
+	state, err := s.nm.GetNetworkState()
+	if err != nil {
+		return socket.Response{Success: false, Error: err.Error()}
+	}
+	return socket.Response{
+		Success: true,
+		Data:    socket.NetworkStatusFromDiscovery(state),
+	}
+}
+
+func (s *SocketServer) handleNetworkAuthKey() socket.Response {
+	return socket.Response{
+		Success: true,
+		Data: map[string]any{
+			"auth_public_key": s.nm.GetAuthPublicKey(),
+		},
+	}
+}
+
+func (s *SocketServer) handlePeersConnect(req socket.Request) socket.Response {
+	if len(req.Args) != 1 {
+		return socket.Response{Success: false, Error: "peers connect requires one multiaddr argument"}
+	}
+
+	addrInfo, err := peer.AddrInfoFromString(req.Args[0])
+	if err != nil {
+		return socket.Response{Success: false, Error: "invalid multiaddr: " + err.Error()}
+	}
+	if err := s.nm.Connect(context.Background(), *addrInfo); err != nil {
+		return socket.Response{Success: false, Error: err.Error()}
+	}
+	return socket.Response{Success: true}
+}
+
+func (s *SocketServer) handlePeersDisconnect(req socket.Request) socket.Response {
+	if len(req.Args) != 1 {
+		return socket.Response{Success: false, Error: "peers disconnect requires one peer ID argument"}
+	}
+
+	peerID, err := peer.Decode(req.Args[0])
+	if err != nil {
+		return socket.Response{Success: false, Error: "invalid peer ID: " + err.Error()}
+	}
+	if err := s.nm.Disconnect(peerID); err != nil {
+		return socket.Response{Success: false, Error: err.Error()}
+	}
+	return socket.Response{Success: true}
+}
+
+func (s *SocketServer) handlePeersTracker(req socket.Request) socket.Response {
+	if len(req.Args) != 1 {
+		return socket.Response{Success: false, Error: "peers tracker requires one URL argument"}
+	}
+	s.nm.UpdateTrackerURL(context.Background(), req.Args[0])
+	return socket.Response{Success: true}
+}
+
+func (s *SocketServer) handlePeersBootstrap(req socket.Request) socket.Response {
+	if len(req.Args) != 1 {
+		return socket.Response{Success: false, Error: "peers bootstrap requires one multiaddr argument"}
+	}
+	if err := s.nm.AddBootstrapPeer(context.Background(), req.Args[0]); err != nil {
+		return socket.Response{Success: false, Error: err.Error()}
+	}
+	return socket.Response{Success: true}
 }
 
 func (s *SocketServer) handleShutdown() socket.Response {

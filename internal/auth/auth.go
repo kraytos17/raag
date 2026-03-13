@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -49,6 +50,19 @@ func GenerateAuthKeyPair() (ed25519.PrivateKey, error) {
 	return privKey, nil
 }
 
+// DeriveAuthKey derives an ed25519 auth key from identity key bytes
+// This binds auth to identity
+func DeriveAuthKey(identityKeyBytes []byte) (ed25519.PrivateKey, error) {
+	salt := []byte("raag-auth-v1")
+	h := sha256.New()
+	h.Write(identityKeyBytes)
+	h.Write(salt)
+	seed := h.Sum(nil)
+
+	privKey := ed25519.NewKeyFromSeed(seed)
+	return privKey, nil
+}
+
 // GenerateToken creates a new authentication token for a peer
 func GenerateToken(peerID peer.ID, pubKey ed25519.PrivateKey) (*AuthToken, error) {
 	nonce, err := generateNonce()
@@ -65,7 +79,6 @@ func GenerateToken(peerID peer.ID, pubKey ed25519.PrivateKey) (*AuthToken, error
 		Nonce:     nonce,
 	}
 
-	// Sign the token
 	signature, err := signToken(token, pubKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign token: %w", err)
@@ -77,7 +90,6 @@ func GenerateToken(peerID peer.ID, pubKey ed25519.PrivateKey) (*AuthToken, error
 
 // SignToken signs an authentication token
 func signToken(token *AuthToken, privKey ed25519.PrivateKey) (string, error) {
-	// Create a deterministic signature payload
 	payload := fmt.Sprintf("%s:%s:%d:%d:%s",
 		token.PeerID,
 		token.PublicKey,
@@ -102,7 +114,6 @@ func (tm *TokenManager) VerifyToken(token *AuthToken) (bool, error) {
 		return false, fmt.Errorf("token expired")
 	}
 
-	// Verify signature
 	pubKeyBytes, err := hex.DecodeString(token.PublicKey)
 	if err != nil {
 		return false, fmt.Errorf("invalid public key: %w", err)
@@ -191,4 +202,36 @@ func (tm *TokenManager) GetAuthorizedPeers() []string {
 		peers = append(peers, id)
 	}
 	return peers
+}
+
+// TrustedKeyManager manages a list of trusted public keys
+type TrustedKeyManager struct {
+	trustedKeys map[string]struct{}
+}
+
+// NewTrustedKeyManager creates a new trusted key manager
+func NewTrustedKeyManager() *TrustedKeyManager {
+	return &TrustedKeyManager{
+		trustedKeys: make(map[string]struct{}),
+	}
+}
+
+// AddKey adds a public key to the trusted list
+func (tk *TrustedKeyManager) AddKey(publicKeyHex string) {
+	tk.trustedKeys[publicKeyHex] = struct{}{}
+	logger.Infof("Added trusted auth key: %s...", publicKeyHex[:16])
+}
+
+// IsTrusted checks if a public key is trusted
+func (tk *TrustedKeyManager) IsTrusted(publicKeyHex string) bool {
+	_, trusted := tk.trustedKeys[publicKeyHex]
+	return trusted
+}
+
+// VerifyAndCheckTrust verifies a token and checks if its key is trusted
+func (tk *TrustedKeyManager) VerifyAndCheckTrust(token *AuthToken, tm *TokenManager) (bool, error) {
+	if !tk.IsTrusted(token.PublicKey) {
+		return false, fmt.Errorf("public key not in trusted list")
+	}
+	return tm.VerifyToken(token)
 }

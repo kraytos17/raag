@@ -51,6 +51,18 @@ const (
 
 	// TrackerRetryInterval is how long to wait before retrying tracker connection
 	TrackerRetryInterval = 5 * time.Minute
+
+	// TrackerHeartbeatInterval is how often peers refresh tracker registration
+	TrackerHeartbeatInterval = 2 * time.Minute
+
+	// TrackerRefreshInterval is how often peers fetch tracker peer lists
+	TrackerRefreshInterval = 2 * time.Minute
+
+	// TrackerRetryInitialDelay is the starting backoff delay for tracker retries
+	TrackerRetryInitialDelay = 1 * time.Second
+
+	// TrackerRetryMaxDelay is the max backoff delay for tracker retries
+	TrackerRetryMaxDelay = 30 * time.Second
 )
 
 // Tracker Authentication
@@ -75,6 +87,15 @@ const (
 
 	// HTTPClientTimeout is the timeout for HTTP client requests
 	HTTPClientTimeout = 10 * time.Second
+
+	// TransferIdleTimeout is the max idle time for a transfer stream
+	TransferIdleTimeout = 30 * time.Second
+
+	// TransferMaxMetadataSize is the max allowed metadata frame size
+	TransferMaxMetadataSize = 64 * 1024
+
+	// TransferMaxFileSize is the max allowed inbound file size in bytes
+	TransferMaxFileSize = 256 * 1024 * 1024
 )
 
 // Protocol
@@ -82,8 +103,14 @@ const (
 	// ProtocolID is the libp2p protocol identifier for raag
 	ProtocolID = "/raag/1.0.0"
 
+	// ShareProtocolID is the framed transfer protocol identifier for Raag
+	ShareProtocolID = "/raag/share/2.0.0"
+
 	// ProtocolVersion indicates the protocol version
 	ProtocolVersion = "1.0.0"
+
+	// ShareProtocolVersion indicates the framed transfer protocol version
+	ShareProtocolVersion = "2.0.0"
 )
 
 // Playback

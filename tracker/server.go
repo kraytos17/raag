@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
-	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/auth"
 	"github.com/p-society/raag/internal/constants"
@@ -23,61 +21,67 @@ import (
 )
 
 type Tracker struct {
-	mu           sync.RWMutex
-	peers        map[string]time.Time
-	host         host.Host
-	dht          *dht.IpfsDHT
-	discovery    *routing.RoutingDiscovery
-	httpPort     int
-	libp2pPort   int
-	relayEnabled bool
-	dhtEnabled   bool
-	tokenManager *auth.TokenManager
+	mu            sync.RWMutex
+	peers         map[string]registeredPeer
+	httpPort      int
+	libp2pPort    int
+	host          host.Host
+	relayEnabled  bool
+	startedAt     time.Time
+	tokenManager  *auth.TokenManager
+	trustedKeyMgr *auth.TrustedKeyManager
+}
+
+type registeredPeer struct {
+	PeerID   string
+	Addrs    []string
+	LastSeen time.Time
 }
 
 type TrackerConfig struct {
 	HTTPPort       int
 	Libp2pPort     int
 	RelayEnabled   bool
-	DHTEnabled     bool
-	BootstrapPeers []string
+	AuthPublicKeys []string
 }
 
 func NewTracker(cfg TrackerConfig) *Tracker {
-	if cfg.Libp2pPort == 0 {
-		cfg.Libp2pPort = constants.DefaultPort
-	}
 	if cfg.HTTPPort == 0 {
 		cfg.HTTPPort = constants.DefaultHTTPPort
 	}
-
-	return &Tracker{
-		peers:        make(map[string]time.Time),
-		libp2pPort:   cfg.Libp2pPort,
-		httpPort:     cfg.HTTPPort,
-		relayEnabled: cfg.RelayEnabled,
-		dhtEnabled:   cfg.DHTEnabled,
-		tokenManager: auth.NewTokenManager(),
+	if cfg.Libp2pPort == 0 {
+		cfg.Libp2pPort = constants.DefaultPort
 	}
+
+	t := &Tracker{
+		peers:        make(map[string]registeredPeer),
+		httpPort:     cfg.HTTPPort,
+		libp2pPort:   cfg.Libp2pPort,
+		relayEnabled: cfg.RelayEnabled,
+		startedAt:    time.Now(),
+	}
+	if len(cfg.AuthPublicKeys) > 0 {
+		t.tokenManager = auth.NewTokenManager()
+		t.trustedKeyMgr = auth.NewTrustedKeyManager()
+		for _, key := range cfg.AuthPublicKeys {
+			t.trustedKeyMgr.AddKey(key)
+		}
+		logger.Infof("Auth enabled with %d trusted key(s)", len(cfg.AuthPublicKeys))
+	}
+	return t
 }
 
 func (t *Tracker) Start() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := t.initLibp2p(); err != nil {
-		return fmt.Errorf("failed to init libp2p: %w", err)
-	}
-	if t.dhtEnabled {
-		if err := t.initDHT(ctx); err != nil {
-			logger.Warnf("Failed to init DHT: %v", err)
+	if t.relayEnabled {
+		if err := t.initLibp2p(); err != nil {
+			logger.Warnf("Failed to init libp2p (relay disabled): %v", err)
+			t.relayEnabled = false
 		}
 	}
 
 	go t.cleanupOldPeers()
 
 	logger.Infof("Tracker HTTP server starting on port %d", t.httpPort)
-	logger.Infof("Tracker libp2p listening on %s", t.multiaddr())
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", t.httpPort),
 		Handler: t,
@@ -86,77 +90,50 @@ func (t *Tracker) Start() error {
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Errorf("HTTP server failed: %v", err)
-			cancel()
 		}
 	}()
-	<-ctx.Done()
 
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+
+	logger.Infof("Tracker shutting down...")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
+
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Warnf("HTTP server shutdown error: %v", err)
 	}
 	if t.host != nil {
 		t.host.Close()
 	}
-
 	return nil
 }
 
 func (t *Tracker) initLibp2p() error {
-	prvKey, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
-	if err != nil {
-		return fmt.Errorf("failed to generate key: %w", err)
-	}
-
 	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", t.libp2pPort)
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(listenAddr)
-
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(sourceMultiAddr),
-		libp2p.Identity(prvKey),
-		libp2p.ConnectionManager(t.newConnManager()),
-	}
-
-	if t.relayEnabled {
-		opts = append(opts, libp2p.EnableRelay())
+		libp2p.EnableRelay(),
 	}
 
 	h, err := libp2p.New(opts...)
 	if err != nil {
-		return fmt.Errorf("failed to create host: %w", err)
+		return fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
 	t.host = h
 	logger.Infof("Tracker libp2p initialized, ID: %s", t.host.ID())
-	return nil
-}
-
-func (t *Tracker) newConnManager() *connmgr.BasicConnMgr {
-	cm, _ := connmgr.NewConnManager(50, 100, connmgr.WithGracePeriod(time.Minute))
-	return cm
-}
-
-func (t *Tracker) initDHT(ctx context.Context) error {
-	var opts []dht.Option
-	opts = append(opts, dht.Mode(dht.ModeServer))
-
-	kademliaDHT, err := dht.New(ctx, t.host, opts...)
-	if err != nil {
-		return fmt.Errorf("failed to create DHT: %w", err)
-	}
-
-	t.dht = kademliaDHT
-	if err := kademliaDHT.Bootstrap(ctx); err != nil {
-		logger.Warnf("DHT bootstrap warning: %v", err)
-	}
-
-	t.discovery = routing.NewRoutingDiscovery(kademliaDHT)
-	logger.Infof("Tracker DHT initialized, routing table size: %d", t.dht.RoutingTable().Size())
+	logger.Infof("Tracker listening on: %s", t.multiaddr())
 	return nil
 }
 
 func (t *Tracker) multiaddr() string {
+	if t.host == nil {
+		return ""
+	}
+
 	addrs := t.host.Addrs()
 	if len(addrs) == 0 {
 		return ""
@@ -169,6 +146,13 @@ func (t *Tracker) HostID() string {
 		return ""
 	}
 	return t.host.ID().String()
+}
+
+func (t *Tracker) RelayAddr() string {
+	if t.host == nil || !t.relayEnabled {
+		return ""
+	}
+	return fmt.Sprintf("/p2p/%s/p2p-circuit", t.host.ID())
 }
 
 func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -186,73 +170,26 @@ func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		t.handleGetAddr(w)
 	case "/health":
 		t.handleHealth(w)
-	case "/auth/token":
-		t.handleGenerateToken(w, r)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
 func (t *Tracker) handleRoot(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]any{
-		"name":      "Raag Tracker",
-		"version":   "2.0.0",
-		"libp2p":    t.multiaddr(),
-		"relay":     t.relayEnabled,
-		"dht":       t.dhtEnabled,
-		"auth":      "ed25519 signatures",
-		"endpoints": []string{"/peers", "/register", "/addr", "/health", "/auth/token"},
+		"name":        "Raag Tracker",
+		"description": "Peer registry with relay support for Raag P2P network",
+		"version":     "1.0.0",
+		"endpoints":   []string{"/peers", "/register", "/addr", "/health"},
 	})
 }
 
 func (t *Tracker) handleGetAddr(w http.ResponseWriter) {
 	resp := map[string]any{
-		"libp2p_addr":   t.multiaddr(),
-		"relay_enabled": t.relayEnabled,
-		"dht_enabled":   t.dhtEnabled,
+		"relay_enabled": false,
 		"host_id":       t.HostID(),
 	}
-
-	if t.relayEnabled && t.host != nil {
-		resp["relay_addr"] = fmt.Sprintf("/p2p/%s/p2p-circuit", t.host.ID())
-	}
-
 	json.NewEncoder(w).Encode(resp)
-}
-
-func (t *Tracker) handleGetPeers(w http.ResponseWriter) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	var peerList []map[string]any
-	for addr, lastSeen := range t.peers {
-		peerInfo := map[string]any{
-			"addr":      addr,
-			"last_seen": lastSeen.Unix(),
-		}
-
-		if t.relayEnabled {
-			peerInfo["relay_addr"] = t.getRelayAddr(addr)
-		}
-
-		peerList = append(peerList, peerInfo)
-	}
-
-	json.NewEncoder(w).Encode(peerList)
-}
-
-func (t *Tracker) getRelayAddr(peerAddr string) string {
-	if t.host == nil {
-		return ""
-	}
-
-	pi, err := peer.AddrInfoFromString(peerAddr)
-	if err != nil {
-		return ""
-	}
-
-	return fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", t.host.ID(), pi.ID)
 }
 
 func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
@@ -261,135 +198,124 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var data struct {
-		Addr     string `json:"addr"`
-		AuthData string `json:"auth_data,omitempty"`
+	var req struct {
+		Addrs    []string `json:"addrs"`
+		PeerID   string   `json:"peer_id"`
+		AuthData string   `json:"auth_data,omitempty"`
 	}
-
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-
-	if data.Addr == "" {
-		http.Error(w, "Missing addr", http.StatusBadRequest)
+	if len(req.Addrs) == 0 || req.PeerID == "" {
+		http.Error(w, "Missing addrs or peer_id", http.StatusBadRequest)
 		return
 	}
 
-	if err := t.verifyAuth(data.AuthData); err != nil {
-		logger.Warnf("Authentication failed for %s: %v", data.Addr, err)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
+	validatedAddrs := make([]string, 0, len(req.Addrs))
+	for _, addr := range req.Addrs {
+		addrInfo, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			logger.Warnf("Registration denied: invalid peer addr for peer %s: %v", req.PeerID, err)
+			http.Error(w, "Invalid peer address", http.StatusBadRequest)
+			return
+		}
+		if addrInfo.ID.String() != req.PeerID {
+			logger.Warnf("Registration denied: peer_id mismatch request=%s addr=%s", req.PeerID, addrInfo.ID)
+			http.Error(w, "peer_id does not match addr", http.StatusBadRequest)
+			return
+		}
+		validatedAddrs = append(validatedAddrs, addr)
+	}
+
+	if t.trustedKeyMgr != nil && t.tokenManager != nil {
+		if req.AuthData == "" {
+			logger.Warnf("Registration denied: auth required but not provided for peer %s", req.PeerID)
+			http.Error(w, "Authentication required", http.StatusUnauthorized)
+			return
+		}
+
+		token, err := auth.DeserializeToken(req.AuthData)
+		if err != nil {
+			logger.Warnf("Registration denied: invalid auth token format for peer %s: %v", req.PeerID, err)
+			http.Error(w, "Invalid auth token format", http.StatusUnauthorized)
+			return
+		}
+		if token.PeerID != req.PeerID {
+			logger.Warnf("Registration denied: token peer mismatch request=%s token=%s", req.PeerID, token.PeerID)
+			http.Error(w, "Authentication failed", http.StatusUnauthorized)
+			return
+		}
+
+		logger.Debugf("Verifying token: peer_id=%s token_pubkey=%s", token.PeerID, token.PublicKey)
+		valid, err := t.trustedKeyMgr.VerifyAndCheckTrust(token, t.tokenManager)
+		if err != nil || !valid {
+			logger.Warnf("Registration denied: auth verification failed for peer %s: %v (token key: %s)", req.PeerID, err, token.PublicKey)
+			http.Error(w, "Authentication failed", http.StatusUnauthorized)
+			return
+		}
+		logger.Infof("Peer authenticated: %s (key: %s...)", req.PeerID, token.PublicKey[:16])
+	} else if t.trustedKeyMgr == nil && req.AuthData != "" {
+		logger.Debugf("Auth data provided but tracker has no trusted keys - allowing (auth disabled)")
 	}
 
 	t.mu.Lock()
-	t.peers[data.Addr] = time.Now()
+	t.peers[req.PeerID] = registeredPeer{
+		PeerID:   req.PeerID,
+		Addrs:    validatedAddrs,
+		LastSeen: time.Now(),
+	}
 	t.mu.Unlock()
 
-	resp := map[string]any{
-		"status":     "ok",
-		"registered": true,
-	}
-
-	if t.relayEnabled {
-		resp["relay_addr"] = t.getRelayAddr(data.Addr)
-	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
-	logger.Infof("Peer registered: %s", data.Addr)
+	logger.Infof("Peer registered: %s (%d addrs)", req.PeerID, len(validatedAddrs))
+	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
+		"message": "Peer registered successfully",
+	})
 }
 
-func (t *Tracker) verifyAuth(authData string) error {
-	if authData == "" {
-		return fmt.Errorf("authentication required")
-	}
+func (t *Tracker) handleGetPeers(w http.ResponseWriter) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 
-	token, err := auth.DeserializeToken(authData)
-	if err != nil {
-		return fmt.Errorf("invalid token format: %w", err)
+	var peerList []map[string]any
+	for _, record := range t.peers {
+		peerInfo := map[string]any{
+			"peer_id":   record.PeerID,
+			"addrs":     record.Addrs,
+			"last_seen": record.LastSeen.Unix(),
+		}
+		peerList = append(peerList, peerInfo)
 	}
-
-	valid, err := t.tokenManager.VerifyToken(token)
-	if err != nil {
-		return fmt.Errorf("token verification failed: %w", err)
-	}
-	if !valid {
-		return fmt.Errorf("invalid token")
-	}
-	return nil
-}
-
-func (t *Tracker) handleGenerateToken(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var data struct {
-		PeerID    string `json:"peer_id"`
-		PublicKey string `json:"public_key"`
-		Signature string `json:"signature"`
-		Timestamp int64  `json:"timestamp"`
-		ExpiresAt int64  `json:"expires_at"`
-		Nonce     string `json:"nonce"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	token := &auth.AuthToken{
-		PeerID:    data.PeerID,
-		PublicKey: data.PublicKey,
-		Signature: data.Signature,
-		Timestamp: data.Timestamp,
-		ExpiresAt: data.ExpiresAt,
-		Nonce:     data.Nonce,
-	}
-
-	t.tokenManager.AddAuthorizedPeer(token)
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(peerList)
 }
 
 func (t *Tracker) handleHealth(w http.ResponseWriter) {
-	status := map[string]any{
-		"status":        "healthy",
-		"peers_count":   len(t.peers),
-		"libp2p_online": t.host != nil,
-		"dht_online":    t.dht != nil,
-	}
-	if t.dht != nil {
-		status["dht_peers"] = t.dht.RoutingTable().Size()
-	}
-	json.NewEncoder(w).Encode(status)
+	t.mu.RLock()
+	peerCount := len(t.peers)
+	t.mu.RUnlock()
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":         "healthy",
+		"uptime_seconds": int(time.Since(t.startedAt).Seconds()),
+		"peers_count":    peerCount,
+		"relay_enabled":  t.relayEnabled,
+	})
 }
 
 func (t *Tracker) cleanupOldPeers() {
-	for {
-		time.Sleep(constants.PeerCleanupInterval)
+	ticker := time.NewTicker(constants.PeerCleanupInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
 		t.mu.Lock()
-		for addr, lastSeen := range t.peers {
-			if time.Since(lastSeen) > constants.PeerTimeout {
-				delete(t.peers, addr)
-				logger.Infof("Removed stale peer: %s", addr)
+		now := time.Now()
+		for peerID, record := range t.peers {
+			if now.Sub(record.LastSeen) > constants.PeerTimeout {
+				delete(t.peers, peerID)
+				logger.Debugf("Removed stale peer: %s", peerID)
 			}
 		}
 		t.mu.Unlock()
-	}
-}
-
-func StartServer(port int) {
-	tracker := NewTracker(TrackerConfig{
-		HTTPPort:     port,
-		Libp2pPort:   constants.DefaultPort,
-		RelayEnabled: true,
-		DHTEnabled:   true,
-	})
-
-	if err := tracker.Start(); err != nil {
-		logger.Errorf("Tracker failed: %v", err)
-		os.Exit(1)
 	}
 }

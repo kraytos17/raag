@@ -2,9 +2,11 @@ package network
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/config"
@@ -122,33 +125,60 @@ type NetworkManager struct {
 	discovery     *discovery.Manager
 }
 
+func (n *NetworkManager) Host() host.Host {
+	return n.host
+}
+
+func (n *NetworkManager) Close() error {
+	if n.host == nil {
+		return nil
+	}
+	return n.host.Close()
+}
+
 func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string) (*NetworkManager, error) {
+	return newNetworkWithIdentity(cfg, v, lib, musicDir, nil)
+}
+
+func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string, identity crypto.PrivKey) (*NetworkManager, error) {
 	logger.Infof("Network config network=%v host=%s port=%d rendezvous=%s", cfg.Network, cfg.Host, cfg.Port, cfg.Rendezvous)
 
-	prvKey, err := loadOrGenerateIdentity()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load identity: %w", err)
+	prvKey := identity
+	var err error
+	if prvKey == nil {
+		prvKey, err = loadOrGenerateIdentity()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load identity: %w", err)
+		}
 	}
 
 	var opts []libp2p.Option
-	listenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.Host, cfg.Port)
-
-	sourceMultiAddr, _ := multiaddr.NewMultiaddr(listenAddr)
-	opts = append(opts, libp2p.ListenAddrs(sourceMultiAddr), libp2p.Identity(prvKey))
-
+	tcpListenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.Host, cfg.Port)
+	quicListenAddr := fmt.Sprintf("/ip4/%s/udp/%d/quic-v1", cfg.Host, cfg.Port)
+	tcpMultiAddr, _ := multiaddr.NewMultiaddr(tcpListenAddr)
+	quicMultiAddr, _ := multiaddr.NewMultiaddr(quicListenAddr)
+	opts = append(opts, libp2p.ListenAddrs(tcpMultiAddr, quicMultiAddr), libp2p.Identity(prvKey))
 	if cfg.Network {
 		logger.Infof("Using networked mode with NAT traversal")
 		opts = append(opts, libp2p.DefaultTransports)
+		if resourceManager, err := newResourceManager(); err != nil {
+			logger.Warnf("Failed to initialize resource manager error=%v", err)
+		} else {
+			opts = append(opts, libp2p.ResourceManager(resourceManager))
+		}
+
 		opts = append(opts, libp2p.EnableRelay())
 		opts = append(opts, libp2p.EnableHolePunching())
 		opts = append(opts, libp2p.NATPortMap())
 		opts = append(opts, libp2p.EnableNATService())
-		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 100, 2*time.Minute)))
+		low, high := connectionWatermarks(cfg.MaxPeers)
+		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(low, high, 2*time.Minute)))
 		logger.Infof("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
 	} else {
 		logger.Infof("Using offline mode with limited transports")
 		opts = append(opts, libp2p.DefaultTransports)
-		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(10, 15, time.Minute)))
+		low, high := connectionWatermarks(15)
+		opts = append(opts, libp2p.ConnectionManager(NewConnectionManager(low, high, time.Minute)))
 	}
 
 	host, err := libp2p.New(opts...)
@@ -161,7 +191,12 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 		maxPeers = constants.DefaultMaxPeers
 	}
 
-	discoveryMgr := discovery.NewManager(host, cfg.TrackerURL, maxPeers, cfg.Host, cfg.Rendezvous, cfg.DHTEnabled, cfg.BootstrapPeers)
+	identityKeyBytes, err := crypto.MarshalPrivateKey(prvKey)
+	if err != nil {
+		logger.Warnf("Failed to marshal identity key: %v", err)
+	}
+
+	discoveryMgr := discovery.NewManager(host, identityKeyBytes, cfg.TrackerURL, maxPeers, cfg.Host, cfg.Rendezvous, cfg.DHTEnabled, cfg.BootstrapPeers)
 	nm := &NetworkManager{
 		host:      host,
 		cfg:       cfg,
@@ -173,16 +208,6 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 	}
 
 	discoveryMgr.SetNetworkManager(nm)
-	discoveryMgr.SetOnPeerSave(func(peers []peer.AddrInfo) {
-		peerAddrs := discovery.AddrInfoStrings(peers)
-		if len(peerAddrs) > 0 {
-			if err := config.UpdateBootstrapPeers(v, peerAddrs); err != nil {
-				logger.Warnf("Failed to update bootstrap_peers in config error=%v", err)
-			} else {
-				logger.Debugf("Updated bootstrap_peers in config count=%d", len(peerAddrs))
-			}
-		}
-	})
 	host.Network().Notify(&network.NotifyBundle{
 		ConnectedF: func(n network.Network, conn network.Conn) {
 			nm.handlePeerConnect(conn.RemotePeer(), conn.RemoteMultiaddr())
@@ -200,8 +225,26 @@ func NewConnectionManager(low, high int, gracePeriod time.Duration) *connmgr.Bas
 	return cm
 }
 
+func connectionWatermarks(maxPeers int) (int, int) {
+	if maxPeers <= 0 {
+		maxPeers = constants.DefaultMaxPeers
+	}
+
+	high := maxPeers
+	low := int(math.Max(5, float64(high/2)))
+	if low >= high {
+		low = max(1, high-1)
+	}
+	return low, high
+}
+
+func newResourceManager() (network.ResourceManager, error) {
+	limiter := rcmgr.DefaultLimits.AutoScale()
+	return rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limiter))
+}
+
 func (n *NetworkManager) Start(ctx context.Context) error {
-	n.host.SetStreamHandler(protocol.ID(constants.ProtocolID), n.handleStream)
+	n.host.SetStreamHandler(protocol.ID(constants.ShareProtocolID), n.handleStream)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
@@ -340,47 +383,60 @@ func (n *NetworkManager) LogNetworkState() {
 	}
 }
 
+func (n *NetworkManager) GetNetworkState() (discovery.NetworkState, error) {
+	if n.discovery == nil {
+		return discovery.NetworkState{}, fmt.Errorf("discovery not initialized")
+	}
+	return n.discovery.GetNetworkState(), nil
+}
+
+func (n *NetworkManager) GetAuthPublicKey() string {
+	if n.discovery == nil {
+		return ""
+	}
+	return n.discovery.GetAuthPublicKey()
+}
+
+func (n *NetworkManager) SetDiscoveryTestIntervals(heartbeat, refresh, retryDelay, maxRetryDelay time.Duration) {
+	if n.discovery == nil {
+		return
+	}
+	n.discovery.SetTestIntervals(heartbeat, refresh, retryDelay, maxRetryDelay)
+}
+
 func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) error {
 	logger.Infof("ShareSong function called peer_info=%v song=%v", peerInfo, song)
-	dataChan := make(chan []byte)
-	go func() {
-		defer close(dataChan)
-		file, err := os.Open(song.Path)
-		if err != nil {
-			logger.Errorf("Error opening file error=%v", err)
-			return
-		}
-		defer file.Close()
+	digest, fileSize, err := hashFile(song.Path)
+	if err != nil {
+		return fmt.Errorf("prepare transfer: %w", err)
+	}
+	if fileSize > constants.TransferMaxFileSize {
+		return fmt.Errorf("file exceeds max transfer size: %d", fileSize)
+	}
 
-		buffer := make([]byte, 1024)
-		for {
-			n, err := file.Read(buffer)
-			if err != nil && err != io.EOF {
-				logger.Errorf("Error reading file error=%v", err)
-				return
-			}
-			if n == 0 {
-				break
-			}
-			dataChan <- buffer[:n]
-		}
-	}()
+	file, err := os.Open(song.Path)
+	if err != nil {
+		return fmt.Errorf("open file for transfer: %w", err)
+	}
+	defer file.Close()
 
-	stream, err := n.host.NewStream(context.Background(), peerInfo.ID, protocol.ID(constants.ProtocolID))
+	stream, err := n.host.NewStream(context.Background(), peerInfo.ID, protocol.ID(constants.ShareProtocolID))
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	defer stream.Close()
 
-	mdata := metadata.FormatMetadata(song)
-	if _, err = stream.Write([]byte(mdata)); err != nil {
-		return fmt.Errorf("failed to send song metadata: %w", err)
+	meta := buildTransferMetadata(song, fileSize, digest)
+	if err := writeTransferMetadata(stream, meta); err != nil {
+		stream.Reset()
+		return fmt.Errorf("failed to send transfer metadata: %w", err)
 	}
-
-	for data := range dataChan {
-		if _, err = stream.Write(data); err != nil {
-			return fmt.Errorf("failed to send song data: %w", err)
-		}
+	if err := stream.SetWriteDeadline(time.Now().Add(constants.TransferIdleTimeout)); err != nil {
+		logger.Debugf("failed to set write deadline error=%v", err)
+	}
+	if _, err := io.Copy(stream, file); err != nil {
+		stream.Reset()
+		return fmt.Errorf("failed to send song data: %w", err)
 	}
 
 	logger.Infof("ShareSong function completed successfully")
@@ -388,42 +444,34 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 }
 
 func (n *NetworkManager) handleStream(stream network.Stream) {
-	defer stream.Close()
-
 	peerID := stream.Conn().RemotePeer()
 	logger.Infof("handleStream called peer_id=%s", peerID)
-
-	buf := make([]byte, 1024)
-	size, err := stream.Read(buf)
+	meta, err := readTransferMetadata(stream)
 	if err != nil {
-		if err == io.EOF {
-			logger.Infof("Stream closed by peer before sending data peer_id=%s", peerID)
-		} else {
-			logger.Errorf("Error reading metadata from peer peer_id=%s error=%v", peerID, err)
-		}
+		stream.Reset()
+		logger.Errorf("Error reading metadata from peer peer_id=%s error=%v", peerID, err)
+		return
+	}
+	defer stream.Close()
+
+	if meta.SizeBytes == 0 {
+		logger.Infof("Received empty file transfer from peer peer_id=%s", peerID)
+		return
+	}
+	if meta.SizeBytes > constants.TransferMaxFileSize {
+		stream.Reset()
+		logger.Errorf("Transfer rejected: file too large peer_id=%s size=%d", peerID, meta.SizeBytes)
 		return
 	}
 
-	if size == 0 {
-		logger.Infof("Received empty stream from peer, ignoring peer_id=%s", peerID)
-		return
-	}
-
-	mdata := string(buf[:size])
-	logger.Infof("Received metadata metadata=%s", mdata)
-	songInfo := strings.Split(mdata, "|")
-	if len(songInfo) < 3 {
-		logger.Errorf("Invalid song metadata")
-		return
-	}
-
-	title := songInfo[0]
 	pID := peerID.String()
+	safeTitle := sanitizeTransferName(meta.Title)
+	ext := strings.ToLower(meta.Extension)
+	if ext == "" {
+		ext = ".bin"
+	}
 
-	safeTitle := strings.ReplaceAll(title, "/", "_")
-	safeTitle = strings.ReplaceAll(safeTitle, "\\", "_")
-	fileName := fmt.Sprintf("%s_%s.mp3", pID, safeTitle)
-
+	fileName := fmt.Sprintf("%s_%s%s", pID, safeTitle, ext)
 	saveDir := n.musicDir
 	if saveDir == "" {
 		saveDir = "."
@@ -434,24 +482,70 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	}
 
 	filePath := filepath.Join(saveDir, fileName)
-	logger.Infof("Preparing to save file file_path=%s", filePath)
-
-	file, err := os.Create(filePath)
+	tmpFile, err := os.CreateTemp(saveDir, fileName+".*.part")
 	if err != nil {
-		logger.Errorf("Error creating file error=%v", err)
+		stream.Reset()
+		logger.Errorf("Error creating temp file error=%v", err)
 		return
 	}
-	defer file.Close()
 
-	logger.Infof("Copying song data from stream to file")
-	bytesWritten, err := io.Copy(file, stream)
+	tmpPath := tmpFile.Name()
+	defer func() {
+		tmpFile.Close()
+		if _, statErr := os.Stat(tmpPath); statErr == nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	logger.Infof("Preparing to save file file_path=%s", filePath)
+	if err := stream.SetReadDeadline(time.Now().Add(constants.TransferIdleTimeout)); err != nil {
+		logger.Debugf("failed to set read deadline error=%v", err)
+	}
+
+	hasher := sha256.New()
+	writer := io.MultiWriter(tmpFile, hasher)
+	bytesWritten, err := io.CopyN(writer, stream, meta.SizeBytes)
 	if err != nil {
+		stream.Reset()
 		logger.Errorf("Error saving song error=%v", err)
 		return
 	}
+	if bytesWritten != meta.SizeBytes {
+		stream.Reset()
+		logger.Errorf("Incomplete transfer: wrote=%d expected=%d", bytesWritten, meta.SizeBytes)
+		return
+	}
+	if meta.SHA256 != "" {
+		digest := fmt.Sprintf("%x", hasher.Sum(nil))
+		if digest != meta.SHA256 {
+			stream.Reset()
+			logger.Errorf("Hash mismatch for received song peer_id=%s expected=%s got=%s", peerID, meta.SHA256, digest)
+			return
+		}
+	}
+	if err := tmpFile.Sync(); err != nil {
+		stream.Reset()
+		logger.Errorf("Error syncing temp file error=%v", err)
+		return
+	}
+	if err := tmpFile.Close(); err != nil {
+		stream.Reset()
+		logger.Errorf("Error closing temp file error=%v", err)
+		return
+	}
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		stream.Reset()
+		logger.Errorf("Error finalizing received song error=%v", err)
+		return
+	}
+	if n.library != nil {
+		if err := n.library.ScanMusicLibrary(n.musicDir); err != nil {
+			logger.Warnf("Failed to rescan library after receiving song error=%v", err)
+		}
+	}
 
 	logger.Infof("Song data saved bytes_written=%d", bytesWritten)
-	logger.Infof("Successfully received and saved song title=%s peer_id=%s file_path=%s", title, peerID, filePath)
+	logger.Infof("Successfully received and saved song title=%s peer_id=%s file_path=%s", meta.Title, peerID, filePath)
 }
 
 func (n *NetworkManager) handlePeerConnect(peerID peer.ID, addr multiaddr.Multiaddr) {
