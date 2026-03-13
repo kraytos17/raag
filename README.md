@@ -1,15 +1,15 @@
 # Raag
 
-Raag is a terminal-first music player with local playback, playlists, and libp2p-based peer discovery for sharing music between machines.
+Raag is a terminal-first music player featuring local playback, playlist management, and libp2p-based peer discovery for sharing music across machines.
 
 ## What It Does
 
 - Play music from a local directory
 - Manage playlists and playback from the CLI or TUI
-- Discover peers over mDNS, DHT, and an optional tracker with multi-address peer records
-- Listen on TCP and QUIC, and traverse NAT with hole punching, UPnP, and AutoNAT
-- Run as a daemon so peer connections stay alive between commands
-- Authenticate tracker registrations with a key derived from the peer's persistent libp2p identity
+- Discover peers via mDNS, DHT, and an optional tracker with multi-address peer records
+- Listen on TCP and QUIC, and traverse NAT using hole punching, UPnP, and AutoNAT
+- Run as a daemon to maintain peer connections between commands
+- Authenticate tracker registrations using a key derived from the peer's persistent libp2p identity
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ Start in network mode:
 ./bin/raag --network
 ```
 
-For persistent peer connectivity, prefer daemon mode:
+For persistent peer connectivity, use daemon mode:
 
 ```bash
 ./bin/raag daemon --network
@@ -142,7 +142,7 @@ Raag stores runtime state in `~/.config/raag/`:
 - `state.json` - playback state
 - `peers.json` - persisted discovered-peer cache
 
-`identity.key` is especially important: it stabilizes the peer ID across restarts and is now the root of tracker authentication.
+`identity.key` is critical: it stabilizes the peer ID across restarts and serves as the root of tracker authentication.
 
 ## Architecture
 
@@ -153,7 +153,7 @@ Raag has two runtime pieces:
 
 ### End-to-End Design
 
-At a high level, the system works like this:
+The system operates as follows:
 
 1. A Raag client starts and loads `~/.config/raag/identity.key`
 2. That identity key determines the libp2p peer ID
@@ -197,7 +197,7 @@ raag CLI / TUI
 
 ### Tracker Architecture
 
-The `tracker` binary is intentionally smaller than a full peer node. In the current P0 implementation it does two things:
+The `tracker` binary is intentionally smaller than a full peer node. The current P0 implementation performs two primary functions:
 
 - serves an HTTP API for peer registration and discovery
 - optionally starts a libp2p host, but relay advertising is intentionally disabled until relay behavior is fully verified
@@ -224,17 +224,17 @@ tracker
 
 ### Discovery Flow
 
-Raag supports three discovery paths:
+Raag supports the following discovery mechanisms:
 
 - `mDNS` for machines on the same LAN
 - `DHT` for decentralized discovery using bootstrap peers
 - `tracker` for cross-network registration and multi-address peer listing
 
-In practice, the tracker is the most useful option when peers are on different networks or behind NAT.
+In practice, the tracker proves most useful when peers reside on different networks or operate behind NAT.
 
 ### Connection Flow
 
-Once a peer is discovered, Raag tries to connect over libp2p. In the current P0 implementation, the intended connection paths are:
+Upon discovering a peer, Raag attempts connection over libp2p. The current P0 implementation supports the following connection paths:
 
 - direct connection using one of the peer's advertised TCP or QUIC addresses
 - hole punching when both peers are reachable enough for NAT traversal
@@ -243,31 +243,31 @@ Circuit-relay support is not advertised in P0 because it has not been verified e
 
 ### Auth Flow in the Architecture
 
-Tracker authentication is not a separate account system. It is a cryptographic proof that the registering client controls the persistent libp2p identity it is claiming.
+Tracker authentication is not a separate account system. Rather, it constitutes a cryptographic proof that the registering client controls the persistent libp2p identity it claims.
 
-The important binding is:
+The critical binding is as follows:
 
 ```text
 identity.key -> libp2p peer ID
 identity.key -> derived tracker auth key
 derived tracker auth key -> signed registration token
-registration token + peer_id + multiaddr -> tracker verification
+registration token + peer_id + addrs[] -> tracker verification
 ```
 
-That means frequent disconnects and reconnects are fine: as long as `identity.key` stays the same, the peer ID stays the same and the derived auth key stays the same.
+This means frequent disconnects and reconnects are acceptable: as long as `identity.key` remains unchanged, the peer ID and derived auth key remain consistent.
 
 ### Daemon Architecture
 
-The daemon mode exists because peer-to-peer networking is stateful. Running one-off commands repeatedly would otherwise recreate the libp2p host and lose active peer state.
+Daemon mode exists because peer-to-peer networking is inherently stateful. Running one-off commands repeatedly would otherwise recreate the libp2p host and lose active peer state.
 
-Daemon mode gives you:
+Daemon mode provides:
 
-- one long-lived libp2p host
-- stable peer connections
-- periodic tracker registration heartbeat
-- periodic tracker peer refresh
-- one source of truth for current network state
-- a Unix socket interface that short-lived CLI commands can query
+- One long-lived libp2p host
+- Stable peer connections
+- Periodic tracker registration heartbeat
+- Periodic tracker peer refresh
+- Single source of truth for current network state
+- Unix socket interface for short-lived CLI commands
 
 In the current P0 implementation, these commands are daemon-backed when the daemon is running:
 
@@ -293,24 +293,24 @@ Recommended pattern:
 
 ### LAN Discovery
 
-For machines on the same local network:
+For machines on the same local network, execute:
 
 ```bash
 ./bin/raag --network
 ```
 
-Raag uses mDNS automatically and will also run the libp2p stack with NAT traversal helpers enabled.
+Raag automatically uses mDNS and runs the libp2p stack with NAT traversal helpers enabled.
 
 ### Cross-Network Discovery
 
-For friends on different networks, run a tracker on a public host and point clients at it:
+For peers on different networks, run a tracker on a public host and configure clients to use it:
 
 ```bash
 ./bin/tracker --http-port 8080 --libp2p-port 45678
 ./bin/raag daemon --network --tracker https://your-tracker.example.com
 ```
 
-The tracker provides:
+The tracker delivers:
 
 - HTTP peer registration and peer listing
 - peer records keyed by `peer_id` with multiple advertised addresses
@@ -319,13 +319,11 @@ The tracker provides:
 
 Current P0 note:
 
-- tracker relay advertising is intentionally disabled until relay behavior is fully implemented and tested
+- Tracker relay advertising is intentionally disabled until relay behavior is fully implemented and tested
 
 ## Tracker Authentication
 
-Tracker auth is now derived from the peer's libp2p identity.
-
-There is no separate long-lived `auth.key` file anymore.
+Tracker authentication is derived from the peer's libp2p identity. A separate long-lived `auth.key` file no longer exists.
 
 ### How It Works
 
@@ -348,10 +346,10 @@ If any of those checks fail, registration is rejected.
 
 ### Why This Is Better
 
-- reconnects keep the same peer identity and the same tracker auth identity
-- a separate tracker-only private key is no longer needed
-- tracker trust is bound to the libp2p identity that actually owns the peer ID
-- spoofing `peer_id` or announcing a different multiaddr is rejected at registration time
+- Reconnects maintain the same peer identity and tracker auth identity
+- A separate tracker-only private key is no longer required
+- Tracker trust is bound to the libp2p identity that owns the peer ID
+- Spoofing `peer_id` or announcing a different multiaddr is rejected at registration time
 
 ### Get Your Trusted Auth Key
 
@@ -361,7 +359,7 @@ Run:
 ./bin/raag --network network auth-key
 ```
 
-That prints the full public key the tracker should trust for this peer.
+This prints the full public key the tracker should trust for this peer.
 
 Example output:
 
@@ -391,7 +389,7 @@ To trust multiple peers, repeat `--auth-key`:
   --auth-key KEY_THREE
 ```
 
-If you do not pass any `--auth-key` values, the tracker accepts registrations without enforcing auth.
+If no `--auth-key` values are provided, the tracker accepts registrations without enforcing authentication.
 
 ## Deployment
 
@@ -408,15 +406,16 @@ Build and run:
 
 ```bash
 docker build -t raag-tracker .
-docker run --rm -p 8080:8080 -p 45678:45678 raag-tracker \
-  ./tracker --http-port 8080 --libp2p-port 45678 --auth-key <derived-auth-public-key>
+docker run --rm -e PORT=8080 -p 8080:8080 -p 45678:45678 raag-tracker
 ```
 
-The provided `Dockerfile` builds the tracker binary and exposes `8080` and `45678`.
+The provided `Dockerfile` builds the tracker binary, exposes ports `8080` and `45678`, and starts the tracker with `PORT`-aware HTTP binding.
+
+If you want auth enabled in Docker, override the default command and add `--auth-key` values explicitly.
 
 ### Docker Compose
 
-The checked-in `docker-compose.yml` starts the tracker service and exposes both ports. If you want auth enabled, add the trusted keys to the container command or wrap the container with your own compose override.
+The provided `docker-compose.yml` starts the tracker service and exposes both ports. To enable authentication, add the trusted keys to the container command or wrap the container with a custom compose override.
 
 ### Railway
 
@@ -425,7 +424,7 @@ The repo includes `railway.json` for Dockerfile-based deployment.
 Recommended Railway setup:
 
 1. Deploy this repo as a Dockerfile service
-2. Expose HTTP port `8080`
+2. Let Railway provide the HTTP `PORT` environment variable; the Docker entrypoint now honors it automatically
 3. Expose libp2p port `45678` if your deployment needs peer-to-peer reachability metadata
 4. Start the tracker with `--auth-key` values for every peer you want to trust
 
@@ -435,7 +434,7 @@ Example start command:
 ./tracker --http-port 8080 --libp2p-port 45678 --auth-key <derived-auth-public-key>
 ```
 
-If you rotate or delete `~/.config/raag/identity.key` on a client, its peer ID and derived auth key both change, and you must update the tracker trust list.
+If `~/.config/raag/identity.key` is rotated or deleted on a client, its peer ID and derived auth key change accordingly, requiring an update to the tracker trust list.
 
 ## Typical Cross-Network Setup
 
@@ -461,7 +460,7 @@ Useful client checks:
 
 ## Address Advertisement And Peer Records
 
-The current network stack now advertises multiple dial candidates to the tracker instead of a single guessed address.
+The current network stack advertises multiple dial candidates to the tracker instead of a single guessed address.
 
 Tracker peer records now contain:
 
@@ -469,40 +468,38 @@ Tracker peer records now contain:
 - `addrs[]`
 - `last_seen`
 
-This improves small-scale WAN connectivity because peers can try more than one transport/address combination.
+This improves small-scale WAN connectivity by allowing peers to attempt multiple transport/address combinations.
 
 In the current implementation:
 
-- peers register a ranked set of advertised addresses
-- QUIC addresses are preferred ahead of TCP addresses when ordering candidates
-- obvious non-dialable addresses such as loopback and unspecified addresses are filtered out
-- fetched peer records are reconstructed into `peer.AddrInfo` with multiple addresses
+- Peers register a ranked set of advertised addresses
+- QUIC addresses are preferred over TCP addresses when ordering candidates
+- Non-dialable addresses such as loopback and unspecified addresses are filtered out
+- Fetched peer records are reconstructed into `peer.AddrInfo` with multiple addresses
 
-This is still not a full observed-address or signed-peer-record design, but it is a substantial improvement over single-address registration.
+This is not yet a full observed-address or signed-peer-record design, but it represents a substantial improvement over single-address registration.
 
 ## Peer Persistence And Bootstrap Hygiene
 
-Raag now treats bootstrap peers and discovered peers as different things.
+Raag now treats bootstrap peers and discovered peers as distinct entities.
 
 - `bootstrap_peers` remain explicit configuration
-- discovered peers are stored in `peers.json`
-- discovered peers are no longer written back into bootstrap config automatically
+- Discovered peers are stored in `peers.json`
+- Discovered peers are no longer written back into bootstrap config automatically
 
 This keeps the bootstrap set stable and avoids gradually polluting config with arbitrary discovered peers.
 
 ## Resource Management
 
-The libp2p host now enables a ResourceManager in addition to the connection manager.
+The libp2p host now enables a ResourceManager in addition to the connection manager, improving robustness by providing bounded network-resource behavior under churn or unexpected peer activity.
 
-That improves robustness by giving the node bounded network-resource behavior under churn or unexpected peer activity.
-
-The connection manager watermarks are also now derived from configured peer limits instead of using only hardcoded defaults.
+The connection manager watermarks are now derived from configured peer limits rather than relying solely on hardcoded defaults.
 
 ## File Transfer
 
 Song sharing in the current P0 implementation uses a framed libp2p transfer protocol.
 
-The transfer path now works like this:
+The transfer path operates as follows:
 
 - sender opens a dedicated share stream on `constants.ShareProtocolID`
 - sender writes a length-prefixed JSON metadata frame
@@ -543,7 +540,7 @@ This reduces the amount of manual router configuration needed for direct peer co
 
 Current P0 note:
 
-- relay is intentionally not advertised by the tracker until that path is fully verified
+- Relay is intentionally not advertised by the tracker until that path is fully verified
 
 ## Development
 
@@ -578,21 +575,21 @@ No peers discovered:
 ./bin/raag network status
 ```
 
-Things to verify:
+Verification checklist:
 
-- the client is running with `--network`
-- the tracker URL is reachable
-- the tracker trusts the client's derived auth key
-- the client's `identity.key` has not changed unexpectedly
-- the daemon is running if you expect daemon-backed peer state
-- the tracker is returning at least one dialable advertised address for each peer
+- The client is running with `--network`
+- The tracker URL is reachable
+- The tracker trusts the client's derived auth key
+- The client's `identity.key` has not changed unexpectedly
+- The daemon is running if daemon-backed peer state is expected
+- The tracker is returning at least one dialable advertised address for each peer
 
 Tracker rejects registration:
 
-- confirm the `Auth Key:` shown by `./bin/raag --network network status`
-- or use `./bin/raag --network network auth-key` for the full key
-- confirm the tracker was started with the full matching `--auth-key`
-- confirm the client's `identity.key` was not deleted or replaced
+- Confirm the `Auth Key:` shown by `./bin/raag --network network status`
+- Or use `./bin/raag --network network auth-key` for the full key
+- Confirm the tracker was started with the full matching `--auth-key`
+- Confirm the client's `identity.key` was not deleted or replaced
 
 Peer identity changed unexpectedly:
 
