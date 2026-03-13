@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   tracker:
     build:
@@ -8,6 +7,8 @@ services:
     ports:
       - "8080:8080"
       - "45678:45678"
+    environment:
+      PORT: "8080"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]

@@ -278,7 +278,7 @@ func (t *Tracker) handleGetPeers(w http.ResponseWriter) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	var peerList []map[string]any
+	peerList := make([]map[string]any, 0, len(t.peers))
 	for _, record := range t.peers {
 		peerInfo := map[string]any{
 			"peer_id":   record.PeerID,
@@ -299,7 +299,7 @@ func (t *Tracker) handleHealth(w http.ResponseWriter) {
 		"status":         "healthy",
 		"uptime_seconds": int(time.Since(t.startedAt).Seconds()),
 		"peers_count":    peerCount,
-		"relay_enabled":  t.relayEnabled,
+		"relay_enabled":  false,
 	})
 }
 
