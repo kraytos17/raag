@@ -4,7 +4,6 @@
 
 # Build artifacts
 bin/
-tracker
 *.exe
 *.test
 coverage.out
