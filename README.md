@@ -136,11 +136,30 @@ Tracker flags:
 
 Raag stores runtime state in `~/.config/raag/`:
 
-- `config.yaml` - persisted configuration
+### Persistent Configuration (`config.yaml`)
+- `host` - listen address (default: 0.0.0.0)
+- `port` - listen port (default: 45678)
+- `rendezvous` - DHT rendezvous string
+- `tracker_url` - tracker URL for peer discovery
+- `dht_enabled` - enable DHT discovery
+- `max_peers` - maximum connected peers
+- `bootstrap_peers` - DHT bootstrap peers
+- `music_dir` - local music directory
+
+### Runtime State (`state.json`)
+- `last_song` - last played song
+- `position` - playback position in seconds
+- `volume` - current volume (0-100)
+- `queue` - current playback queue
+- `current_idx` - current queue index
+- `shuffle` - shuffle mode enabled
+- `repeat` - repeat mode enabled
+- `last_played` - timestamp of last played song
+
+### Other Files
 - `identity.key` - persistent libp2p identity key
 - `daemon.sock` - daemon control socket
 - `playlists.json` - playlist data
-- `state.json` - playback state
 - `peers.json` - persisted discovered-peer cache
 
 `identity.key` is critical: it stabilizes the peer ID across restarts and serves as the root of tracker authentication.

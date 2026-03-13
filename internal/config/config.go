@@ -9,27 +9,28 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config holds all configuration values
+// Config holds persistent configuration values only
+// Runtime state (volume, playback, etc.) is stored in state.json
 type Config struct {
-	// Network
+	// Network - persistent network settings
 	Host       string
 	Port       int
 	Rendezvous string
 
-	// Discovery
+	// Discovery - persistent discovery settings
 	TrackerURL     string
 	DHTEnabled     bool
 	MaxPeers       int
 	BootstrapPeers []string
 
-	// Playback
+	// Playback - persistent playback settings
 	MusicDir string
-	Volume   int
 
-	// UI
-	TUI      bool
-	Network  bool
-	LogLevel string
+	// Runtime - these are set at startup and not persisted
+	Network  bool   // Runtime: whether network mode is enabled
+	Volume   int    // Runtime: current volume (loaded from state.json)
+	TUI      bool   // Runtime: whether to start TUI
+	LogLevel string // Runtime: logging level
 }
 
 func DefaultConfig() Config {
@@ -43,7 +44,6 @@ func DefaultConfig() Config {
 		BootstrapPeers: []string{},
 		MusicDir:       "./music",
 		Volume:         constants.DefaultVolume,
-		TUI:            false,
 		Network:        false,
 		LogLevel:       "info",
 	}
@@ -97,10 +97,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("discovery.max_peers", defaults.MaxPeers)
 	v.SetDefault("discovery.bootstrap_peers", defaults.BootstrapPeers)
 	v.SetDefault("playback.music_dir", defaults.MusicDir)
-	v.SetDefault("playback.volume", defaults.Volume)
-	v.SetDefault("ui.tui_enabled", defaults.TUI)
-	v.SetDefault("ui.network", defaults.Network)
-	v.SetDefault("ui.log_level", defaults.LogLevel)
+	// Runtime defaults (not persisted)
+	v.SetDefault("runtime.volume", defaults.Volume)
+	v.SetDefault("runtime.network", defaults.Network)
+	v.SetDefault("runtime.log_level", defaults.LogLevel)
 }
 
 func bindFlags(v *viper.Viper, cmd *cobra.Command) {
@@ -119,9 +119,8 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	// Playback flags
 	v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("music-dir"))
 
-	// UI flags
-	v.BindPFlag("ui.tui_enabled", root.PersistentFlags().Lookup("tui"))
-	v.BindPFlag("ui.network", root.PersistentFlags().Lookup("network"))
+	// Runtime flags (not persisted)
+	v.BindPFlag("runtime.network", root.PersistentFlags().Lookup("network"))
 }
 
 // LoadConfig loads configuration from Viper instance
@@ -135,10 +134,9 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 		MaxPeers:       v.GetInt("discovery.max_peers"),
 		BootstrapPeers: v.GetStringSlice("discovery.bootstrap_peers"),
 		MusicDir:       v.GetString("playback.music_dir"),
-		Volume:         v.GetInt("playback.volume"),
-		TUI:            v.GetBool("ui.tui_enabled"),
-		Network:        v.GetBool("ui.network"),
-		LogLevel:       v.GetString("ui.log_level"),
+		// Runtime fields (loaded from CLI flags, not persisted)
+		Network:  v.GetBool("runtime.network"),
+		LogLevel: v.GetString("runtime.log_level"),
 	}
 
 	if cfg.Port < 0 || cfg.Port > 65535 {
@@ -174,11 +172,6 @@ func SaveConfig(v *viper.Viper, cfg *Config) error {
 	v.Set("discovery.bootstrap_peers", cfg.BootstrapPeers)
 
 	v.Set("playback.music_dir", cfg.MusicDir)
-	v.Set("playback.volume", cfg.Volume)
-
-	v.Set("ui.tui_enabled", cfg.TUI)
-	v.Set("ui.network", cfg.Network)
-	v.Set("ui.log_level", cfg.LogLevel)
 
 	return v.WriteConfig()
 }

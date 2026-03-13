@@ -15,10 +15,9 @@ import (
 type PingMessageType string
 
 const (
-	PingTypeHello  PingMessageType = "hello"
-	PingTypePong   PingMessageType = "pong"
-	PingTypeJoined PingMessageType = "joined"
-	PingTypeLeft   PingMessageType = "left"
+	PingTypeHello PingMessageType = "hello"
+	PingTypePong  PingMessageType = "pong"
+	PingTypeLeft  PingMessageType = "left"
 )
 
 type PingMessage struct {
@@ -27,6 +26,8 @@ type PingMessage struct {
 	PeerID    string          `json:"peer_id"`
 	Timestamp time.Time       `json:"timestamp"`
 	Message   string          `json:"message"`
+	OriginID  string          `json:"origin_id"` // Original sender (to prevent loops)
+	TTL       int             `json:"ttl"`       // Time to live (prevent infinite loops)
 }
 
 func BuildPingMessage(peerID string, msgType PingMessageType, customMsg string) PingMessage {
@@ -43,7 +44,15 @@ func BuildPingMessage(peerID string, msgType PingMessageType, customMsg string) 
 		PeerID:    peerID,
 		Timestamp: time.Now(),
 		Message:   msg,
+		OriginID:  peerID,
+		TTL:       3,
 	}
+}
+
+func BuildForwardMessage(msg PingMessage, senderID string) PingMessage {
+	msg.OriginID = senderID
+	msg.TTL = max(msg.TTL-1, 0)
+	return msg
 }
 
 func WritePingMessage(stream libp2pnetwork.Stream, msg PingMessage) error {
