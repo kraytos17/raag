@@ -683,6 +683,9 @@ func (n *NetworkManager) SendPing(ctx context.Context, peerID peer.ID) error {
 	if pongMsg.Type == PingTypePong {
 		logger.Infof("Received pong from peer peer_id=%s", peerID)
 		logger.Infof("Peer %s is online!", peerID)
+		if pongMsg.TTL > 0 {
+			n.floodMessage(pingMsg, peerID)
+		}
 	}
 	return nil
 }
@@ -706,6 +709,9 @@ func (n *NetworkManager) SendGoodbye(ctx context.Context, peerID peer.ID) error 
 	}
 
 	logger.Infof("Sent goodbye to peer peer_id=%s", peerID)
+	if goodbyeMsg.TTL > 0 {
+		n.floodMessage(goodbyeMsg, peerID)
+	}
 	return nil
 }
 
@@ -737,20 +743,61 @@ func (n *NetworkManager) handlePingStream(stream network.Stream) {
 		return
 	}
 
-	logger.Debugf("Received ping message type=%s from peer peer_id=%s message=%s",
-		pingMsg.Type, pingMsg.PeerID, pingMsg.Message)
+	senderPeerID := stream.Conn().RemotePeer()
+	logger.Debugf("Received ping message type=%s from peer peer_id=%s origin_id=%s ttl=%d",
+		pingMsg.Type, pingMsg.PeerID, pingMsg.OriginID, pingMsg.TTL)
 
 	switch pingMsg.Type {
 	case PingTypeHello:
+		logger.Infof("Peer %s is connected!", pingMsg.PeerID)
 		pongMsg := BuildPingMessage(n.host.ID().String(), PingTypePong, "pong")
 		if err := WritePingMessage(stream, pongMsg); err != nil {
-			logger.Warnf("Failed to send pong to peer peer_id=%s error=%v", stream.Conn().RemotePeer(), err)
+			logger.Warnf("Failed to send pong to peer peer_id=%s error=%v", senderPeerID, err)
 			stream.Reset()
 			return
 		}
-		logger.Infof("Sent pong to peer peer_id=%s", stream.Conn().RemotePeer())
+
+		logger.Infof("Sent pong to peer peer_id=%s", senderPeerID)
+		if pingMsg.TTL > 0 {
+			n.floodMessage(pingMsg, senderPeerID)
+		}
 	case PingTypeLeft:
 		logger.Infof("Peer %s has left the network", pingMsg.PeerID)
+		if pingMsg.TTL > 0 {
+			n.floodMessage(pingMsg, senderPeerID)
+		}
 	}
 	stream.Close()
+}
+
+// floodMessage forwards a presence message to all connected peers except the sender and self
+func (n *NetworkManager) floodMessage(msg PingMessage, excludePeer peer.ID) {
+	peers := n.GetPeers()
+	for _, p := range peers {
+		if p.ID == excludePeer || p.ID == n.host.ID() {
+			continue
+		}
+		if msg.OriginID != "" && string(p.ID) == msg.OriginID {
+			continue
+		}
+
+		go func(targetPeer peer.ID) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			forwardedMsg := BuildForwardMessage(msg, n.host.ID().String())
+			stream, err := n.host.NewStream(ctx, targetPeer, protocol.ID(constants.PingProtocolID))
+			if err != nil {
+				logger.Debugf("Failed to forward message to peer peer_id=%s error=%v", targetPeer, err)
+				return
+			}
+			defer stream.Close()
+
+			if err := WritePingMessage(stream, forwardedMsg); err != nil {
+				logger.Debugf("Failed to send forwarded message to peer peer_id=%s error=%v", targetPeer, err)
+				return
+			}
+			logger.Debugf("Flooded %s message to peer peer_id=%s", msg.Type, targetPeer)
+		}(p.ID)
+	}
 }

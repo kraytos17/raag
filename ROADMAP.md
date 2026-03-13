@@ -25,11 +25,13 @@ However, the current implementation remains prototype-grade in areas critical fo
 - Daemon mode now owns core network control paths, but not yet all stateful app commands
 - Tracker registration and peer refresh are periodic, but require long-running integration coverage
 - The tracker now stores peer records by `peer_id` with multiple advertised addresses
-- The host listens on both TCP and QUIC and uses libp2p ResourceManager
+- The host now listens on both TCP and QUIC and uses libp2p ResourceManager
 - Discovered peers are now separated from explicit bootstrap configuration
 - Relay and cross-NAT behavior are intentionally not advertised until fully wired and verified
 - Incoming file transfer and library integration lack hardening
 - Testing coverage is insufficient for distributed runtime behavior
+- Peer presence protocol with network-wide flooding is now implemented
+- Config redesigned to separate persistent settings from runtime state
 
 The roadmap below reflects this current state.
 
@@ -42,6 +44,11 @@ The roadmap below reflects this current state.
 - Tracker request validation checks request peer ID, token peer ID, and multiaddr peer ID consistency
 - The codebase structure is understandable and modular
 - The project separates control plane concerns from media/data handling conceptually
+- Peer presence protocol with flooding works across the network
+- Automatic hello/pong on peer connect
+- Automatic goodbye on peer disconnect
+- Config redesigned: persistent settings vs runtime state properly separated
+- AUTH_KEY environment variable support for tracker deployment
 
 ### What Is Not Yet Production-Ready
 
@@ -72,6 +79,14 @@ The following P0 items are implemented in code:
 - host listens on TCP and QUIC
 - ResourceManager added to host construction
 - discovered-peer cache no longer rewrites bootstrap config
+- peer presence protocol with flooding (/raag/ping/1.0.0)
+- automatic hello/pong on peer connect
+- automatic goodbye on peer disconnect
+- network-wide flooding of presence announcements (TTL=3)
+- default host changed to 0.0.0.0 for better LAN connectivity
+- verbose logging converted to Debugf for cleaner output
+- AUTH_KEY environment variable support for tracker
+- config.yaml redesigned: persistent settings only, runtime state in state.json
 
 The following P0 items remain:
 
@@ -106,12 +121,13 @@ User CLI / TUI
             |
             +-- libp2p transport (TCP + QUIC)
             +-- ResourceManager
-            +-- song sharing stream
+            +-- song sharing stream (/raag/share/2.0.0)
+            +-- peer presence protocol (/raag/ping/1.0.0)
 
 Tracker
    |
    +-- HTTP registry
-   +-- peer auth allowlist
+   +-- peer auth allowlist (supports AUTH_KEY env var)
    +-- in-memory peer table
    +-- optional libp2p host (relay not advertised in current P0)
 ```
@@ -147,6 +163,12 @@ This section serves as the authoritative engineering backlog.
   - Host construction now includes a ResourceManager and peer-aware connection watermarks
 - [x] Stop writing discovered peers back into bootstrap config
   - Bootstrap peers and discovered peers are now treated separately
+- [x] Add peer presence protocol (/raag/ping/1.0.0)
+  - Automatic hello/pong exchange on peer connect
+  - Automatic goodbye on peer disconnect
+  - Network-wide flooding with TTL=3 to announce presence to all peers
+- [x] Reduce verbose logging
+  - Most internal logs converted to Debugf, important events remain Infof
 
 #### `cmd/raag/socket.go`
 
@@ -182,6 +204,9 @@ This section serves as the authoritative engineering backlog.
 
 #### `tracker/server.go`
 
+- [x] Add AUTH_KEY environment variable support
+  - Tracker now reads AUTH_KEY env var for trusted keys (comma-separated)
+  - Simplifies deployment to Railway and Docker
 - [ ] Upgrade tracker auth from allowlisted token verification to stronger peer-identity proof
   - Current model verifies a trusted derived auth key and consistency of claims
   - It does not fully prove possession of the libp2p identity key for the claimed peer in a network-native way
@@ -246,9 +271,14 @@ This section serves as the authoritative engineering backlog.
 
 #### `internal/storage/*`
 
-- [ ] Load and apply saved player state on startup
+- [x] Load and apply saved player state on startup
   - State is saved more clearly than it is restored
-- [ ] Clarify separation of config, library cache, peer cache, and playback state
+- [x] Clarify separation of config, library cache, peer cache, and playback state
+  - config.yaml: persistent settings only
+  - state.json: runtime playback state (volume, queue, shuffle, repeat, etc.)
+  - playlists.json: user playlists
+  - peers.json: discovered peer cache
+  - identity.key: peer identity (critical)
 
 #### `cmd/raag/app.go`
 

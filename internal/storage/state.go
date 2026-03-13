@@ -5,14 +5,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type PlayerState struct {
-	LastSong   string   `json:"last_song"`
-	Position   int      `json:"position"`
-	Volume     int      `json:"volume"`
-	Queue      []string `json:"queue"`
-	CurrentIdx int      `json:"current_idx"`
+	LastSong   string    `json:"last_song"`
+	Position   int       `json:"position"`
+	Volume     int       `json:"volume"`
+	Queue      []string  `json:"queue"`
+	CurrentIdx int       `json:"current_idx"`
+	Shuffle    bool      `json:"shuffle"`
+	Repeat     bool      `json:"repeat"`
+	LastPlayed time.Time `json:"last_played"`
 }
 
 func (s *Storage) LoadState() (*PlayerState, error) {
@@ -21,7 +25,10 @@ func (s *Storage) LoadState() (*PlayerState, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &PlayerState{
-				Volume: 50,
+				Volume:     50,
+				Shuffle:    false,
+				Repeat:     false,
+				LastPlayed: time.Time{},
 			}, nil
 		}
 		return nil, fmt.Errorf("error reading state file: %w", err)
