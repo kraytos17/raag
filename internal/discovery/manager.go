@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"strings"
@@ -21,37 +22,54 @@ import (
 )
 
 type Manager struct {
-	host             host.Host
-	dht              *dht.IpfsDHT
-	discovery        *routing.RoutingDiscovery
-	peers            map[peer.ID]*peer.AddrInfo
-	mu               sync.RWMutex
-	persistence      *PeerPersistence
-	tracker          *TrackerClient
-	maxPeers         int
-	trackerURL       string
-	trackerRelayAddr string
-	listenHost       string
-	rendezvous       string
-	dhtEnabled       bool
-	bootstrapPeers   []string
-	authKeyPair      ed25519.PrivateKey
-	authToken        *auth.AuthToken
-	networkManager   interface {
+	host           host.Host
+	dht            *dht.IpfsDHT
+	discovery      *routing.RoutingDiscovery
+	peers          map[peer.ID]*peer.AddrInfo
+	mu             sync.RWMutex
+	persistence    *PeerPersistence
+	tracker        *TrackerClient
+	maxPeers       int
+	trackerURL     string
+	listenHost     string
+	rendezvous     string
+	dhtEnabled     bool
+	bootstrapPeers []string
+	authKeyPair    ed25519.PrivateKey
+	authToken      *auth.AuthToken
+	networkManager interface {
 		NotifyPeerConnected(peerID peer.ID, addr string)
 	}
 	onPeerSave      func(peers []peer.AddrInfo)
 	mdnsPeerCount   uint64
 	connectingPeers map[peer.ID]bool
 	connectedPeers  map[peer.ID]time.Time
+	heartbeatEvery  time.Duration
+	refreshEvery    time.Duration
+	retryDelay      time.Duration
+	maxRetryDelay   time.Duration
 }
 
-func NewManager(h host.Host, trackerURL string, maxPeers int, listenHost string, rendezvous string, dhtEnabled bool, bootstrapPeers []string) *Manager {
-	authKeyPair, err := auth.GenerateAuthKeyPair()
-	if err != nil {
-		logger.Warnf("Failed to generate auth key pair: %v", err)
+func NewManager(h host.Host, identityKeyBytes []byte, trackerURL string, maxPeers int, listenHost string, rendezvous string, dhtEnabled bool, bootstrapPeers []string) *Manager {
+	var authKeyPair ed25519.PrivateKey
+	var err error
+	if len(identityKeyBytes) > 0 {
+		authKeyPair, err = auth.DeriveAuthKey(identityKeyBytes)
+		if err != nil {
+			logger.Warnf("Failed to derive auth key from identity: %v", err)
+		} else {
+			pubKey := hex.EncodeToString(authKeyPair.Public().(ed25519.PublicKey))
+			logger.Infof("Derived auth key from identity (pubkey: %s)", pubKey)
+		}
 	}
-
+	if authKeyPair == nil {
+		authKeyPair, err = auth.GenerateAuthKeyPair()
+		if err != nil {
+			logger.Warnf("Failed to generate auth key pair: %v", err)
+		} else {
+			logger.Warnf("No identity key provided, generated random auth key")
+		}
+	}
 	return &Manager{
 		host:            h,
 		peers:           make(map[peer.ID]*peer.AddrInfo),
@@ -66,6 +84,10 @@ func NewManager(h host.Host, trackerURL string, maxPeers int, listenHost string,
 		authKeyPair:     authKeyPair,
 		connectingPeers: make(map[peer.ID]bool),
 		connectedPeers:  make(map[peer.ID]time.Time),
+		heartbeatEvery:  constants.TrackerHeartbeatInterval,
+		refreshEvery:    constants.TrackerRefreshInterval,
+		retryDelay:      constants.TrackerRetryInitialDelay,
+		maxRetryDelay:   constants.TrackerRetryMaxDelay,
 	}
 }
 
@@ -78,6 +100,21 @@ func (m *Manager) SetNetworkManager(nm interface {
 
 func (m *Manager) SetOnPeerSave(callback func(peers []peer.AddrInfo)) {
 	m.onPeerSave = callback
+}
+
+func (m *Manager) SetTestIntervals(heartbeat, refresh, retryDelay, maxRetryDelay time.Duration) {
+	if heartbeat > 0 {
+		m.heartbeatEvery = heartbeat
+	}
+	if refresh > 0 {
+		m.refreshEvery = refresh
+	}
+	if retryDelay > 0 {
+		m.retryDelay = retryDelay
+	}
+	if maxRetryDelay > 0 {
+		m.maxRetryDelay = maxRetryDelay
+	}
 }
 
 func (m *Manager) MarkPeerConnected(peerID peer.ID) {
@@ -109,6 +146,7 @@ type NetworkState struct {
 	MDNSDiscovered int        `json:"mdns_discovered"`
 	ConnectedPeers []PeerInfo `json:"connected_peers"`
 	KnownPeers     []PeerInfo `json:"known_peers"`
+	AuthPublicKey  string     `json:"auth_public_key,omitempty"`
 }
 
 func (m *Manager) GetNetworkState() NetworkState {
@@ -124,6 +162,7 @@ func (m *Manager) GetNetworkState() NetworkState {
 		MDNSDiscovered: 0,
 		ConnectedPeers: []PeerInfo{},
 		KnownPeers:     []PeerInfo{},
+		AuthPublicKey:  m.GetAuthPublicKey(),
 	}
 
 	addrs := m.host.Addrs()
@@ -133,29 +172,10 @@ func (m *Manager) GetNetworkState() NetworkState {
 	if m.dht != nil {
 		state.DHTPeers = m.dht.RoutingTable().Size()
 	}
+	connectedPeers := m.host.Network().Peers()
 
 	m.mu.RLock()
 	state.MDNSDiscovered = int(m.mdnsPeerCount)
-	m.mu.RUnlock()
-
-	connectedPeers := m.host.Network().Peers()
-	for _, pid := range connectedPeers {
-		if pid == m.host.ID() {
-			continue
-		}
-
-		addrs := m.host.Peerstore().Addrs(pid)
-		var addrStr string
-		if len(addrs) > 0 {
-			addrStr = addrs[0].String()
-		}
-		state.ConnectedPeers = append(state.ConnectedPeers, PeerInfo{
-			ID:        pid.String(),
-			Addr:      addrStr,
-			Connected: true,
-		})
-	}
-
 	for pid, p := range m.peers {
 		if pid == m.host.ID() {
 			continue
@@ -174,6 +194,25 @@ func (m *Manager) GetNetworkState() NetworkState {
 			DiscoveredVia: "DHT/mDNS",
 		})
 	}
+	m.mu.RUnlock()
+
+	for _, pid := range connectedPeers {
+		if pid == m.host.ID() {
+			continue
+		}
+
+		addrs := m.host.Peerstore().Addrs(pid)
+		var addrStr string
+		if len(addrs) > 0 {
+			addrStr = addrs[0].String()
+		}
+		state.ConnectedPeers = append(state.ConnectedPeers, PeerInfo{
+			ID:        pid.String(),
+			Addr:      addrStr,
+			Connected: true,
+		})
+	}
+
 	return state
 }
 
@@ -183,6 +222,9 @@ func (m *Manager) LogNetworkState() {
 	logger.Infof("=== P2P Network State ===")
 	logger.Infof("Self: %s @ %s", state.SelfID, state.ListenAddr)
 	logger.Infof("Mode: %s", state.Mode)
+	if state.AuthPublicKey != "" {
+		logger.Infof("Auth Key: %s...", state.AuthPublicKey[:32])
+	}
 
 	logger.Infof("--- Discovery ---")
 	logger.Infof("Tracker: %s", state.TrackerURL)
@@ -214,16 +256,14 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.loadPersistedPeers(); err != nil {
 		logger.Errorf("Failed to load persisted peers error=%v", err)
 	}
-	if m.trackerURL != "" {
-		logger.Infof("Fetching tracker relay address...")
-		if err := m.fetchTrackerAddr(ctx); err != nil {
-			logger.Warnf("Failed to fetch tracker address: %v", err)
-		}
-	}
 
 	logger.Debugf("Starting peer discovery from tracker...")
-	m.discoverFromTracker(ctx)
-	m.registerSelfWithTracker(ctx)
+	if err := m.discoverFromTracker(ctx); err != nil {
+		logger.Warnf("Initial tracker discovery failed error=%v", err)
+	}
+
+	go m.runTrackerRegistrationLoop(ctx)
+	go m.runTrackerRefreshLoop(ctx)
 	if err := m.connectBootstrapPeers(ctx); err != nil {
 		logger.Warnf("Failed to connect configured bootstrap peers error=%v", err)
 	}
@@ -252,89 +292,37 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) fetchTrackerAddr(ctx context.Context) error {
-	libp2pAddr, relayAddr, err := m.tracker.FetchTrackerAddr(ctx)
-	if err != nil {
-		return err
-	}
-	if libp2pAddr != "" {
-		logger.Infof("Tracker libp2p address: %s", libp2pAddr)
-		if err := m.addTrackerAsBootstrap(ctx, libp2pAddr); err != nil {
-			logger.Warnf("Failed to connect to tracker: %v", err)
-		}
-	}
-	if relayAddr != "" {
-		m.trackerRelayAddr = relayAddr
-		logger.Infof("Tracker relay address: %s", relayAddr)
-	}
-	return nil
-}
-
-func (m *Manager) addTrackerAsBootstrap(ctx context.Context, addr string) error {
-	addrInfo, err := peer.AddrInfoFromString(addr)
-	if err != nil {
-		return fmt.Errorf("invalid tracker address: %w", err)
-	}
-	if err := m.host.Connect(ctx, *addrInfo); err != nil {
-		return fmt.Errorf("failed to connect to tracker: %w", err)
-	}
-
-	logger.Debugf("Connected to tracker for DHT bootstrap")
-	return nil
-}
-
-func (m *Manager) registerSelfWithTracker(ctx context.Context) {
-	if m.trackerURL == "" {
-		return
-	}
-
-	time.Sleep(2 * time.Second)
-	m.refreshRegistration(ctx)
-}
-
 func (m *Manager) refreshRegistration(ctx context.Context) {
-	if m.trackerURL == "" {
-		return
-	}
-
-	addrs := m.host.Addrs()
-	if len(addrs) == 0 {
-		return
-	}
-
-	usableAddr := m.selectUsableAddress(addrs)
-	multiaddr := usableAddr.Encapsulate(multiaddr.StringCast("/p2p/" + m.host.ID().String())).String()
-	authData, err := m.getAuthData()
-	if err != nil {
-		logger.Warnf("Failed to generate auth data: %v", err)
-		authData = ""
-	}
-
-	if err := m.tracker.RegisterPeer(ctx, multiaddr, authData); err != nil {
+	if err := m.tryRefreshRegistration(ctx); err != nil {
 		logger.Errorf("Failed to register with tracker error=%v", err)
-	} else {
-		logger.Infof("Registered with tracker address=%s", multiaddr)
 	}
 }
 
-func (m *Manager) selectUsableAddress(addrs []multiaddr.Multiaddr) multiaddr.Multiaddr {
-	for _, addr := range addrs {
+func (m *Manager) selectAdvertisedAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+	filtered := filterReachableAddresses(addrs)
+	prioritized := prioritizeAddresses(filtered)
+	if len(prioritized) == 0 {
+		return nil
+	}
+
+	const maxAdvertisedAddrs = 6
+	selected := make([]multiaddr.Multiaddr, 0, min(len(prioritized), maxAdvertisedAddrs))
+	seen := make(map[string]struct{})
+	for _, addr := range prioritized {
 		addrStr := addr.String()
-		if isUsableAddr(addrStr) {
-			logger.Debugf("Selected usable address for registration: %s", addrStr)
-			return addr
+		if _, ok := seen[addrStr]; ok {
+			continue
+		}
+		seen[addrStr] = struct{}{}
+		selected = append(selected, addr)
+		if len(selected) >= maxAdvertisedAddrs {
+			break
 		}
 	}
-
-	logger.Debugf("No usable LAN address found, using first address: %s", addrs[0].String())
-	return addrs[0]
-}
-
-func isUsableAddr(addr string) bool {
-	return !strings.Contains(addr, "/127.0.0.1/") &&
-		!strings.Contains(addr, "/0.0.0.0/") &&
-		!strings.Contains(addr, "/localhost/") &&
-		strings.Contains(addr, "/ip4/")
+	if len(selected) == 0 && len(addrs) > 0 {
+		return addrs[:1]
+	}
+	return selected
 }
 
 func isReachableAddr(addr string) bool {
@@ -385,22 +373,19 @@ func filterReachableAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr
 }
 
 func prioritizeAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-	var lan, wan, relay, other []multiaddr.Multiaddr
+	var quic, tcp, other []multiaddr.Multiaddr
 	for _, addr := range addrs {
 		addrStr := strings.ToLower(addr.String())
-		if strings.Contains(addrStr, "/192.168.") || strings.Contains(addrStr, "/192.168.0.") {
-			lan = append(lan, addr)
-		} else if strings.Contains(addrStr, "/p2p-circuit") {
-			relay = append(relay, addr)
-		} else if strings.Contains(addrStr, "/ip4/") {
-			wan = append(wan, addr)
+		if strings.Contains(addrStr, "/quic-v1") {
+			quic = append(quic, addr)
+		} else if strings.Contains(addrStr, "/tcp/") {
+			tcp = append(tcp, addr)
 		} else {
 			other = append(other, addr)
 		}
 	}
 
-	result := append(append(lan, wan...), other...)
-	result = append(result, relay...)
+	result := append(append(quic, tcp...), other...)
 	return result
 }
 
@@ -418,8 +403,123 @@ func (m *Manager) getAuthData() (string, error) {
 	return auth.SerializeToken(m.authToken)
 }
 
+func (m *Manager) GetAuthPublicKey() string {
+	if m.authKeyPair == nil {
+		return ""
+	}
+	return hex.EncodeToString(m.authKeyPair.Public().(ed25519.PublicKey))
+}
+
 func (m *Manager) RefreshTrackerRegistration(ctx context.Context) {
 	m.refreshRegistration(ctx)
+}
+
+func (m *Manager) runTrackerRegistrationLoop(ctx context.Context) {
+	if m.trackerURL == "" {
+		return
+	}
+	if err := m.refreshRegistrationWithRetry(ctx); err != nil {
+		logger.Warnf("Initial tracker registration failed error=%v", err)
+	}
+
+	ticker := time.NewTicker(m.heartbeatEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := m.refreshRegistrationWithRetry(ctx); err != nil {
+				logger.Warnf("Tracker heartbeat failed error=%v", err)
+			}
+		}
+	}
+}
+
+func (m *Manager) runTrackerRefreshLoop(ctx context.Context) {
+	if m.trackerURL == "" {
+		return
+	}
+
+	ticker := time.NewTicker(m.refreshEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := m.discoverFromTrackerWithRetry(ctx); err != nil {
+				logger.Warnf("Tracker peer refresh failed error=%v", err)
+			}
+		}
+	}
+}
+
+func (m *Manager) refreshRegistrationWithRetry(ctx context.Context) error {
+	if m.trackerURL == "" {
+		return nil
+	}
+
+	retryDelay := m.retryDelay
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		registerCtx, cancel := context.WithTimeout(ctx, constants.HTTPClientTimeout)
+		err := m.tryRefreshRegistration(registerCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+
+		logger.Warnf("Tracker registration failed, retrying error=%v retryDelay=%v", err, retryDelay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryDelay):
+		}
+
+		retryDelay *= 2
+		if retryDelay > m.maxRetryDelay {
+			retryDelay = m.maxRetryDelay
+		}
+	}
+}
+
+func (m *Manager) tryRefreshRegistration(ctx context.Context) error {
+	if m.trackerURL == "" {
+		return nil
+	}
+
+	addrs := m.host.Addrs()
+	if len(addrs) == 0 {
+		return fmt.Errorf("host has no listening addresses")
+	}
+
+	advertisedAddrs := m.selectAdvertisedAddresses(addrs)
+	if len(advertisedAddrs) == 0 {
+		return fmt.Errorf("host has no advertisable addresses")
+	}
+	addrWithPeerID := make([]string, 0, len(advertisedAddrs))
+	for _, addr := range advertisedAddrs {
+		addrWithPeerID = append(addrWithPeerID, addr.Encapsulate(multiaddr.StringCast("/p2p/"+m.host.ID().String())).String())
+	}
+	peerID := m.host.ID().String()
+	authData, err := m.getAuthData()
+	if err != nil {
+		logger.Warnf("Failed to generate auth data: %v", err)
+		authData = ""
+	}
+	if err := m.tracker.RegisterPeer(ctx, addrWithPeerID, peerID, authData); err != nil {
+		return err
+	}
+	logger.Infof("Registered with tracker peer_id=%s addrs=%d", peerID, len(addrWithPeerID))
+	return nil
 }
 
 func (m *Manager) UpdateTrackerURL(ctx context.Context, newURL string) {
@@ -433,8 +533,6 @@ func (m *Manager) UpdateTrackerURL(ctx context.Context, newURL string) {
 	logger.Infof("Updating tracker URL from=%s to=%s", m.trackerURL, newURL)
 	m.trackerURL = newURL
 	m.tracker = NewTrackerClient(newURL)
-
-	go m.discoverFromTrackerWithRetry(ctx)
 }
 
 func (m *Manager) AddBootstrapPeer(ctx context.Context, peerAddr peer.AddrInfo) error {
@@ -474,21 +572,24 @@ func (m *Manager) loadPersistedPeers() error {
 	return nil
 }
 
-func (m *Manager) discoverFromTrackerWithRetry(ctx context.Context) {
+func (m *Manager) discoverFromTrackerWithRetry(ctx context.Context) error {
 	retryDelay := 1 * time.Second
-	maxRetryDelay := 60 * time.Second
+	maxRetryDelay := m.maxRetryDelay
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		default:
 			if err := m.discoverFromTracker(ctx); err != nil {
 				logger.Warnf("Tracker discovery failed, retrying error=%v retryDelay=%v", err, retryDelay)
-				time.Sleep(retryDelay)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(retryDelay):
+				}
 				retryDelay = min(retryDelay*2, maxRetryDelay)
 			} else {
-				retryDelay = 1 * time.Second // Reset on success
-				time.Sleep(5 * time.Minute)  // Check tracker periodically
+				return nil
 			}
 		}
 	}
@@ -527,9 +628,9 @@ func (m *Manager) addAsBootstrap(ctx context.Context, p peer.AddrInfo) {
 	}
 
 	logger.Debugf("Running DHT bootstrap after connecting to tracker peer peer=%s", p.ID)
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	bootstrapCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := m.dht.Bootstrap(ctx); err != nil {
+	if err := m.dht.Bootstrap(bootstrapCtx); err != nil {
 		logger.Warnf("DHT bootstrap warning error=%v", err)
 	}
 	logger.Debugf("DHT routing table size after bootstrap size=%d", m.dht.RoutingTable().Size())
@@ -597,11 +698,10 @@ func (m *Manager) connectWithRetry(p peer.AddrInfo) {
 	maxRetries := 3
 	retryDelays := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
 	for attempt := range maxRetries {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
+		connectCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		logger.Debugf("Attempting to connect to peer peer=%s attempt=%d/%d", p.ID, attempt+1, maxRetries)
-		if err := m.host.Connect(ctx, p); err != nil {
+		if err := m.host.Connect(connectCtx, p); err != nil {
+			cancel()
 			if attempt < maxRetries-1 {
 				logger.Warnf("Connection failed, retrying in %v peer=%s error=%v", retryDelays[attempt], p.ID, err)
 				time.Sleep(retryDelays[attempt])
@@ -612,18 +712,19 @@ func (m *Manager) connectWithRetry(p peer.AddrInfo) {
 		}
 
 		logger.Infof("Connected to discovered peer peer=%s", p.ID)
-
 		m.mu.Lock()
 		m.connectedPeers[p.ID] = time.Now()
 		m.mu.Unlock()
 
 		if m.dht != nil {
-			dhtCtx, dhtCancel := context.WithTimeout(ctx, 10*time.Second)
-			defer dhtCancel()
+			dhtCtx, dhtCancel := context.WithTimeout(connectCtx, 10*time.Second)
 			if err := m.dht.Bootstrap(dhtCtx); err != nil {
 				logger.Warnf("DHT bootstrap after peer connect error=%v", err)
 			}
+			dhtCancel()
 		}
+
+		cancel()
 		if m.networkManager != nil {
 			addr := ""
 			if len(p.Addrs) > 0 {
@@ -653,8 +754,8 @@ func (m *Manager) persistPeers() {
 	for _, peer := range m.peers {
 		peersList = append(peersList, *peer)
 	}
-	m.mu.RUnlock()
 
+	m.mu.RUnlock()
 	if err := m.persistence.Save(peersList); err != nil {
 		logger.Errorf("Failed to save peers to disk error=%v", err)
 	} else {
@@ -667,13 +768,6 @@ func (m *Manager) persistPeers() {
 }
 
 func (m *Manager) connectBootstrapPeers(ctx context.Context) error {
-	var connectErr error
-	if m.trackerURL != "" {
-		logger.Debugf("Fetching tracker address for DHT bootstrap...")
-		if err := m.fetchTrackerAddr(ctx); err != nil {
-			logger.Warnf("Failed to fetch tracker address: %v", err)
-		}
-	}
 	for _, multiaddrStr := range m.bootstrapPeers {
 		addrInfo, err := peer.AddrInfoFromString(multiaddrStr)
 		if err != nil {
@@ -687,12 +781,11 @@ func (m *Manager) connectBootstrapPeers(ctx context.Context) error {
 		m.savePeer(*addrInfo, true)
 		if err := m.host.Connect(ctx, *addrInfo); err != nil {
 			logger.Warnf("Failed to connect bootstrap peer peer=%s error=%v", addrInfo.ID, err)
-			connectErr = err
 			continue
 		}
 		logger.Infof("Connected configured bootstrap peer peer=%s", addrInfo.ID)
 	}
-	return connectErr
+	return nil
 }
 
 func (m *Manager) initDHT(ctx context.Context) error {
@@ -761,9 +854,9 @@ func (m *Manager) populateDHTFromConnectedPeers() {
 	}
 	if count > 0 {
 		logger.Debugf("Running DHT bootstrap peerCount=%d", count)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		bootstrapCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := m.dht.Bootstrap(ctx); err != nil {
+		if err := m.dht.Bootstrap(bootstrapCtx); err != nil {
 			logger.Errorf("DHT bootstrap failed error=%v", err)
 		}
 		logger.Debugf("DHT routing table size count=%d", m.dht.RoutingTable().Size())
@@ -822,7 +915,6 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 	logger.Debugf("DHT: Waiting for peer connections...")
 	hasPeers := m.waitForPeers(constants.DHTWaitForPeersTimeout)
 	m.populateDHTFromConnectedPeers()
-
 	if !hasPeers {
 		logger.Debugf("DHT: No peers connected yet, starting discovery anyway")
 	}
@@ -830,25 +922,31 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 	logger.Debugf("DHT: Starting peer discovery...")
 	for {
 		queryCtx, cancel := context.WithTimeout(ctx, constants.DHTQueryTimeout)
-		defer cancel()
-
 		peerChan, err := m.discovery.FindPeers(queryCtx, m.rendezvous)
 		if err != nil {
+			cancel()
 			logger.Warnf("DHT FindPeers error error=%v", err)
-			time.Sleep(constants.DHTRetryDelay)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(constants.DHTRetryDelay):
+			}
 			continue
 		}
 
 		discovered := make(map[peer.ID]bool)
 		count := 0
+		roundDone := false
 		for {
 			select {
 			case <-ctx.Done():
+				cancel()
 				return
 			case p, ok := <-peerChan:
 				if !ok {
 					logger.Debugf("DHT: Finished discovery round, discovered %d new peers", count)
-					goto nextRound
+					roundDone = true
+					break
 				}
 				if p.ID == "" || p.ID == m.host.ID() {
 					continue
@@ -857,7 +955,6 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 				m.mu.RLock()
 				_, alreadyKnown := m.peers[p.ID]
 				m.mu.RUnlock()
-
 				if alreadyKnown {
 					continue
 				}
@@ -870,30 +967,22 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 				logger.Debugf("DHT discovered peer peer=%s", p.ID)
 				m.savePeer(p, false)
 			}
+			if roundDone {
+				break
+			}
 		}
-	nextRound:
+		cancel()
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(30 * time.Second):
+		case <-time.After(constants.DHTDiscoveryInterval):
 		}
 	}
 }
 
 func (m *Manager) discoverViaDHTRetry(ctx context.Context) {
 	m.discoverViaDHT(ctx)
-	ticker := time.NewTicker(constants.DHTDiscoveryInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			logger.Debugf("DHT: Running periodic discovery...")
-			m.discoverViaDHT(ctx)
-		}
-	}
 }
 
 func (m *Manager) discoverViaMDNS(ctx context.Context) {

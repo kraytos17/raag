@@ -460,6 +460,9 @@ func peersConnectCommand() *cobra.Command {
 		Short: "Connect to a peer by multiaddr",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			if trySocketPeerConnect(args[0]) {
+				return
+			}
 			if err := ensureNetwork(cmd); err != nil {
 				logger.Errorf("initializing network error=%v", err)
 				return
@@ -485,6 +488,9 @@ func peersDisconnectCommand() *cobra.Command {
 		Short: "Disconnect from a peer",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			if trySocketPeerDisconnect(args[0]) {
+				return
+			}
 			if err := ensureNetwork(cmd); err != nil {
 				logger.Errorf("initializing network error=%v", err)
 				return
@@ -512,6 +518,10 @@ func peersTrackerCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			trackerURL := args[0]
 			logger.Infof("setting tracker URL url=%s", trackerURL)
+			if trySocketUpdateTracker(trackerURL) {
+				logger.Infof("tracker URL updated successfully")
+				return
+			}
 			if err := ensureNetwork(cmd); err != nil {
 				logger.Errorf("initializing network error=%v", err)
 				return
@@ -532,6 +542,14 @@ func peersBootstrapCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			multiaddrStr := args[0]
 			logger.Infof("adding bootstrap peer multiaddr=%s", multiaddrStr)
+			if trySocketBootstrapPeer(multiaddrStr) {
+				logger.Infof("bootstrap peer added successfully")
+				return
+			}
+			if err := ensureNetwork(cmd); err != nil {
+				logger.Errorf("initializing network error=%v", err)
+				return
+			}
 
 			ctx := context.Background()
 			if err := netMgr.AddBootstrapPeer(ctx, multiaddrStr); err != nil {
@@ -923,6 +941,7 @@ func networkCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(networkStatusCommand())
+	cmd.AddCommand(networkAuthKeyCommand())
 	return cmd
 }
 
@@ -947,6 +966,33 @@ func networkStatusCommand() *cobra.Command {
 	}
 }
 
+func networkAuthKeyCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "auth-key",
+		Short: "Print the full derived tracker auth key",
+		Run: func(cmd *cobra.Command, args []string) {
+			if trySocketAndPrintNetworkAuthKey() {
+				return
+			}
+			if err := ensureNetwork(cmd); err != nil {
+				logger.Errorf("initializing network error=%v", err)
+				return
+			}
+			if netMgr == nil {
+				logger.Errorf("Network not initialized")
+				return
+			}
+
+			authKey := netMgr.GetAuthPublicKey()
+			if authKey == "" {
+				logger.Errorf("No auth key available")
+				return
+			}
+			fmt.Println(authKey)
+		},
+	}
+}
+
 func trySocketAndPrintNetworkStatus() bool {
 	client := NewSocketClient()
 	if !client.IsAvailable() {
@@ -961,8 +1007,159 @@ func trySocketAndPrintNetworkStatus() bool {
 		return false
 	}
 
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		return false
+	}
+
 	logger.Infof("Network status from daemon:")
-	logger.Infof("%v", resp.Data)
+	logger.Infof("Self: %v @ %v", data["self_id"], data["listen_addr"])
+	logger.Infof("Mode: %v", data["mode"])
+	if authKey, ok := data["auth_public_key"].(string); ok && authKey != "" {
+		prefix := authKey
+		if len(prefix) > 32 {
+			prefix = prefix[:32]
+		}
+		logger.Infof("Auth Key: %s...", prefix)
+	}
+
+	logger.Infof("Tracker: %v", data["tracker_url"])
+	logger.Infof("DHT: enabled=%v (peers=%v)", data["dht_enabled"], data["dht_peers"])
+	logger.Infof("mDNS: enabled=%v (discovered=%v)", data["mdns_enabled"], data["mdns_discovered"])
+
+	connectedPeers, _ := data["connected_peers"].([]any)
+	logger.Infof("--- Connections (%d) ---", len(connectedPeers))
+	if len(connectedPeers) == 0 {
+		logger.Infof("  (no active connections)")
+	}
+	for _, p := range connectedPeers {
+		peerMap, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		peerID, _ := peerMap["id"].(string)
+		addr, _ := peerMap["multiaddr"].(string)
+		if len(peerID) > 12 {
+			peerID = peerID[:12]
+		}
+		logger.Infof("  ✓ %s @ %s", peerID, addr)
+	}
+
+	knownPeers, _ := data["known_peers"].([]any)
+	logger.Infof("--- Known Peers (%d) ---", len(knownPeers))
+	if len(knownPeers) == 0 {
+		logger.Infof("  (no known peers)")
+	}
+	for _, p := range knownPeers {
+		peerMap, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		peerID, _ := peerMap["id"].(string)
+		addr, _ := peerMap["multiaddr"].(string)
+		connected, _ := peerMap["connected"].(bool)
+		status := "○"
+		if connected {
+			status = "✓"
+		}
+		if len(peerID) > 12 {
+			peerID = peerID[:12]
+		}
+		logger.Infof("  %s %s @ %s", status, peerID, addr)
+	}
+	return true
+}
+
+func trySocketPeerConnect(addr string) bool {
+	client := NewSocketClient()
+	if !client.IsAvailable() {
+		return false
+	}
+
+	resp, err := client.Query("peers connect", addr)
+	if err != nil || !resp.Success {
+		if err == nil && resp != nil && resp.Error != "" {
+			logger.Errorf("failed to connect to peer error=%s", resp.Error)
+		}
+		return false
+	}
+	logger.Infof("connected to peer addr=%s", addr)
+	return true
+}
+
+func trySocketPeerDisconnect(peerID string) bool {
+	client := NewSocketClient()
+	if !client.IsAvailable() {
+		return false
+	}
+
+	resp, err := client.Query("peers disconnect", peerID)
+	if err != nil || !resp.Success {
+		if err == nil && resp != nil && resp.Error != "" {
+			logger.Errorf("failed to disconnect from peer error=%s", resp.Error)
+		}
+		return false
+	}
+	logger.Infof("disconnected from peer id=%s", peerID)
+	return true
+}
+
+func trySocketUpdateTracker(trackerURL string) bool {
+	client := NewSocketClient()
+	if !client.IsAvailable() {
+		return false
+	}
+
+	resp, err := client.Query("peers tracker", trackerURL)
+	if err != nil || !resp.Success {
+		if err == nil && resp != nil && resp.Error != "" {
+			logger.Errorf("failed to update tracker URL error=%s", resp.Error)
+		}
+		return false
+	}
+	return true
+}
+
+func trySocketBootstrapPeer(multiaddrStr string) bool {
+	client := NewSocketClient()
+	if !client.IsAvailable() {
+		return false
+	}
+
+	resp, err := client.Query("peers bootstrap", multiaddrStr)
+	if err != nil || !resp.Success {
+		if err == nil && resp != nil && resp.Error != "" {
+			logger.Errorf("failed to add bootstrap peer error=%s", resp.Error)
+		}
+		return false
+	}
+	return true
+}
+
+func trySocketAndPrintNetworkAuthKey() bool {
+	client := NewSocketClient()
+	if !client.IsAvailable() {
+		return false
+	}
+
+	resp, err := client.Query("network auth-key")
+	if err != nil || !resp.Success {
+		return false
+	}
+
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	authKey, ok := data["auth_public_key"].(string)
+	if !ok || authKey == "" {
+		return false
+	}
+
+	fmt.Println(authKey)
 	return true
 }
 

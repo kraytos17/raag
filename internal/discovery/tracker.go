@@ -19,6 +19,24 @@ type TrackerClient struct {
 	client     *http.Client
 }
 
+type trackerPeerResponse struct {
+	PeerID   string   `json:"peer_id"`
+	Addrs    []string `json:"addrs"`
+	LastSeen int64    `json:"last_seen"`
+}
+
+type trackerRegisterRequest struct {
+	Addrs    []string `json:"addrs"`
+	PeerID   string   `json:"peer_id"`
+	AuthData string   `json:"auth_data,omitempty"`
+}
+
+type trackerAddrResponse struct {
+	RelayEnabled bool   `json:"relay_enabled"`
+	RelayAddr    string `json:"relay_addr,omitempty"`
+	HostID       string `json:"host_id,omitempty"`
+}
+
 func NewTrackerClient(trackerURL string) *TrackerClient {
 	return &TrackerClient{
 		trackerURL: trackerURL,
@@ -51,25 +69,44 @@ func (t *TrackerClient) FetchPeers(ctx context.Context) ([]peer.AddrInfo, error)
 		return nil, fmt.Errorf("tracker returned status %d", resp.StatusCode)
 	}
 
-	var peerResponses []map[string]any
+	var peerResponses []trackerPeerResponse
 	if err := json.NewDecoder(resp.Body).Decode(&peerResponses); err != nil {
 		return nil, fmt.Errorf("failed to decode tracker response: %w", err)
 	}
 
 	var peers []peer.AddrInfo
 	for _, p := range peerResponses {
-		addrStr, ok := p["addr"].(string)
-		if !ok {
+		if p.PeerID == "" || len(p.Addrs) == 0 {
 			continue
 		}
 
-		ma, err := multiaddr.NewMultiaddr(addrStr)
-		if err != nil {
-			continue
-		}
+		addrSeen := make(map[string]struct{})
+		var addrInfo *peer.AddrInfo
+		for _, addr := range p.Addrs {
+			if addr == "" {
+				continue
+			}
+			if _, ok := addrSeen[addr]; ok {
+				continue
+			}
+			addrSeen[addr] = struct{}{}
 
-		addrInfo, err := peer.AddrInfoFromP2pAddr(ma)
-		if err != nil {
+			ma, err := multiaddr.NewMultiaddr(addr)
+			if err != nil {
+				continue
+			}
+
+			parsedAddrInfo, err := peer.AddrInfoFromP2pAddr(ma)
+			if err != nil {
+				continue
+			}
+			if addrInfo == nil {
+				addrInfo = parsedAddrInfo
+				continue
+			}
+			addrInfo.Addrs = append(addrInfo.Addrs, parsedAddrInfo.Addrs...)
+		}
+		if addrInfo == nil {
 			continue
 		}
 		peers = append(peers, *addrInfo)
@@ -77,7 +114,7 @@ func (t *TrackerClient) FetchPeers(ctx context.Context) ([]peer.AddrInfo, error)
 	return peers, nil
 }
 
-func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string, authData string) error {
+func (t *TrackerClient) RegisterPeer(ctx context.Context, addrs []string, peerID string, authData string) error {
 	if t.trackerURL == "" {
 		return nil
 	}
@@ -87,11 +124,9 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, multiaddrStr string, a
 		return err
 	}
 
-	data := struct {
-		Addr     string `json:"addr"`
-		AuthData string `json:"auth_data,omitempty"`
-	}{
-		Addr:     multiaddrStr,
+	data := trackerRegisterRequest{
+		Addrs:    addrs,
+		PeerID:   peerID,
 		AuthData: authData,
 	}
 
@@ -146,17 +181,11 @@ func (t *TrackerClient) FetchTrackerAddr(ctx context.Context) (string, string, e
 		return "", "", fmt.Errorf("tracker returned status %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Libp2pAddr   string `json:"libp2p_addr"`
-		RelayAddr    string `json:"relay_addr,omitempty"`
-		RelayEnabled bool   `json:"relay_enabled"`
-		DHTEnabled   bool   `json:"dht_enabled"`
-		HostID       string `json:"host_id,omitempty"`
-	}
+	var result trackerAddrResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", "", fmt.Errorf("failed to decode tracker response: %w", err)
 	}
-	return result.Libp2pAddr, result.RelayAddr, nil
+	return "", result.RelayAddr, nil
 }
 
 func joinTrackerPath(baseURL, path string) (string, error) {

@@ -38,15 +38,14 @@ Examples:
 
 func runDaemon(cmd *cobra.Command) {
 	logger.Infof("starting Raag daemon")
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
 	v, err := config.InitViper(cmd)
 	if err != nil {
 		logger.Errorf("failed to initialize config error=%v", err)
 		os.Exit(1)
 	}
+
 	cfg, err := config.LoadConfig(v)
 	if err != nil {
 		logger.Errorf("failed to load config error=%v", err)
@@ -100,6 +99,11 @@ func runDaemon(cmd *cobra.Command) {
 
 	socketServer.Stop()
 	cancel()
+	if netMgr != nil {
+		if err := netMgr.Close(); err != nil {
+			logger.Warnf("failed to close network manager error=%v", err)
+		}
+	}
 
 	time.Sleep(1 * time.Second)
 	logger.Infof("daemon stopped")

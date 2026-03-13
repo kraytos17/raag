@@ -18,4 +18,4 @@ COPY --from=builder /app/tracker .
 
 EXPOSE 8080 45678
 
-CMD ["./tracker", "--http-port", "8080", "--libp2p-port", "45678", "--relay", "--dht"]
+CMD ["./tracker", "--http-port", "8080", "--libp2p-port", "45678", "--relay"]
