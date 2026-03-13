@@ -27,7 +27,7 @@ func DefaultConfig() *AppConfig {
 		TUIEnabled: false,
 		Network:    false,
 		Rendezvous: constants.DefaultRendezvous,
-		Host:       "127.0.0.1",
+		Host:       constants.DefaultHost,
 		Port:       0,
 		LogLevel:   "info",
 	}

@@ -34,7 +34,7 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Host:           "127.0.0.1",
+		Host:           constants.DefaultHost,
 		Port:           constants.DefaultPort,
 		Rendezvous:     constants.DefaultRendezvous,
 		TrackerURL:     "",

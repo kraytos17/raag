@@ -341,6 +341,16 @@ func (n *NetworkManager) Connect(ctx context.Context, addrInfo peer.AddrInfo) er
 }
 
 func (n *NetworkManager) Disconnect(peerID peer.ID) error {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := n.SendGoodbye(ctx, peerID); err != nil {
+			logger.Infof("Goodbye sent or failed peer_id=%s error=%v", peerID, err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
 	if err := n.host.Network().ClosePeer(peerID); err != nil {
 		return fmt.Errorf("failed to disconnect: %w", err)
 	}
@@ -350,6 +360,7 @@ func (n *NetworkManager) Disconnect(peerID peer.ID) error {
 	n.peersLock.Unlock()
 
 	logger.Infof("Disconnected from peer peer_id=%s", peerID)
+	logger.Infof("Peer %s has left the network", peerID)
 	return nil
 }
 
@@ -603,12 +614,7 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 	if _, ok := n.peers[peerID]; ok {
 		delete(n.peers, peerID)
 		logger.Infof("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
-
-		go func() {
-			if err := n.SendGoodbye(context.Background(), peerID); err != nil {
-				logger.Debugf("Failed to send goodbye to peer peer_id=%s error=%v", peerID, err)
-			}
-		}()
+		logger.Infof("Peer %s has left the network", peerID)
 
 		if n.OnPeerLeave != nil {
 			n.OnPeerLeave(peerID)

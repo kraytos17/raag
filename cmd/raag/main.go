@@ -67,7 +67,7 @@ func main() {
 	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery (default enabled)")
 	rootCmd.PersistentFlags().Int("max-peers", constants.DefaultMaxPeers, "Maximum number of peers to maintain")
 	rootCmd.PersistentFlags().StringSlice("bootstrap", []string{}, "DHT bootstrap peers (multiaddr)")
-	rootCmd.PersistentFlags().String("host", "0.0.0.0", "The host address to listen on")
+	rootCmd.PersistentFlags().String("host", constants.DefaultHost, "The host address to listen on")
 	rootCmd.PersistentFlags().String("rendezvous", constants.DefaultRendezvous, "Unique string to identify Raag nodes")
 	rootCmd.PersistentFlags().Bool("json", false, "Output logs in JSON format")
 
