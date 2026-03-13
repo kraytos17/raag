@@ -421,20 +421,6 @@ func (m *Manager) runTrackerRegistrationLoop(ctx context.Context) {
 	if err := m.refreshRegistrationWithRetry(ctx); err != nil {
 		logger.Warnf("Initial tracker registration failed error=%v", err)
 	}
-
-	ticker := time.NewTicker(m.heartbeatEvery)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := m.refreshRegistrationWithRetry(ctx); err != nil {
-				logger.Warnf("Tracker heartbeat failed error=%v", err)
-			}
-		}
-	}
 }
 
 func (m *Manager) runTrackerRefreshLoop(ctx context.Context) {

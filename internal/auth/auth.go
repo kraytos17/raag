@@ -218,8 +218,10 @@ func NewTrustedKeyManager() *TrustedKeyManager {
 
 // AddKey adds a public key to the trusted list
 func (tk *TrustedKeyManager) AddKey(publicKeyHex string) {
-	tk.trustedKeys[publicKeyHex] = struct{}{}
-	logger.Infof("Added trusted auth key: %s...", publicKeyHex[:16])
+	if _, exists := tk.trustedKeys[publicKeyHex]; !exists {
+		tk.trustedKeys[publicKeyHex] = struct{}{}
+		logger.Infof("Added trusted auth key: %s...", publicKeyHex[:16])
+	}
 }
 
 // IsTrusted checks if a public key is trusted
