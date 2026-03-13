@@ -72,6 +72,10 @@ const (
 
 	// TokenExpiration is how long auth tokens are valid
 	TokenExpiration = 24 * time.Hour
+
+	// EnvAuthKey is the environment variable name for tracker auth key(s)
+	// Supports multiple keys comma-separated
+	EnvAuthKey = "AUTH_KEY"
 )
 
 // Timeouts
