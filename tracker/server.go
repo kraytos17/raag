@@ -156,7 +156,7 @@ func (t *Tracker) RelayAddr() string {
 }
 
 func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	logger.Infof("tracker request method=%s path=%s", r.Method, r.URL.Path)
+	logger.Debugf("tracker request method=%s path=%s", r.Method, r.URL.Path)
 	w.Header().Set("Content-Type", "application/json")
 
 	switch r.URL.Path {
@@ -260,6 +260,7 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t.mu.Lock()
+	_, isNewPeer := t.peers[req.PeerID]
 	t.peers[req.PeerID] = registeredPeer{
 		PeerID:   req.PeerID,
 		Addrs:    validatedAddrs,
@@ -267,7 +268,11 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 	}
 	t.mu.Unlock()
 
-	logger.Infof("Peer registered: %s (%d addrs)", req.PeerID, len(validatedAddrs))
+	if isNewPeer {
+		logger.Infof("Peer registered: %s (%d addrs)", req.PeerID, len(validatedAddrs))
+	} else {
+		logger.Debugf("Peer updated: %s (%d addrs)", req.PeerID, len(validatedAddrs))
+	}
 	json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"message": "Peer registered successfully",
