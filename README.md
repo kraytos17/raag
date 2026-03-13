@@ -88,6 +88,7 @@ Peers and networking:
 ```bash
 ./bin/raag peers list
 ./bin/raag peers info
+./bin/raag peers ping <peerID>
 ./bin/raag peers connect <multiaddr>
 ./bin/raag peers disconnect <peerID>
 ./bin/raag peers tracker <url>
@@ -193,6 +194,7 @@ raag CLI / TUI
           +-- TCP + QUIC listeners
           +-- ResourceManager
           +-- NAT traversal (hole punching, UPnP, AutoNAT)
+          +-- peer presence protocol (/raag/ping/1.0.0)
 ```
 
 ### Tracker Architecture
@@ -241,6 +243,46 @@ Upon discovering a peer, Raag attempts connection over libp2p. The current P0 im
 
 Circuit-relay support is not advertised in P0 because it has not been verified end to end yet.
 
+### Peer Presence Protocol
+
+Raag includes a built-in peer presence protocol (`/raag/ping/1.0.0`) that enables direct peer-to-peer presence awareness.
+
+**How it works:**
+
+- When peers connect, they automatically exchange hello/pong messages
+- When peers disconnect, they send goodbye/left notifications
+- This happens directly peer-to-peer, not through the tracker
+
+**Message flow:**
+
+```
+Peer A connects to Peer B
+        ↓
+Peer A sends "hello" directly to Peer B (P2P stream)
+        ↓
+Peer B responds with "pong" (P2P stream)
+        ↓
+Both log: "Peer X is online!"
+
+--- Later ---
+
+Peer A disconnects
+        ↓
+Peer A sends "left" directly to Peer B (P2P stream)
+        ↓
+Peer B logs: "Peer A has left the network"
+```
+
+**Manual ping:**
+
+You can also manually ping a peer:
+
+```bash
+./bin/raag peers ping <peer-id>
+```
+
+This is useful for testing direct peer-to-peer connectivity.
+
 ### Auth Flow in the Architecture
 
 Tracker authentication is not a separate account system. Rather, it constitutes a cryptographic proof that the registering client controls the persistent libp2p identity it claims.
@@ -275,6 +317,7 @@ In the current P0 implementation, these commands are daemon-backed when the daem
 - `network auth-key`
 - `peers list`
 - `peers info`
+- `peers ping`
 - `peers connect`
 - `peers disconnect`
 - `peers tracker`
@@ -635,6 +678,13 @@ Peer identity changed unexpectedly:
 - check `~/.config/raag/identity.key`
 - if it was removed, Raag generates a new peer identity and a new derived auth key
 - update the tracker trust list to match the new derived auth key
+
+Peer ping/hello not working:
+
+- Ensure peers are connected (`./bin/raag peers list` shows connected peers)
+- Check logs for hello/pong messages
+- Verify peer-to-peer connectivity with manual ping: `./bin/raag peers ping <peer-id>`
+- If ping fails, peers may not be directly connectable (NAT/firewall issues)
 
 ## License
 

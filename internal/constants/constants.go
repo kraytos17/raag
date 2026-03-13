@@ -1,11 +1,12 @@
 package constants
 
-import (
-	"time"
-)
+import "time"
 
 // Network Configuration
 const (
+	// DefaultHost is the default listen host address
+	DefaultHost = "0.0.0.0"
+
 	// DefaultPort is the default listen port for peer connections
 	DefaultPort = 45678
 
