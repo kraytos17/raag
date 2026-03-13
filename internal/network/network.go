@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,85 @@ import (
 	"github.com/spf13/viper"
 )
 
+type serializedKey struct {
+	Type string `json:"type"`
+	Data []byte `json:"data"`
+}
+
+func loadOrGenerateIdentity() (crypto.PrivKey, error) {
+	keyPath, err := config.IdentityKeyPath()
+	if err != nil {
+		logger.Warnf("Could not get identity key path, generating new key: %v", err)
+		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+
+	data, err := os.ReadFile(keyPath)
+	if err == nil {
+		var sk serializedKey
+		if err := json.Unmarshal(data, &sk); err != nil {
+			logger.Warnf("Could not parse identity key, generating new one: %v", err)
+			return generateAndSaveKey(keyPath)
+		}
+
+		switch sk.Type {
+		case "RSA", "Ed25519":
+		default:
+			logger.Warnf("Unknown key type %s, generating new key", sk.Type)
+			return generateAndSaveKey(keyPath)
+		}
+
+		key, err := crypto.UnmarshalPrivateKey(sk.Data)
+		if err != nil {
+			logger.Warnf("Could not unmarshal identity key, generating new one: %v", err)
+			return generateAndSaveKey(keyPath)
+		}
+
+		logger.Infof("Loaded existing identity key from %s", keyPath)
+		return key, nil
+	}
+	if !os.IsNotExist(err) {
+		logger.Warnf("Error reading identity key: %v", err)
+	}
+	return generateAndSaveKey(keyPath)
+}
+
+func generateAndSaveKey(keyPath string) (crypto.PrivKey, error) {
+	key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate key pair: %w", err)
+	}
+
+	keyData, err := crypto.MarshalPrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal key: %w", err)
+	}
+
+	sk := serializedKey{
+		Type: "RSA",
+		Data: keyData,
+	}
+
+	data, err := json.Marshal(sk)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal key data: %w", err)
+	}
+
+	dir := filepath.Dir(keyPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("failed to create config directory: %w", err)
+	}
+	if err := os.WriteFile(keyPath, data, 0o600); err != nil {
+		logger.Warnf("Failed to save identity key: %v", err)
+	} else {
+		logger.Infof("Generated and saved new identity key to %s", keyPath)
+	}
+	return key, nil
+}
+
 type NetworkManager struct {
 	host          host.Host
 	cfg           *config.Config
@@ -45,9 +125,9 @@ type NetworkManager struct {
 func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string) (*NetworkManager, error) {
 	logger.Infof("Network config network=%v host=%s port=%d rendezvous=%s", cfg.Network, cfg.Host, cfg.Port, cfg.Rendezvous)
 
-	prvKey, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+	prvKey, err := loadOrGenerateIdentity()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key pair: %w", err)
+		return nil, fmt.Errorf("failed to load identity: %w", err)
 	}
 
 	var opts []libp2p.Option
@@ -99,7 +179,7 @@ func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicD
 			if err := config.UpdateBootstrapPeers(v, peerAddrs); err != nil {
 				logger.Warnf("Failed to update bootstrap_peers in config error=%v", err)
 			} else {
-				logger.Infof("Updated bootstrap_peers in config count=%d", len(peerAddrs))
+				logger.Debugf("Updated bootstrap_peers in config count=%d", len(peerAddrs))
 			}
 		}
 	})
@@ -130,13 +210,13 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 	if len(addrs) > 0 {
 		logger.Infof("Your Raag Node Multiaddress address=%s", fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID()))
 		if len(addrs) > 1 {
-			logger.Infof("Additional addresses")
+			logger.Debugf("Additional addresses")
 			for _, addr := range addrs[1:] {
-				logger.Infof("Additional address address=%s", fmt.Sprintf("%s/p2p/%s", addr, n.host.ID()))
+				logger.Debugf("Additional address address=%s", fmt.Sprintf("%s/p2p/%s", addr, n.host.ID()))
 			}
 		}
 		if n.cfg.Network {
-			logger.Infof("TIP: If peers cannot connect, ensure firewall allows incoming connections on port %d (TCP)", n.cfg.Port)
+			logger.Debugf("TIP: If peers cannot connect, ensure firewall allows incoming connections on port %d (TCP)", n.cfg.Port)
 		}
 	} else {
 		logger.Warnf("No listening addresses found host=%s port=%d", n.cfg.Host, n.cfg.Port)
@@ -252,6 +332,12 @@ func (n *NetworkManager) GetAllKnownPeers() []peer.AddrInfo {
 		return nil
 	}
 	return n.discovery.GetAllPeers()
+}
+
+func (n *NetworkManager) LogNetworkState() {
+	if n.discovery != nil {
+		n.discovery.LogNetworkState()
+	}
 }
 
 func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) error {

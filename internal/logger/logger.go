@@ -1,14 +1,28 @@
 package logger
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/log/v2"
 )
 
-var logger *log.Logger
+var (
+	logger    *log.Logger
+	jsonMode  bool
+	jsonMutex sync.RWMutex
+)
+
+type JSONLogEntry struct {
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+}
 
 func init() {
 	NewLogger("raag")
@@ -61,36 +75,67 @@ func SetLevel(level string) {
 	}
 }
 
+func SetJSONMode(enabled bool) {
+	jsonMutex.Lock()
+	defer jsonMutex.Unlock()
+	jsonMode = enabled
+}
+
+func IsJSONMode() bool {
+	jsonMutex.RLock()
+	defer jsonMutex.RUnlock()
+	return jsonMode
+}
+
 func With(args ...any) *log.Logger {
 	return logger.With(args...)
 }
 
 func Debugf(format string, args ...any) {
-	logger.Debugf(format, args...)
+	logJSON(log.DebugLevel, "DEBUG", format, args...)
 }
 
 func Infof(format string, args ...any) {
-	logger.Infof(format, args...)
+	logJSON(log.InfoLevel, "INFO", format, args...)
 }
 
 func Warnf(format string, args ...any) {
-	logger.Warnf(format, args...)
+	logJSON(log.WarnLevel, "WARN", format, args...)
 }
 
 func Errorf(format string, args ...any) {
-	logger.Errorf(format, args...)
+	logJSON(log.ErrorLevel, "ERROR", format, args...)
 }
 
-// Err logs an error message with the given error if not nil
-func Err(msg string, err error) {
-	if err != nil {
-		logger.Errorf("%s error=%v", msg, err)
+func logJSON(level log.Level, levelStr, format string, args ...any) {
+	jsonMutex.RLock()
+	isJSON := jsonMode
+	jsonMutex.RUnlock()
+
+	if isJSON {
+		msg := format
+		if len(args) > 0 {
+			msg = fmt.Sprintf(format, args...)
+		}
+
+		entry := JSONLogEntry{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Level:     levelStr,
+			Message:   msg,
+		}
+		jsonBytes, _ := json.Marshal(entry)
+		os.Stderr.Write(append(jsonBytes, '\n'))
+		return
 	}
-}
 
-// WarnErr logs a warning message with the given error if not nil
-func WarnErr(msg string, err error) {
-	if err != nil {
-		logger.Warnf("%s error=%v", msg, err)
+	switch level {
+	case log.DebugLevel:
+		logger.Debugf(format, args...)
+	case log.InfoLevel:
+		logger.Infof(format, args...)
+	case log.WarnLevel:
+		logger.Warnf(format, args...)
+	case log.ErrorLevel:
+		logger.Errorf(format, args...)
 	}
 }

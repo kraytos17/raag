@@ -23,7 +23,7 @@ func ensureNetwork(cmd *cobra.Command) error {
 }
 
 func ensurePlaylist(cmd *cobra.Command) error {
-	if pm == nil || lib == nil {
+	if pm == nil || lib == nil || p == nil {
 		if err := initializeApp(cmd); err != nil {
 			return fmt.Errorf("initializing: %w", err)
 		}
@@ -37,6 +37,10 @@ func playCommand() *cobra.Command {
 		Short: "Play a song from the library",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			songTitle := args[0]
 			song, err := lib.FindSong(songTitle)
 			if err != nil {
@@ -59,6 +63,10 @@ func pauseCommand() *cobra.Command {
 		Use:   "pause",
 		Short: "Pause playback",
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			p.Pause()
 		},
 	}
@@ -69,6 +77,10 @@ func resumeCommand() *cobra.Command {
 		Use:   "resume",
 		Short: "Resume playback",
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			p.Resume()
 		},
 	}
@@ -79,6 +91,10 @@ func stopCommand() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop playback and clear queue",
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			p.Stop()
 		},
 	}
@@ -89,6 +105,10 @@ func nextCommand() *cobra.Command {
 		Use:   "next",
 		Short: "Skip to next song",
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			if err := p.Next(); err != nil {
 				logger.Errorf("failed to play next song error=%v", err)
 			}
@@ -101,6 +121,10 @@ func previousCommand() *cobra.Command {
 		Use:   "previous",
 		Short: "Go to previous song",
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			if err := p.Previous(); err != nil {
 				logger.Errorf("failed to play previous song error=%v", err)
 			}
@@ -113,6 +137,10 @@ func queueCommand() *cobra.Command {
 		Use:   "queue",
 		Short: "Manage queue",
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			queue := p.GetQueue()
 			if len(queue) == 0 {
 				logger.Infof("queue is empty")
@@ -138,6 +166,11 @@ func volumeCommand() *cobra.Command {
 		Short: "Set volume (0-100) or show current volume if no argument",
 		Args:  cobra.RangeArgs(0, 1),
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing player error=%v", err)
+				return
+			}
+
 			if len(args) == 0 {
 				vol := p.GetVolume()
 				logger.Infof("current volume volume=%v", vol)
@@ -162,6 +195,10 @@ func seekCommand() *cobra.Command {
 		Short: "Seek to position in seconds",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			pos, err := strconv.Atoi(args[0])
 			if err != nil {
 				logger.Errorf("invalid position error=%v", err)
@@ -180,6 +217,10 @@ func nowplayingCommand() *cobra.Command {
 		Use:   "nowplaying",
 		Short: "Show current playing song",
 		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensurePlaylist(cmd); err != nil {
+				logger.Errorf("initializing error=%v", err)
+				return
+			}
 			song := p.GetCurrentSong()
 			if song == nil {
 				logger.Infof("no song playing")
@@ -873,6 +914,56 @@ func statusCommand() *cobra.Command {
 			logger.Infof("network online status=%v", netMgr.IsOnline())
 		},
 	}
+}
+
+func networkCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "network",
+		Short: "Manage network and P2P connections",
+	}
+
+	cmd.AddCommand(networkStatusCommand())
+	return cmd
+}
+
+func networkStatusCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show P2P network status",
+		Run: func(cmd *cobra.Command, args []string) {
+			if trySocketAndPrintNetworkStatus() {
+				return
+			}
+			if err := ensureNetwork(cmd); err != nil {
+				logger.Errorf("initializing network error=%v", err)
+				return
+			}
+			if netMgr != nil {
+				netMgr.LogNetworkState()
+			} else {
+				logger.Infof("Network not initialized. Run with --network flag first.")
+			}
+		},
+	}
+}
+
+func trySocketAndPrintNetworkStatus() bool {
+	client := NewSocketClient()
+	if !client.IsAvailable() {
+		return false
+	}
+
+	resp, err := client.Query("network status")
+	if err != nil {
+		return false
+	}
+	if !resp.Success {
+		return false
+	}
+
+	logger.Infof("Network status from daemon:")
+	logger.Infof("%v", resp.Data)
+	return true
 }
 
 func trySocketAndPrintStatus() bool {

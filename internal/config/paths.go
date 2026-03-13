@@ -53,3 +53,11 @@ func PlaylistsPath() (string, error) {
 	}
 	return filepath.Join(dir, "playlists.json"), nil
 }
+
+func IdentityKeyPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "identity.key"), nil
+}

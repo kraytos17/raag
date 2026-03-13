@@ -13,11 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	daemonTrackerURL string
-	daemonTUI        bool
-	daemonNoTUI      bool
-)
+var daemonTrackerURL string
 
 func daemonCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -37,8 +33,6 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&daemonTrackerURL, "tracker", "", "Tracker URL")
-	cmd.Flags().BoolVar(&daemonTUI, "tui", false, "Show TUI when running daemon")
-	cmd.Flags().BoolVar(&daemonNoTUI, "no-tui", false, "Run without TUI (headless mode)")
 	return cmd
 }
 
@@ -93,7 +87,7 @@ func runDaemon(cmd *cobra.Command) {
 	}
 
 	logger.Infof("Raag daemon started. Use Ctrl+C to stop.")
-	showTUI := shouldStartTUI(cmd, daemonNoTUI)
+	showTUI := shouldStartTUI(cmd)
 	if showTUI {
 		go func() {
 			tui.Start(lib, p, netMgr, pm)

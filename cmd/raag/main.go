@@ -36,13 +36,18 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "raag",
 		Short: "Raag - Decentralized Music Streaming",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if jsonMode, _ := cmd.Flags().GetBool("json"); jsonMode {
+				logger.SetJSONMode(true)
+			}
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) == 0 {
 				if err := initializeApp(cmd); err != nil {
 					logger.Errorf("Error initializing error=%v", err)
 					return
 				}
-				if shouldStartTUI(cmd, false) {
+				if shouldStartTUI(cmd) {
 					startTUI()
 					return
 				}
@@ -53,16 +58,18 @@ func main() {
 	}
 
 	rootCmd.PersistentFlags().String("config", "", "config file (default is $HOME/.config/raag/config.yaml)")
-	rootCmd.PersistentFlags().String("musicdir", "./music", "Directory containing music files")
+	rootCmd.PersistentFlags().MarkHidden("config")
+	rootCmd.PersistentFlags().String("music-dir", "./music", "Directory containing music files")
 	rootCmd.PersistentFlags().Bool("network", false, "Enable network mode for peer discovery")
 	rootCmd.PersistentFlags().Bool("tui", false, "Start in TUI mode")
 	rootCmd.PersistentFlags().String("tracker", constants.DefaultTrackerURL, "Centralized tracker URL for peer discovery")
 	rootCmd.PersistentFlags().Int("port", constants.DefaultPort, "Node listen port (use 0 for random)")
-	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery")
+	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery (default enabled)")
 	rootCmd.PersistentFlags().Int("max-peers", constants.DefaultMaxPeers, "Maximum number of peers to maintain")
 	rootCmd.PersistentFlags().StringSlice("bootstrap", []string{}, "DHT bootstrap peers (multiaddr)")
 	rootCmd.PersistentFlags().String("host", "0.0.0.0", "The host address to listen on")
 	rootCmd.PersistentFlags().String("rendezvous", constants.DefaultRendezvous, "Unique string to identify Raag nodes")
+	rootCmd.PersistentFlags().Bool("json", false, "Output logs in JSON format")
 
 	// Add subcommands
 	rootCmd.AddCommand(playCommand())
@@ -82,6 +89,7 @@ func main() {
 	rootCmd.AddCommand(configCommand())
 	rootCmd.AddCommand(daemonCommand())
 	rootCmd.AddCommand(statusCommand())
+	rootCmd.AddCommand(networkCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		logger.Errorf("Command execution failed error=%v", err)
