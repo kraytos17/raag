@@ -9,10 +9,10 @@ build:
 	$(GO_CMD) build $(GO_BUILD_FLAGS) -o bin/$(BINARY_NAME) ./cmd/raag
 
 build-tracker:
-	$(GO_CMD) build $(GO_BUILD_FLAGS) -o bin/$(TRACKER_BINARY_NAME) tracker/cmd/tracker/main.go
+	$(GO_CMD) build $(GO_BUILD_FLAGS) -o bin/$(TRACKER_BINARY_NAME) ./tracker/cmd/tracker
 
 run-tracker: build-tracker
-	./bin/$(TRACKER_BINARY_NAME) --port 8080
+	./bin/$(TRACKER_BINARY_NAME) --http-port 8080
 
 test:
 	$(GO_CMD) test -v ./...
