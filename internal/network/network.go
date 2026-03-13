@@ -245,6 +245,7 @@ func newResourceManager() (network.ResourceManager, error) {
 
 func (n *NetworkManager) Start(ctx context.Context) error {
 	n.host.SetStreamHandler(protocol.ID(constants.ShareProtocolID), n.handleStream)
+	n.host.SetStreamHandler(protocol.ID(constants.PingProtocolID), n.handlePingStream)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
@@ -327,6 +328,12 @@ func (n *NetworkManager) Connect(ctx context.Context, addrInfo peer.AddrInfo) er
 	}
 
 	logger.Infof("Connecting to peer peer_id=%s", addrInfo.ID)
+	go func() {
+		if err := n.SendHelloToPeer(ctx, addrInfo.ID); err != nil {
+			logger.Debugf("Auto-hello failed for peer peer_id=%s error=%v", addrInfo.ID, err)
+		}
+	}()
+
 	if n.discovery != nil {
 		n.discovery.RefreshTrackerRegistration(ctx)
 	}
@@ -621,4 +628,59 @@ func (n *NetworkManager) AddBootstrapPeer(ctx context.Context, multiaddrStr stri
 		return fmt.Errorf("invalid multiaddress: %w", err)
 	}
 	return n.discovery.AddBootstrapPeer(ctx, *peerAddr)
+}
+
+// SendPing sends a hello message to the specified peer
+func (n *NetworkManager) SendPing(ctx context.Context, peerID peer.ID) error {
+	stream, err := n.host.NewStream(ctx, peerID, protocol.ID(constants.PingProtocolID))
+	if err != nil {
+		return fmt.Errorf("failed to open ping stream: %w", err)
+	}
+	defer stream.Close()
+
+	pingMsg := BuildPingMessage(n.host.ID().String(), PingTypeHello, "")
+	if err := WritePingMessage(stream, pingMsg); err != nil {
+		return fmt.Errorf("failed to send ping: %w", err)
+	}
+
+	logger.Infof("Sent hello to peer peer_id=%s", peerID)
+	pongMsg, err := ReadPingMessage(stream)
+	if err != nil {
+		logger.Warnf("Did not receive pong from peer peer_id=%s error=%v", peerID, err)
+		return fmt.Errorf("failed to receive pong: %w", err)
+	}
+	if pongMsg.Type == PingTypePong {
+		logger.Infof("Received pong from peer peer_id=%s", peerID)
+		logger.Infof("Peer %s is online!", peerID)
+	}
+	return nil
+}
+
+// SendHelloToPeer sends automatic hello when connecting to a peer
+func (n *NetworkManager) SendHelloToPeer(ctx context.Context, peerID peer.ID) error {
+	return n.SendPing(ctx, peerID)
+}
+
+// handlePingStream handles incoming ping/presence messages
+func (n *NetworkManager) handlePingStream(stream network.Stream) {
+	pingMsg, err := ReadPingMessage(stream)
+	if err != nil {
+		logger.Warnf("Failed to read ping message from peer peer_id=%s error=%v", stream.Conn().RemotePeer(), err)
+		stream.Reset()
+		return
+	}
+
+	logger.Infof("Received ping message type=%s from peer peer_id=%s message=%s",
+		pingMsg.Type, pingMsg.PeerID, pingMsg.Message)
+
+	if pingMsg.Type == PingTypeHello {
+		pongMsg := BuildPingMessage(n.host.ID().String(), PingTypePong, "pong")
+		if err := WritePingMessage(stream, pongMsg); err != nil {
+			logger.Warnf("Failed to send pong to peer peer_id=%s error=%v", stream.Conn().RemotePeer(), err)
+			stream.Reset()
+			return
+		}
+		logger.Infof("Sent pong to peer peer_id=%s", stream.Conn().RemotePeer())
+	}
+	stream.Close()
 }

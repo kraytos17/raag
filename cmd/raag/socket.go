@@ -118,6 +118,8 @@ func (s *SocketServer) handleRequest(req socket.Request) socket.Response {
 		return s.handlePeersBootstrap(req)
 	case "peers known":
 		return s.handlePeersKnown()
+	case "peers ping":
+		return s.handlePeersPing(req)
 	case "library list":
 		return s.handleLibraryList()
 	case "status":
@@ -264,13 +266,32 @@ func (s *SocketServer) handlePeersTracker(req socket.Request) socket.Response {
 }
 
 func (s *SocketServer) handlePeersBootstrap(req socket.Request) socket.Response {
-	if len(req.Args) != 1 {
+	if len(req.Args) < 1 {
 		return socket.Response{Success: false, Error: "peers bootstrap requires one multiaddr argument"}
 	}
 	if err := s.nm.AddBootstrapPeer(context.Background(), req.Args[0]); err != nil {
 		return socket.Response{Success: false, Error: err.Error()}
 	}
 	return socket.Response{Success: true}
+}
+
+func (s *SocketServer) handlePeersPing(req socket.Request) socket.Response {
+	if len(req.Args) < 1 {
+		return socket.Response{Success: false, Error: "peers ping requires one peer ID argument"}
+	}
+
+	peerID, err := peer.Decode(req.Args[0])
+	if err != nil {
+		return socket.Response{Success: false, Error: "invalid peer ID: " + err.Error()}
+	}
+
+	logger.Infof("Pinging peer peer_id=%s", peerID)
+	if err := s.nm.SendPing(context.Background(), peerID); err != nil {
+		return socket.Response{Success: false, Error: "ping failed: " + err.Error()}
+	}
+	return socket.Response{Success: true, Data: map[string]string{
+		"message": "Pong received! Peer is online.",
+	}}
 }
 
 func (s *SocketServer) handleShutdown() socket.Response {
