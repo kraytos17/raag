@@ -262,6 +262,7 @@ func peersCommand() *cobra.Command {
 	cmd.AddCommand(peersDisconnectCommand())
 	cmd.AddCommand(peersTrackerCommand())
 	cmd.AddCommand(peersBootstrapCommand())
+	cmd.AddCommand(peersPingCommand())
 
 	return cmd
 }
@@ -559,6 +560,58 @@ func peersBootstrapCommand() *cobra.Command {
 			}
 		},
 	}
+}
+
+func peersPingCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ping <peerID>",
+		Short: "Send ping to a peer",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			peerIDStr := args[0]
+			logger.Infof("pinging peer peer_id=%s", peerIDStr)
+			if trySocketPeerPing(peerIDStr) {
+				return
+			}
+			if err := ensureNetwork(cmd); err != nil {
+				logger.Errorf("initializing network error=%v", err)
+				return
+			}
+
+			peerID, err := peer.Decode(peerIDStr)
+			if err != nil {
+				logger.Errorf("invalid peer ID error=%v", err)
+				return
+			}
+			if err := netMgr.SendPing(cmd.Context(), peerID); err != nil {
+				logger.Errorf("ping failed error=%v", err)
+			}
+		},
+	}
+}
+
+func trySocketPeerPing(peerID string) bool {
+	client := NewSocketClient()
+	if !client.IsAvailable() {
+		return false
+	}
+
+	resp, err := client.Query("peers ping", peerID)
+	if err != nil {
+		return false
+	}
+	if !resp.Success {
+		logger.Errorf("ping failed error=%s", resp.Error)
+		return false
+	}
+
+	logger.Infof("Ping successful!")
+	if data, ok := resp.Data.(map[string]string); ok {
+		if msg, ok := data["message"]; ok {
+			logger.Infof("%s", msg)
+		}
+	}
+	return true
 }
 
 func libraryCommand() *cobra.Command {
