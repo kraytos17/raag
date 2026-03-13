@@ -132,19 +132,3 @@ const (
 	// BufferSize is the audio buffer size in bytes
 	BufferSize = 8192
 )
-
-// Configuration Keys
-const (
-	ConfigKeyMusicDir       = "musicdir"
-	ConfigKeyVolume         = "volume"
-	ConfigKeyHost           = "host"
-	ConfigKeyPort           = "port"
-	ConfigKeyTui            = "tui"
-	ConfigKeyNetwork        = "network"
-	ConfigKeyLogLevel       = "loglevel"
-	ConfigKeyRendezvous     = "rendezvous"
-	ConfigKeyDHTEnabled     = "discovery.dht_enabled"
-	ConfigKeyTrackerURL     = "tracker.url"
-	ConfigKeyBootstrapPeers = "discovery.bootstrap_peers"
-	ConfigKeyMaxPeers       = "discovery.max_peers"
-)

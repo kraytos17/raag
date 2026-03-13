@@ -96,6 +96,10 @@ func runDaemon(cmd *cobra.Command) {
 
 	<-sigCh
 	logger.Infof("shutting down daemon")
+	if netMgr != nil {
+		netMgr.SendGoodbyeToAll()
+		time.Sleep(500 * time.Millisecond)
+	}
 
 	socketServer.Stop()
 	cancel()
