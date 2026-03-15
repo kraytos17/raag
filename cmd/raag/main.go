@@ -15,6 +15,9 @@ func main() {
 			if jsonMode, _ := cmd.Flags().GetBool("json"); jsonMode {
 				logger.SetJSONMode(true)
 			}
+			if logLevel, _ := cmd.Flags().GetString("log-level"); logLevel != "" {
+				logger.SetLevel(logLevel)
+			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
@@ -34,6 +37,7 @@ func main() {
 	rootCmd.PersistentFlags().String("host", constants.DefaultHost, "The host address to listen on")
 	rootCmd.PersistentFlags().String("rendezvous", constants.DefaultRendezvous, "Unique string to identify Raag nodes")
 	rootCmd.PersistentFlags().Bool("json", false, "Output logs in JSON format")
+	rootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
 
 	rootCmd.AddCommand(playCommand())
 	rootCmd.AddCommand(pauseCommand())

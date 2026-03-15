@@ -616,10 +616,10 @@ func (m *Manager) addAsBootstrap(ctx context.Context) {
 	if m.dht == nil {
 		return
 	}
-	m.throttledBootstrap(ctx, "tracker peer")
+	m.throttledBootstrap(ctx)
 }
 
-func (m *Manager) throttledBootstrap(ctx context.Context, reason string) {
+func (m *Manager) throttledBootstrap(ctx context.Context) {
 	if m.dht == nil {
 		return
 	}
@@ -707,7 +707,7 @@ func (m *Manager) connectWithRetry(p peer.AddrInfo) {
 		}
 
 		logger.Infof("Connected to discovered peer peer=%s", p.ID)
-		m.throttledBootstrap(m.ctx, "peer connect")
+		m.throttledBootstrap(m.ctx)
 		cancel()
 		if m.networkManager != nil {
 			addr := ""
@@ -855,7 +855,7 @@ func (m *Manager) populateDHTFromConnectedPeers() {
 		count++
 	}
 	if count > 0 {
-		m.throttledBootstrap(m.ctx, "periodic")
+		m.throttledBootstrap(m.ctx)
 	}
 }
 
