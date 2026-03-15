@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -14,10 +17,17 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/auth"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
+)
+
+const (
+	maxPeers         = 10000 // Hard cap on peer map size
+	maxPeersResponse = 50    // Max peers returned per /peers request
+	maxRegisterBody  = 16384 // 16KB max payload for registration
 )
 
 type Tracker struct {
@@ -28,7 +38,6 @@ type Tracker struct {
 	host          host.Host
 	relayEnabled  bool
 	startedAt     time.Time
-	tokenManager  *auth.TokenManager
 	trustedKeyMgr *auth.TrustedKeyManager
 }
 
@@ -61,7 +70,6 @@ func NewTracker(cfg TrackerConfig) *Tracker {
 		startedAt:    time.Now(),
 	}
 	if len(cfg.AuthPublicKeys) > 0 {
-		t.tokenManager = auth.NewTokenManager()
 		t.trustedKeyMgr = auth.NewTrustedKeyManager()
 		for _, key := range cfg.AuthPublicKeys {
 			t.trustedKeyMgr.AddKey(key)
@@ -80,11 +88,13 @@ func (t *Tracker) Start() error {
 	}
 
 	go t.cleanupOldPeers()
-
 	logger.Infof("Tracker HTTP server starting on port %d", t.httpPort)
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", t.httpPort),
-		Handler: t,
+		Addr:              fmt.Sprintf(":%d", t.httpPort),
+		Handler:           t,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -113,9 +123,16 @@ func (t *Tracker) Start() error {
 func (t *Tracker) initLibp2p() error {
 	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", t.libp2pPort)
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(listenAddr)
+	relayOpts := []relay.Option{
+		relay.WithLimit(&relay.RelayLimit{
+			Duration: 2 * time.Minute, // Max 2 minutes proxy time
+			Data:     1 << 20,         // Max 1MB data (forces hole-punching for large files)
+		}),
+	}
+
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(sourceMultiAddr),
-		libp2p.EnableRelay(),
+		libp2p.EnableRelayService(relayOpts...),
 	}
 
 	h, err := libp2p.New(opts...)
@@ -175,8 +192,14 @@ func (t *Tracker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func encodeJSON(w http.ResponseWriter, data any) {
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		logger.Warnf("failed to encode JSON response: %v", err)
+	}
+}
+
 func (t *Tracker) handleRoot(w http.ResponseWriter) {
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"name":        "Raag Tracker",
 		"description": "Peer registry with relay support for Raag P2P network",
 		"version":     "1.0.0",
@@ -186,10 +209,10 @@ func (t *Tracker) handleRoot(w http.ResponseWriter) {
 
 func (t *Tracker) handleGetAddr(w http.ResponseWriter) {
 	resp := map[string]any{
-		"relay_enabled": false,
+		"relay_enabled": t.relayEnabled,
 		"host_id":       t.HostID(),
 	}
-	json.NewEncoder(w).Encode(resp)
+	encodeJSON(w, resp)
 }
 
 func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
@@ -198,12 +221,13 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limitedReader := io.LimitReader(r.Body, maxRegisterBody)
 	var req struct {
 		Addrs    []string `json:"addrs"`
 		PeerID   string   `json:"peer_id"`
 		AuthData string   `json:"auth_data,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(limitedReader).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -212,6 +236,7 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	remoteIP := extractRemoteIP(r)
 	validatedAddrs := make([]string, 0, len(req.Addrs))
 	for _, addr := range req.Addrs {
 		addrInfo, err := peer.AddrInfoFromString(addr)
@@ -225,10 +250,14 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "peer_id does not match addr", http.StatusBadRequest)
 			return
 		}
+		if !isValidRegistrationAddr(addr, remoteIP) {
+			logger.Warnf("Registration denied: suspicious IP in multiaddr remote=%s addr=%s", remoteIP, addr)
+			http.Error(w, "Address does not match origin IP", http.StatusBadRequest)
+			return
+		}
 		validatedAddrs = append(validatedAddrs, addr)
 	}
-
-	if t.trustedKeyMgr != nil && t.tokenManager != nil {
+	if t.trustedKeyMgr != nil {
 		if req.AuthData == "" {
 			logger.Warnf("Registration denied: auth required but not provided for peer %s", req.PeerID)
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
@@ -247,20 +276,25 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		logger.Debugf("Verifying token: peer_id=%s token_pubkey=%s", token.PeerID, token.PublicKey)
-		valid, err := t.trustedKeyMgr.VerifyAndCheckTrust(token, t.tokenManager)
+		valid, err := t.trustedKeyMgr.VerifyAndCheckTrust(token)
 		if err != nil || !valid {
-			logger.Warnf("Registration denied: auth verification failed for peer %s: %v (token key: %s)", req.PeerID, err, token.PublicKey)
+			logger.Warnf("Registration denied: auth verification failed for peer %s: %v", req.PeerID, err)
 			http.Error(w, "Authentication failed", http.StatusUnauthorized)
 			return
 		}
-		logger.Infof("Peer authenticated: %s (key: %s...)", req.PeerID, token.PublicKey[:16])
+		logger.Infof("Peer authenticated: %s", req.PeerID)
 	} else if t.trustedKeyMgr == nil && req.AuthData != "" {
 		logger.Debugf("Auth data provided but tracker has no trusted keys - allowing (auth disabled)")
 	}
 
 	t.mu.Lock()
 	_, isNewPeer := t.peers[req.PeerID]
+	if !isNewPeer && len(t.peers) >= maxPeers {
+		t.mu.Unlock()
+		http.Error(w, "Tracker is full", http.StatusServiceUnavailable)
+		return
+	}
+
 	t.peers[req.PeerID] = registeredPeer{
 		PeerID:   req.PeerID,
 		Addrs:    validatedAddrs,
@@ -273,7 +307,7 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 	} else {
 		logger.Debugf("Peer updated: %s (%d addrs)", req.PeerID, len(validatedAddrs))
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"success": true,
 		"message": "Peer registered successfully",
 	})
@@ -283,8 +317,11 @@ func (t *Tracker) handleGetPeers(w http.ResponseWriter) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	peerList := make([]map[string]any, 0, len(t.peers))
+	peerList := make([]map[string]any, 0, maxPeersResponse)
 	for _, record := range t.peers {
+		if len(peerList) >= maxPeersResponse {
+			break
+		}
 		peerInfo := map[string]any{
 			"peer_id":   record.PeerID,
 			"addrs":     record.Addrs,
@@ -292,7 +329,7 @@ func (t *Tracker) handleGetPeers(w http.ResponseWriter) {
 		}
 		peerList = append(peerList, peerInfo)
 	}
-	json.NewEncoder(w).Encode(peerList)
+	encodeJSON(w, peerList)
 }
 
 func (t *Tracker) handleHealth(w http.ResponseWriter) {
@@ -300,12 +337,35 @@ func (t *Tracker) handleHealth(w http.ResponseWriter) {
 	peerCount := len(t.peers)
 	t.mu.RUnlock()
 
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeJSON(w, map[string]any{
 		"status":         "healthy",
 		"uptime_seconds": int(time.Since(t.startedAt).Seconds()),
 		"peers_count":    peerCount,
-		"relay_enabled":  false,
+		"relay_enabled":  t.relayEnabled,
 	})
+}
+
+func extractRemoteIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ips := strings.Split(xff, ",")
+		return strings.TrimSpace(ips[0])
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// isValidRegistrationAddr checks if the multiaddr IP matches the remote or is localhost.
+func isValidRegistrationAddr(maddr, remoteIP string) bool {
+	addrLower := strings.ToLower(maddr)
+	if strings.Contains(addrLower, "/127.0.0.1/") || strings.Contains(addrLower, "/localhost/") {
+		return true
+	}
+	if strings.Contains(addrLower, "/"+remoteIP+"/") {
+		return true
+	}
+	return false
 }
 
 func (t *Tracker) cleanupOldPeers() {
@@ -313,8 +373,8 @@ func (t *Tracker) cleanupOldPeers() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		t.mu.Lock()
 		now := time.Now()
+		t.mu.Lock()
 		for peerID, record := range t.peers {
 			if now.Sub(record.LastSeen) > constants.PeerTimeout {
 				delete(t.peers, peerID)

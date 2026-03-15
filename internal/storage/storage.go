@@ -4,17 +4,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	appconfig "github.com/p-society/raag/internal/config"
+	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
 	"github.com/p-society/raag/internal/playlist"
 )
 
-type Storage struct {
-	configDir string
+func WriteJSONAtomic(filePath string, data any) error {
+	tmpPath := filePath + ".tmp"
+	file, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("error creating temp file: %w", err)
+	}
+
+	defer func() {
+		file.Close()
+		os.Remove(tmpPath)
+	}()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(data); err != nil {
+		return fmt.Errorf("error encoding JSON: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("error syncing to disk: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("error closing file: %w", err)
+	}
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		return fmt.Errorf("error atomically saving file: %w", err)
+	}
+	return nil
 }
+
+type Storage struct{}
 
 type PlaylistData struct {
 	Name  string          `json:"name"`
@@ -26,14 +52,14 @@ type StorageData struct {
 }
 
 func New() (*Storage, error) {
-	configDir, err := appconfig.Dir()
+	dir, err := config.Dir()
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("error creating config directory: %w", err)
 	}
-	return &Storage{configDir: configDir}, nil
+	return &Storage{}, nil
 }
 
 func (s *Storage) SavePlaylists(pm *playlist.Manager) error {
@@ -52,23 +78,19 @@ func (s *Storage) SavePlaylists(pm *playlist.Manager) error {
 	}
 
 	data := StorageData{Playlists: playlists}
-	filePath := filepath.Join(s.configDir, "playlists.json")
-	file, err := os.Create(filePath)
+	filePath, err := config.PlaylistsPath()
 	if err != nil {
-		return fmt.Errorf("error creating playlists file: %w", err)
+		return err
 	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(data); err != nil {
-		return fmt.Errorf("error encoding playlists: %w", err)
-	}
-	return nil
+	return WriteJSONAtomic(filePath, data)
 }
 
 func (s *Storage) LoadPlaylists(pm *playlist.Manager) error {
-	filePath := filepath.Join(s.configDir, "playlists.json")
+	filePath, err := config.PlaylistsPath()
+	if err != nil {
+		return err
+	}
+
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {

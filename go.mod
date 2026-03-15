@@ -5,8 +5,10 @@ go 1.26.0
 require (
 	charm.land/lipgloss/v2 v2.0.2
 	charm.land/log/v2 v2.0.0
+	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/faiface/beep v1.1.0
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/libp2p/go-libp2p v0.47.0
 	github.com/libp2p/go-libp2p-kad-dht v0.38.0
 	github.com/spf13/cobra v1.10.2
@@ -14,6 +16,7 @@ require (
 )
 
 require (
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/lipgloss v1.1.0 // indirect
@@ -29,7 +32,6 @@ require (
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/filecoin-project/go-clock v0.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

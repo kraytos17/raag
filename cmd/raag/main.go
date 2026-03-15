@@ -1,35 +1,10 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
-
-	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/constants"
-	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/logger"
-	"github.com/p-society/raag/internal/network"
-	"github.com/p-society/raag/internal/player"
-	"github.com/p-society/raag/internal/playlist"
-	"github.com/p-society/raag/internal/storage"
 	"github.com/p-society/raag/internal/tui"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-)
-
-var (
-	v         *viper.Viper
-	cfg       *config.Config
-	store     *storage.Storage
-	lib       *library.Library
-	p         *player.Player
-	netMgr    *network.NetworkManager
-	pm        *playlist.Manager
-	ctx       context.Context
-	cancelCtx context.CancelFunc
 )
 
 func main() {
@@ -42,18 +17,7 @@ func main() {
 			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			if len(args) == 0 {
-				if err := initializeApp(cmd); err != nil {
-					logger.Errorf("Error initializing error=%v", err)
-					return
-				}
-				if shouldStartTUI(cmd) {
-					startTUI()
-					return
-				}
-				logger.Infof("Starting peer discovery...")
-				<-ctx.Done()
-			}
+			cmd.Help()
 		},
 	}
 
@@ -71,7 +35,6 @@ func main() {
 	rootCmd.PersistentFlags().String("rendezvous", constants.DefaultRendezvous, "Unique string to identify Raag nodes")
 	rootCmd.PersistentFlags().Bool("json", false, "Output logs in JSON format")
 
-	// Add subcommands
 	rootCmd.AddCommand(playCommand())
 	rootCmd.AddCommand(pauseCommand())
 	rootCmd.AddCommand(resumeCommand())
@@ -90,75 +53,22 @@ func main() {
 	rootCmd.AddCommand(daemonCommand())
 	rootCmd.AddCommand(statusCommand())
 	rootCmd.AddCommand(networkCommand())
+	rootCmd.AddCommand(tuiCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		logger.Errorf("Command execution failed error=%v", err)
 	}
 }
 
-func initializeApp(cmd *cobra.Command) error {
-	rt, err := bootstrapRuntime(cmd)
-	if err != nil {
-		return fmt.Errorf("bootstrap runtime: %w", err)
-	}
-
-	applyRuntime(rt)
-	ctx, cancelCtx = context.WithCancel(context.Background())
-	go func() {
-		if err := netMgr.Start(ctx); err != nil {
-			if err == context.Canceled {
-				logger.Infof("Network stopped")
-				return
+func tuiCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tui",
+		Short: "Start terminal UI (requires daemon)",
+		Run: func(cmd *cobra.Command, args []string) {
+			client := requireDaemon()
+			if err := tui.Start(client); err != nil {
+				logger.Errorf("TUI error error=%v", err)
 			}
-			logger.Errorf("Network error error=%v", err)
-		}
-	}()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		logger.Infof("Received termination signal, shutting down")
-		shutdown()
-		os.Exit(0)
-	}()
-
-	return nil
-}
-
-func startTUI() {
-	if cfg == nil {
-		logger.Errorf("Configuration not initialized")
-		os.Exit(1)
-	}
-	if err := tui.Start(lib, p, netMgr, pm); err != nil {
-		logger.Errorf("Error in TUI error=%v", err)
-	}
-	shutdown()
-}
-
-func shutdown() {
-	if cancelCtx != nil {
-		cancelCtx()
-	}
-	if store == nil {
-		return
-	}
-
-	state := &storage.PlayerState{
-		Volume: int(p.GetVolume()),
-	}
-	if song := p.GetCurrentSong(); song != nil {
-		state.LastSong = song.Title
-		state.Position = p.GetPosition()
-	}
-	if err := store.SaveState(state); err != nil {
-		logger.Warnf("Could not save state error=%v", err)
-	}
-	if err := store.SavePlaylists(pm); err != nil {
-		logger.Warnf("Could not save playlists error=%v", err)
-	}
-	if err := config.SaveConfig(v, cfg); err != nil {
-		logger.Errorf("Error saving config error=%v", err)
+		},
 	}
 }

@@ -64,6 +64,12 @@ const (
 
 	// TrackerRetryMaxDelay is the max backoff delay for tracker retries
 	TrackerRetryMaxDelay = 30 * time.Second
+
+	// DHTBootstrapThrottle is the minimum interval between DHT bootstrap calls
+	DHTBootstrapThrottle = 30 * time.Second
+
+	// DHTBootstrapPeerThreshold is the number of new peers needed to trigger bootstrap
+	DHTBootstrapPeerThreshold = 5
 )
 
 // Tracker Authentication
@@ -109,19 +115,13 @@ const (
 	ProtocolID = "/raag/1.0.0"
 
 	// ShareProtocolID is the framed transfer protocol identifier for Raag
-	ShareProtocolID = "/raag/share/2.0.0"
-
-	// PingProtocolID is the ping/presence protocol identifier for Raag
-	PingProtocolID = "/raag/ping/1.0.0"
+	ShareProtocolID = "/raag/share/1.0.0"
 
 	// ProtocolVersion indicates the protocol version
 	ProtocolVersion = "1.0.0"
 
 	// ShareProtocolVersion indicates the framed transfer protocol version
-	ShareProtocolVersion = "2.0.0"
-
-	// PingProtocolVersion indicates the ping protocol version
-	PingProtocolVersion = "1.0.0"
+	ShareProtocolVersion = "1.0.0"
 )
 
 // Playback
