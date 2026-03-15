@@ -158,6 +158,8 @@ type NetworkManager struct {
 	authorizedMu    sync.RWMutex
 	usedNonces      map[string]time.Time
 	nonceMu         sync.Mutex
+	peerStateMu     sync.RWMutex
+	connectedPeers  map[peer.ID]bool
 }
 
 func (n *NetworkManager) getContext() context.Context {
@@ -381,7 +383,9 @@ func newResourceManager() (network.ResourceManager, error) {
 
 func (n *NetworkManager) Start(ctx context.Context) error {
 	n.ctx = ctx
+	n.connectedPeers = make(map[peer.ID]bool)
 	n.host.SetStreamHandler(protocol.ID(constants.ShareProtocolID), n.handleStream)
+	n.host.SetStreamHandler(protocol.ID(constants.PresenceProtocolID), n.handlePresence)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
@@ -696,9 +700,15 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 		return
 	}
 
+	n.peerStateMu.Lock()
+	_, alreadyConnected := n.connectedPeers[peerID]
+	n.connectedPeers[peerID] = true
+	n.peerStateMu.Unlock()
+
 	conns := n.host.Network().ConnsToPeer(peerID)
-	if len(conns) == 1 {
+	if len(conns) == 1 && !alreadyConnected {
 		logger.Infof("Peer connected peer_id=%s address=%s", peerID, addr)
+		n.broadcastPresence(peerID, "online")
 		if n.OnPeerJoin != nil {
 			n.OnPeerJoin(peerID)
 		}
@@ -716,6 +726,15 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 	conns := n.host.Network().ConnsToPeer(peerID)
 	logger.Infof("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
 
+	n.peerStateMu.Lock()
+	if n.connectedPeers[peerID] {
+		delete(n.connectedPeers, peerID)
+		n.peerStateMu.Unlock()
+		n.broadcastPresence(peerID, "offline")
+	} else {
+		n.peerStateMu.Unlock()
+	}
+
 	if len(conns) == 0 {
 		if n.OnPeerLeave != nil {
 			n.OnPeerLeave(peerID)
@@ -729,6 +748,71 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 				n.OnStateChange(false)
 			}
 		}
+	}
+}
+
+func (n *NetworkManager) handlePresence(stream network.Stream) {
+	peerID := stream.Conn().RemotePeer()
+	logger.Debugf("Received presence message from peer_id=%s", peerID)
+
+	buf := make([]byte, 64)
+	nRead, err := stream.Read(buf)
+	if err != nil || nRead == 0 {
+		stream.Close()
+		return
+	}
+
+	msg := string(buf[:nRead])
+	if len(msg) < 2 {
+		stream.Close()
+		return
+	}
+
+	peerIDStr := msg[1:]
+	action := msg[:1]
+	switch action {
+	case "o":
+		logger.Infof("Peer is online peer_id=%s", peerIDStr)
+	case "x":
+		logger.Infof("Peer went offline peer_id=%s", peerIDStr)
+	}
+	stream.Close()
+}
+
+func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
+	n.peerStateMu.RLock()
+	peers := make([]peer.ID, 0, len(n.connectedPeers))
+	for p := range n.connectedPeers {
+		if p != peerID && p != n.host.ID() {
+			peers = append(peers, p)
+		}
+	}
+	n.peerStateMu.RUnlock()
+
+	if len(peers) == 0 {
+		return
+	}
+
+	msg := ""
+	if status == "online" {
+		msg = "o" + peerID.String()
+	} else {
+		msg = "x" + peerID.String()
+	}
+
+	for _, p := range peers {
+		go func(target peer.ID) {
+			ctx, cancel := context.WithTimeout(n.getContext(), 5*time.Second)
+			defer cancel()
+
+			stream, err := n.host.NewStream(ctx, target, protocol.ID(constants.PresenceProtocolID))
+			if err != nil {
+				return
+			}
+			defer stream.Close()
+
+			stream.Write([]byte(msg))
+		}(p)
 	}
 }
 

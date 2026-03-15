@@ -117,6 +117,9 @@ const (
 	// ShareProtocolID is the framed transfer protocol identifier for Raag
 	ShareProtocolID = "/raag/share/1.0.0"
 
+	// PresenceProtocolID is for peer presence notifications
+	PresenceProtocolID = "/raag/presence/1.0.0"
+
 	// ProtocolVersion indicates the protocol version
 	ProtocolVersion = "1.0.0"
 
