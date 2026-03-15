@@ -57,7 +57,7 @@ const (
 	TrackerHeartbeatInterval = 2 * time.Minute
 
 	// TrackerRefreshInterval is how often peers fetch tracker peer lists
-	TrackerRefreshInterval = 2 * time.Minute
+	TrackerRefreshInterval = 30 * time.Second
 
 	// TrackerRetryInitialDelay is the starting backoff delay for tracker retries
 	TrackerRetryInitialDelay = 1 * time.Second

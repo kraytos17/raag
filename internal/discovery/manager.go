@@ -270,6 +270,13 @@ func (m *Manager) Start(ctx context.Context) error {
 	logger.Debugf("Starting peer discovery from tracker...")
 	if err := m.discoverFromTracker(ctx); err != nil {
 		logger.Warnf("Initial tracker discovery failed error=%v", err)
+		go func() {
+			time.Sleep(2 * time.Second)
+			logger.Debugf("Retrying initial tracker discovery...")
+			if err := m.discoverFromTracker(context.Background()); err != nil {
+				logger.Debugf("Retry tracker discovery failed error=%v", err)
+			}
+		}()
 	}
 
 	go m.runTrackerRegistrationLoop(ctx)

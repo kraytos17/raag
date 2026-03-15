@@ -706,9 +706,11 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 	n.peerStateMu.Unlock()
 
 	conns := n.host.Network().ConnsToPeer(peerID)
-	if len(conns) == 1 && !alreadyConnected {
-		logger.Infof("Peer connected peer_id=%s address=%s", peerID, addr)
-		n.broadcastPresence(peerID, "online")
+	if len(conns) == 1 {
+		if !alreadyConnected {
+			logger.Infof("Peer connected peer_id=%s address=%s", peerID, addr)
+			n.broadcastPresence(peerID, "online")
+		}
 		if n.OnPeerJoin != nil {
 			n.OnPeerJoin(peerID)
 		}
@@ -783,13 +785,14 @@ func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
 	n.peerStateMu.RLock()
 	peers := make([]peer.ID, 0, len(n.connectedPeers))
 	for p := range n.connectedPeers {
-		if p != peerID && p != n.host.ID() {
+		if p != n.host.ID() {
 			peers = append(peers, p)
 		}
 	}
 	n.peerStateMu.RUnlock()
 
 	if len(peers) == 0 {
+		logger.Debugf("No peers to broadcast presence to")
 		return
 	}
 
@@ -800,6 +803,7 @@ func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
 		msg = "x" + peerID.String()
 	}
 
+	logger.Debugf("Broadcasting presence: %s to %d peers", status, len(peers))
 	for _, p := range peers {
 		go func(target peer.ID) {
 			ctx, cancel := context.WithTimeout(n.getContext(), 5*time.Second)
@@ -807,11 +811,15 @@ func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
 
 			stream, err := n.host.NewStream(ctx, target, protocol.ID(constants.PresenceProtocolID))
 			if err != nil {
+				logger.Debugf("Failed to send presence to peer_id=%s error=%v", target, err)
 				return
 			}
 			defer stream.Close()
 
-			stream.Write([]byte(msg))
+			_, err = stream.Write([]byte(msg))
+			if err != nil {
+				logger.Debugf("Failed to write presence to peer_id=%s error=%v", target, err)
+			}
 		}(p)
 	}
 }
