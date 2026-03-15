@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -356,13 +357,39 @@ func extractRemoteIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// isValidRegistrationAddr checks if the multiaddr IP matches the remote or is localhost.
+// isValidRegistrationAddr checks if the multiaddr IP matches the remote or is acceptable for NAT scenarios.
 func isValidRegistrationAddr(maddr, remoteIP string) bool {
 	addrLower := strings.ToLower(maddr)
 	if strings.Contains(addrLower, "/127.0.0.1/") || strings.Contains(addrLower, "/localhost/") {
 		return true
 	}
 	if strings.Contains(addrLower, "/"+remoteIP+"/") {
+		return true
+	}
+
+	remoteIPParsed, err := netip.ParseAddr(remoteIP)
+	if err != nil {
+		return false
+	}
+
+	maddrParsed, err := multiaddr.NewMultiaddr(maddr)
+	if err != nil {
+		return false
+	}
+
+	ipStr, err := maddrParsed.ValueForProtocol(multiaddr.P_IP4)
+	if err != nil {
+		return false
+	}
+
+	ip, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return false
+	}
+	if ip.IsPrivate() && remoteIPParsed.IsPrivate() {
+		return false
+	}
+	if ip.IsPrivate() && !remoteIPParsed.IsPrivate() {
 		return true
 	}
 	return false
