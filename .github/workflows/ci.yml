@@ -146,8 +146,8 @@ jobs:
           languages: go
       - name: Build for CodeQL
         run: |
-          go build ./cmd/raag
-          go build ./tracker/cmd/tracker
+          go build -o raag-analysis ./cmd/raag
+          go build -o tracker-analysis ./tracker/cmd/tracker
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
   # Dependency Review for PRs
