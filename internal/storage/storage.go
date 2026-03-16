@@ -103,6 +103,11 @@ func LoadPlaylists(pm *playlist.Manager) error {
 	}
 
 	cleanPath := filepath.Clean(filePath)
+	relPath, err := filepath.Rel(dir, cleanPath)
+	if err != nil {
+		return fmt.Errorf("error computing relative path: %w", err)
+	}
+
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -111,7 +116,7 @@ func LoadPlaylists(pm *playlist.Manager) error {
 		return fmt.Errorf("error opening config root: %w", err)
 	}
 
-	stat, err := root.Stat(cleanPath)
+	stat, err := root.Stat(relPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -122,7 +127,7 @@ func LoadPlaylists(pm *playlist.Manager) error {
 		return fmt.Errorf("path is a directory, not a file")
 	}
 
-	data, err := root.ReadFile(cleanPath)
+	data, err := root.ReadFile(relPath)
 	if err != nil {
 		return fmt.Errorf("error reading playlists file: %w", err)
 	}

@@ -86,7 +86,17 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 		return key, nil
 	}
 
-	data, err := root.ReadFile(keyPath)
+	relPath, err := filepath.Rel(dir, keyPath)
+	if err != nil {
+		logger.Warnf("Could not compute relative path, generating new key: %v", err)
+		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+
+	data, err := root.ReadFile(relPath)
 	if err == nil {
 		var sk serializedKey
 		if err := json.Unmarshal(data, &sk); err != nil {

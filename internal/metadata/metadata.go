@@ -32,7 +32,12 @@ func ExtractMetadata(filePath string) (Song, error) {
 		return Song{}, fmt.Errorf("error opening music root: %w", err)
 	}
 
-	file, err := root.Open(cleanPath)
+	relPath, err := filepath.Rel(musicDir, cleanPath)
+	if err != nil {
+		return Song{}, fmt.Errorf("failed to get relative path: %w", err)
+	}
+
+	file, err := root.Open(relPath)
 	if err != nil {
 		return Song{}, fmt.Errorf("failed to open song file: %w", err)
 	}

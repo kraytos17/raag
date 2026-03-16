@@ -33,6 +33,11 @@ func LoadState() (*PlayerState, error) {
 		return nil, err
 	}
 
+	relPath, err := filepath.Rel(dir, cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("error computing relative path: %w", err)
+	}
+
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -46,7 +51,7 @@ func LoadState() (*PlayerState, error) {
 		return nil, fmt.Errorf("error opening config root: %w", err)
 	}
 
-	stat, err := root.Stat(cleanPath)
+	stat, err := root.Stat(relPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &PlayerState{
@@ -62,7 +67,7 @@ func LoadState() (*PlayerState, error) {
 		return nil, fmt.Errorf("path is a directory, not a file")
 	}
 
-	data, err := root.ReadFile(cleanPath)
+	data, err := root.ReadFile(relPath)
 	if err != nil {
 		return nil, fmt.Errorf("error reading state file: %w", err)
 	}

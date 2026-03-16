@@ -61,7 +61,12 @@ func (p *Player) Play(song metadata.Song) error {
 		return fmt.Errorf("error opening music root: %w", err)
 	}
 
-	f, err := root.Open(cleanPath)
+	relPath, err := filepath.Rel(musicDir, cleanPath)
+	if err != nil {
+		return fmt.Errorf("failed to get relative path: %w", err)
+	}
+
+	f, err := root.Open(relPath)
 	if err != nil {
 		return fmt.Errorf("error opening audio file: %w", err)
 	}
