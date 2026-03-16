@@ -808,7 +808,7 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 	conns := n.host.Network().ConnsToPeer(peerID)
 	if len(conns) == 1 {
 		if !alreadyConnected {
-			logger.Infof("Peer connected peer_id=%s address=%s", peerID, addr)
+			logger.Debugf("Peer connected peer_id=%s address=%s", peerID, addr)
 			n.broadcastPresence(peerID, "online")
 			select {
 			case n.peerConnectCh <- struct{}{}:
@@ -830,7 +830,7 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 
 func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Multiaddr) {
 	conns := n.host.Network().ConnsToPeer(peerID)
-	logger.Infof("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
+	logger.Debugf("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
 
 	n.peerStateMu.Lock()
 	if n.connectedPeers[peerID] {
@@ -847,7 +847,7 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 		}
 
 		peerCount := len(n.host.Network().Peers())
-		if peerCount == 0 {
+		if peerCount == 0 && n.Online {
 			n.Online = false
 			logger.Infof("Network: Offline - no peers connected")
 			if n.OnStateChange != nil {

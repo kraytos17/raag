@@ -417,7 +417,7 @@ func filterReachableAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr
 		}
 	}
 	if len(filtered) == 0 {
-		logger.Warnf("No public addresses available, will use observed IP from tracker")
+		logger.Debugf("No public addresses available (NAT detected), will use observed IP if tracker available")
 		return nil
 	}
 	return filtered
@@ -534,7 +534,7 @@ func (m *Manager) refreshRegistrationWithRetry(ctx context.Context) error {
 			return nil
 		}
 
-		logger.Warnf("Tracker registration failed, retrying error=%v retryDelay=%v", err, retryDelay)
+		logger.Debugf("Tracker registration failed, retrying error=%v retryDelay=%v", err, retryDelay)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -831,7 +831,7 @@ func (m *Manager) connectBootstrapPeers(ctx context.Context) error {
 	for _, multiaddrStr := range m.bootstrapPeers {
 		addrInfo, err := peer.AddrInfoFromString(multiaddrStr)
 		if err != nil {
-			logger.Warnf("Ignoring invalid bootstrap peer multiaddr=%s error=%v", multiaddrStr, err)
+			logger.Debugf("Ignoring invalid bootstrap peer multiaddr=%s error=%v", multiaddrStr, err)
 			continue
 		}
 		if addrInfo.ID == m.host.ID() {
@@ -840,10 +840,10 @@ func (m *Manager) connectBootstrapPeers(ctx context.Context) error {
 
 		m.savePeer(*addrInfo, true)
 		if err := m.host.Connect(ctx, *addrInfo); err != nil {
-			logger.Warnf("Failed to connect bootstrap peer peer=%s error=%v", addrInfo.ID, err)
+			logger.Debugf("Failed to connect bootstrap peer peer=%s error=%v", addrInfo.ID, err)
 			continue
 		}
-		logger.Infof("Connected configured bootstrap peer peer=%s", addrInfo.ID)
+		logger.Infof("Connected bootstrap peer peer=%s", addrInfo.ID)
 	}
 	return nil
 }
@@ -1073,7 +1073,7 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 	logger.Debugf("DHT: Advertising presence...")
 	_, err := m.discovery.Advertise(ctx, m.rendezvous)
 	if err != nil {
-		logger.Warnf("DHT advertise failed error=%v", err)
+		logger.Debugf("DHT advertise failed (expected if no DHT peers yet): %v", err)
 	}
 
 	logger.Debugf("DHT: Advertisement complete")
