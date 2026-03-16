@@ -19,6 +19,7 @@ COPY --from=builder /app/tracker .
 EXPOSE 8080 45678
 
 ENV PORT=8080
+ENV LIBP2P_PORT=45678
 ENV AUTH_SECRET=${AUTH_SECRET:-}
 
-CMD ["./tracker", "--http-port", "${PORT:-8080}", "--libp2p-port", "45678", "--relay"]
+CMD sh -c './tracker --http-port $PORT --libp2p-port $LIBP2P_PORT --relay'
