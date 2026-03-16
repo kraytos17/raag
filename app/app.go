@@ -33,7 +33,7 @@ func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
 	if err := storage.Init(); err != nil {
 		return nil, fmt.Errorf("init storage: %w", err)
 	}
-	
+
 	lib, err := library.NewLibrary(cfg.MusicDir)
 	if err != nil {
 		return nil, fmt.Errorf("init library: %w", err)

@@ -160,6 +160,7 @@ type NetworkManager struct {
 	nonceMu         sync.Mutex
 	peerStateMu     sync.RWMutex
 	connectedPeers  map[peer.ID]bool
+	peerConnectCh   chan struct{}
 }
 
 func (n *NetworkManager) getContext() context.Context {
@@ -356,12 +357,13 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		BootstrapPeers:   cfg.BootstrapPeers,
 	})
 	nm := &NetworkManager{
-		host:      host,
-		cfg:       cfg,
-		viper:     v,
-		library:   lib,
-		musicDir:  musicDir,
-		discovery: discoveryMgr,
+		host:          host,
+		cfg:           cfg,
+		viper:         v,
+		library:       lib,
+		musicDir:      musicDir,
+		discovery:     discoveryMgr,
+		peerConnectCh: make(chan struct{}, 1),
 	}
 
 	discoveryMgr.SetNetworkManager(nm)
@@ -437,14 +439,15 @@ func (n *NetworkManager) GetPeerCount() int {
 }
 
 func (n *NetworkManager) WaitForPeers(timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if n.IsOnline() {
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
+	if n.IsOnline() {
+		return true
 	}
-	return n.IsOnline()
+	select {
+	case <-n.peerConnectCh:
+		return n.IsOnline()
+	case <-time.After(timeout):
+		return n.IsOnline()
+	}
 }
 
 func (n *NetworkManager) Connect(ctx context.Context, addrInfo peer.AddrInfo) error {
@@ -711,6 +714,10 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 		if !alreadyConnected {
 			logger.Infof("Peer connected peer_id=%s address=%s", peerID, addr)
 			n.broadcastPresence(peerID, "online")
+			select {
+			case n.peerConnectCh <- struct{}{}:
+			default:
+			}
 		}
 		if n.OnPeerJoin != nil {
 			n.OnPeerJoin(peerID)

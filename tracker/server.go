@@ -185,10 +185,10 @@ func (t *Tracker) Start() error {
 	select {
 	case err := <-serveErr:
 		logger.Errorf("HTTP server failed: %v", err)
-	case <-time.After(100 * time.Millisecond):
-		logger.Infof("Tracker HTTP server started on port %d", t.httpPort)
+	default:
 	}
 
+	logger.Infof("Tracker HTTP server started on port %d", t.httpPort)
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
