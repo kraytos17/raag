@@ -24,6 +24,31 @@ const (
 	EnvAuthSecret = "AUTH_SECRET"
 )
 
+// DefaultBootstrapPeers are public IPFS/Libp2p bootstrap nodes for DHT
+// These are well-known public nodes maintained by the libp2p community
+// Using DNS addresses for automatic resolution
+var DefaultBootstrapPeers = []string{
+	"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+	"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+	"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+	"/ip4/147.75.195.153/tcp/4001/p2p/QmNuVJqUVQvt7fJnnD5yGJoF5wW4JQ5Yw7tdCwfC2b5DDS",
+	"/ip4/147.75.106.255/tcp/4001/p2p/QmVRXmQHdKjQgwREeHAUWBTk77UbqJQT5SgV16N1sE3Bk",
+	"/dns4/entrypoint-0.elastic.devp2p.io/tcp/4001/p2p/QmQCu2j7yjHCV4T5K4UpPmV15p5U4R2N6t4xY8YxKWBtqD",
+	"/dns4/entrypoint-1.elastic.devp2p.io/tcp/4001/p2p/QmQLoTSVwpG16FWP9W1CmRDEBBTCFhN2DGvV8P3KVMYGD",
+}
+
+// DefaultRelayAddrs are public libp2p relay nodes for NAT traversal
+// Used when --force-relay is enabled
+// Multiple relays for redundancy
+var DefaultRelayAddrs = []string{
+	"/ip4/147.75.87.27/tcp/4001/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+	"/ip4/147.75.80.110/tcp/4001/p2p/QmbFgm5zan8P6eWWmeyfncR5feYEMPbht5b1FW1C37aQ7y",
+	"/ip4/147.75.70.221/tcp/4001/p2p/Qme8g49gm3q4Acp7xWBKg3nAa9fxZ1YmyDJdyGgoG6LsXh",
+	"/ip4/147.75.195.153/tcp/4001/p2p/QmNuVJqUVQvt7fJnnD5yGJoF5wW4JQ5Yw7tdCwfC2b5DDS",
+	"/ip4/147.75.106.255/tcp/4001/p2p/QmVRXmQHdKjQgwREeHAUWBTk77UbqJQT5SgV16N1sE3Bk",
+}
+
 // Peer Discovery
 const (
 	// DefaultRendezvous is the default DHT rendezvous string

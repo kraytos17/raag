@@ -39,6 +39,8 @@ func main() {
 	rootCmd.PersistentFlags().Bool("json", false, "Output logs in JSON format")
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().String("auth-secret", "", "Shared secret for tracker authentication")
+	rootCmd.PersistentFlags().Bool("force-relay", false, "Force all connections through relay (skip hole punching, works behind NAT)")
+	rootCmd.PersistentFlags().String("relay", "", "Relay server address (default: use public relays)")
 
 	rootCmd.AddCommand(playCommand())
 	rootCmd.AddCommand(pauseCommand())

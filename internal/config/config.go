@@ -15,9 +15,10 @@ import (
 // Runtime state (volume, playback, etc.) is stored in state.json.
 type Config struct {
 	// Network - persistent network settings
-	Host       string `json:"network.host"`
-	Port       int    `json:"network.port"`
-	Rendezvous string `json:"network.rendezvous"`
+	Host         string `json:"network.host"`
+	Port         int    `json:"network.port"`
+	Rendezvous   string `json:"network.rendezvous"`
+	RelayAddress string `json:"network.relay_address"`
 
 	// Discovery - persistent discovery settings
 	TrackerURL     string   `json:"discovery.tracker_url"`
@@ -29,10 +30,11 @@ type Config struct {
 	// Playback - persistent playback settings
 	MusicDir string `json:"playback.music_dir"`
 	// Runtime - these are set at startup
-	Network  bool   `mapstructure:"-" json:"-"`
-	Volume   int    `mapstructure:"-" json:"-"`
-	TUI      bool   `mapstructure:"-" json:"-"`
-	LogLevel string `mapstructure:"-" json:"-"`
+	Network    bool   `mapstructure:"-" json:"-"`
+	ForceRelay bool   `mapstructure:"-" json:"-"`
+	Volume     int    `mapstructure:"-" json:"-"`
+	TUI        bool   `mapstructure:"-" json:"-"`
+	LogLevel   string `mapstructure:"-" json:"-"`
 }
 
 func DefaultConfig() Config {
@@ -44,6 +46,7 @@ func DefaultConfig() Config {
 		Host:           constants.DefaultHost,
 		Port:           constants.DefaultPort,
 		Rendezvous:     constants.DefaultRendezvous,
+		RelayAddress:   "",
 		TrackerURL:     "",
 		DHTEnabled:     true,
 		MaxPeers:       constants.DefaultMaxPeers,
@@ -51,6 +54,7 @@ func DefaultConfig() Config {
 		MusicDir:       musicDir,
 		Volume:         constants.DefaultVolume,
 		Network:        false,
+		ForceRelay:     false,
 		LogLevel:       "info",
 	}
 }
@@ -96,6 +100,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("network.host", defaults.Host)
 	v.SetDefault("network.port", defaults.Port)
 	v.SetDefault("network.rendezvous", defaults.Rendezvous)
+	v.SetDefault("network.relay_address", defaults.RelayAddress)
+	v.SetDefault("network.force_relay", defaults.ForceRelay)
 	v.SetDefault("discovery.tracker_url", defaults.TrackerURL)
 	v.SetDefault("discovery.dht_enabled", defaults.DHTEnabled)
 	v.SetDefault("discovery.max_peers", defaults.MaxPeers)
@@ -109,6 +115,8 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	_ = v.BindPFlag("network.host", root.PersistentFlags().Lookup("host"))
 	_ = v.BindPFlag("network.port", root.PersistentFlags().Lookup("port"))
 	_ = v.BindPFlag("network.rendezvous", root.PersistentFlags().Lookup("rendezvous"))
+	_ = v.BindPFlag("network.relay_address", root.PersistentFlags().Lookup("relay"))
+	_ = v.BindPFlag("network.force_relay", root.PersistentFlags().Lookup("force-relay"))
 	_ = v.BindPFlag("discovery.tracker_url", root.PersistentFlags().Lookup("tracker"))
 	_ = v.BindPFlag("discovery.dht_enabled", root.PersistentFlags().Lookup("dht"))
 	_ = v.BindPFlag("discovery.max_peers", root.PersistentFlags().Lookup("max-peers"))
@@ -123,14 +131,15 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 		Host:           v.GetString("network.host"),
 		Port:           v.GetInt("network.port"),
 		Rendezvous:     v.GetString("network.rendezvous"),
+		RelayAddress:   v.GetString("network.relay_address"),
 		TrackerURL:     v.GetString("discovery.tracker_url"),
 		DHTEnabled:     v.GetBool("discovery.dht_enabled"),
 		MaxPeers:       v.GetInt("discovery.max_peers"),
 		BootstrapPeers: v.GetStringSlice("discovery.bootstrap_peers"),
 		AuthSecret:     v.GetString("discovery.auth_secret"),
 		MusicDir:       v.GetString("playback.music_dir"),
+		ForceRelay:     v.GetBool("network.force_relay"),
 	}
-
 	if cfg.TrackerURL == "" {
 		if url := os.Getenv(constants.EnvTrackerURL); url != "" {
 			cfg.TrackerURL = url

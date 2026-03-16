@@ -48,6 +48,12 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Errorf("failed to load config error=%v", err)
 		os.Exit(1)
 	}
+	if networkFlag := cmd.Flags().Lookup("network"); networkFlag != nil && networkFlag.Value.String() == "true" {
+		cfg.Network = true
+	}
+	if forceRelayFlag := cmd.Flags().Lookup("force-relay"); forceRelayFlag != nil && forceRelayFlag.Value.String() == "true" {
+		cfg.ForceRelay = true
+	}
 	if logLevel, _ := cmd.Flags().GetString("log-level"); logLevel == "" {
 		logger.SetLevel(cfg.LogLevel)
 	}

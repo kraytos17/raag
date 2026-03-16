@@ -70,7 +70,6 @@ func NewManager(cfg ManagerConfig) *Manager {
 	h := cfg.Host
 	var authKeyPair ed25519.PrivateKey
 	var err error
-
 	// Priority: AuthSecret > IdentityKey > Random
 	if cfg.AuthSecret != "" {
 		authKeyPair, err = auth.DeriveKey([]byte(cfg.AuthSecret), "raag-secret-v1")
@@ -95,6 +94,12 @@ func NewManager(cfg ManagerConfig) *Manager {
 			logger.Warnf("No auth configured, generated random key")
 		}
 	}
+
+	bootstrapPeers := cfg.BootstrapPeers
+	if len(bootstrapPeers) == 0 {
+		logger.Infof("Using default IPFS bootstrap peers for DHT")
+		bootstrapPeers = constants.DefaultBootstrapPeers
+	}
 	return &Manager{
 		host:                    h,
 		persistence:             NewPeerPersistence(),
@@ -104,7 +109,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		listenHost:              cfg.ListenHost,
 		rendezvous:              cfg.Rendezvous,
 		dhtEnabled:              cfg.DHTEnabled,
-		bootstrapPeers:          slices.Clone(cfg.BootstrapPeers),
+		bootstrapPeers:          slices.Clone(bootstrapPeers),
 		authKeyPair:             authKeyPair,
 		heartbeatEvery:          constants.TrackerHeartbeatInterval,
 		refreshEvery:            constants.TrackerRefreshInterval,

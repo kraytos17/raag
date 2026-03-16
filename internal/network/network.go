@@ -346,9 +346,11 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 	var opts []libp2p.Option
 	tcpListenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.Host, cfg.Port)
 	quicListenAddr := fmt.Sprintf("/ip4/%s/udp/%d/quic-v1", cfg.Host, cfg.Port)
+	wsListenAddr := fmt.Sprintf("/ip4/%s/tcp/%d/ws", cfg.Host, cfg.Port+1)
 	tcpMultiAddr, _ := multiaddr.NewMultiaddr(tcpListenAddr)
 	quicMultiAddr, _ := multiaddr.NewMultiaddr(quicListenAddr)
-	opts = append(opts, libp2p.ListenAddrs(tcpMultiAddr, quicMultiAddr), libp2p.Identity(prvKey))
+	wsMultiAddr, _ := multiaddr.NewMultiaddr(wsListenAddr)
+	opts = append(opts, libp2p.ListenAddrs(tcpMultiAddr, quicMultiAddr, wsMultiAddr), libp2p.Identity(prvKey))
 	if cfg.Network {
 		logger.Debugf("Using networked mode with NAT traversal")
 		opts = append(opts, libp2p.DefaultTransports)
@@ -359,10 +361,51 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		}
 
 		opts = append(opts, libp2p.EnableRelay())
-		opts = append(opts, libp2p.EnableHolePunching())
-		opts = append(opts, libp2p.NATPortMap())
-		opts = append(opts, libp2p.EnableNATService())
-		logger.Debugf("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
+		if cfg.ForceRelay {
+			logger.Infof("Force relay mode enabled - skipping hole punching, using relay for all connections")
+		} else {
+			opts = append(opts, libp2p.EnableHolePunching())
+			opts = append(opts, libp2p.NATPortMap())
+			opts = append(opts, libp2p.EnableNATService())
+			logger.Debugf("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
+		}
+
+		relayAddrs := cfg.RelayAddress
+		if relayAddrs == "" && cfg.ForceRelay {
+			logger.Infof("Using default public relays for force-relay mode")
+		}
+		if relayAddrs != "" {
+			ma, err := multiaddr.NewMultiaddr(relayAddrs)
+			if err != nil {
+				logger.Warnf("Failed to parse relay address: %v", err)
+			} else {
+				info, err := peer.AddrInfoFromP2pAddr(ma)
+				if err != nil {
+					logger.Warnf("Failed to parse relay address: %v", err)
+				} else {
+					opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{*info}))
+					logger.Infof("Auto-relay enabled with custom relay: %s", relayAddrs)
+				}
+			}
+		} else if cfg.ForceRelay {
+			var relayInfos []peer.AddrInfo
+			for _, addr := range constants.DefaultRelayAddrs {
+				ma, err := multiaddr.NewMultiaddr(addr)
+				if err != nil {
+					continue
+				}
+
+				info, err := peer.AddrInfoFromP2pAddr(ma)
+				if err != nil {
+					continue
+				}
+				relayInfos = append(relayInfos, *info)
+			}
+			if len(relayInfos) > 0 {
+				opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays(relayInfos))
+				logger.Infof("Auto-relay enabled with %d default public relays", len(relayInfos))
+			}
+		}
 	} else {
 		logger.Debugf("Using offline mode with limited transports")
 		opts = append(opts, libp2p.DefaultTransports)
