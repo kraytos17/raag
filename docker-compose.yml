@@ -9,8 +9,9 @@ services:
       - "45678:45678"
     environment:
       PORT: "8080"
-      # For local testing: AUTH_SECRET=yourpassword docker-compose up -d
+      AUTH_SECRET: "raag-secret"
       # For Railway: Set AUTH_SECRET in Railway Dashboard → Variables
+      # For custom secret: AUTH_SECRET=yourpassword docker-compose up -d
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]

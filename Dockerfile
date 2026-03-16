@@ -18,4 +18,7 @@ COPY --from=builder /app/tracker .
 
 EXPOSE 8080 45678
 
-CMD ["sh", "-c", "./tracker --http-port ${PORT:-8080} --libp2p-port 45678 --relay ${AUTH_SECRET:+--auth-secret $AUTH_SECRET} ${AUTH_KEY:+--auth-key $AUTH_KEY}"]
+ENV PORT=8080
+ENV AUTH_SECRET=${AUTH_SECRET:-}
+
+CMD ["./tracker", "--http-port", "${PORT:-8080}", "--libp2p-port", "45678", "--relay"]
