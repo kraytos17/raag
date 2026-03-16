@@ -20,7 +20,7 @@ type PlayerState struct {
 	LastPlayed time.Time `json:"last_played"`
 }
 
-func (s *Storage) LoadState() (*PlayerState, error) {
+func LoadState() (*PlayerState, error) {
 	filePath, err := config.StatePath()
 	if err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func (s *Storage) LoadState() (*PlayerState, error) {
 	return &state, nil
 }
 
-func (s *Storage) SaveState(state *PlayerState) error {
+func SaveState(state *PlayerState) error {
 	filePath, err := config.StatePath()
 	if err != nil {
 		return err

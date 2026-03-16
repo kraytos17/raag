@@ -19,7 +19,6 @@ import (
 type App struct {
 	V      *viper.Viper
 	Cfg    *config.Config
-	Store  *storage.Storage
 	Lib    *library.Library
 	Player *player.Player
 	NetMgr *network.NetworkManager
@@ -31,7 +30,10 @@ type App struct {
 
 // NewApp creates and initializes all application components and services.
 func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
-	store, _ := storage.New()
+	if err := storage.Init(); err != nil {
+		return nil, fmt.Errorf("init storage: %w", err)
+	}
+	
 	lib, err := library.NewLibrary(cfg.MusicDir)
 	if err != nil {
 		return nil, fmt.Errorf("init library: %w", err)
@@ -54,15 +56,11 @@ func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
 	}
 
 	pm := playlist.NewManager()
-	if store != nil {
-		store.LoadPlaylists(pm)
-	}
-
+	storage.LoadPlaylists(pm)
 	startTime := time.Now()
 	app := &App{
 		V:         v,
 		Cfg:       cfg,
-		Store:     store,
 		Lib:       lib,
 		Player:    p,
 		NetMgr:    netMgr,
@@ -85,10 +83,6 @@ func (a *App) StartNetwork(ctx context.Context) {
 
 // SaveState persists player state and playlists.
 func (a *App) SaveState() {
-	if a.Store == nil {
-		return
-	}
-
 	state := &storage.PlayerState{
 		Volume: int(a.Player.GetVolume()),
 	}
@@ -97,8 +91,8 @@ func (a *App) SaveState() {
 		state.Position = a.Player.GetPosition()
 	}
 
-	a.Store.SaveState(state)
-	a.Store.SavePlaylists(a.PM)
+	storage.SaveState(state)
+	storage.SavePlaylists(a.PM)
 	config.SaveConfig(a.V, a.Cfg)
 }
 

@@ -40,8 +40,6 @@ func WriteJSONAtomic(filePath string, data any) error {
 	return nil
 }
 
-type Storage struct{}
-
 type PlaylistData struct {
 	Name  string          `json:"name"`
 	Songs []metadata.Song `json:"songs"`
@@ -51,18 +49,18 @@ type StorageData struct {
 	Playlists []PlaylistData `json:"playlists"`
 }
 
-func New() (*Storage, error) {
+func Init() error {
 	dir, err := config.Dir()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("error creating config directory: %w", err)
+		return fmt.Errorf("error creating config directory: %w", err)
 	}
-	return &Storage{}, nil
+	return nil
 }
 
-func (s *Storage) SavePlaylists(pm *playlist.Manager) error {
+func SavePlaylists(pm *playlist.Manager) error {
 	playlistNames := pm.List()
 	playlists := make([]PlaylistData, 0, len(playlistNames))
 	for _, name := range playlistNames {
@@ -85,7 +83,7 @@ func (s *Storage) SavePlaylists(pm *playlist.Manager) error {
 	return WriteJSONAtomic(filePath, data)
 }
 
-func (s *Storage) LoadPlaylists(pm *playlist.Manager) error {
+func LoadPlaylists(pm *playlist.Manager) error {
 	filePath, err := config.PlaylistsPath()
 	if err != nil {
 		return err
