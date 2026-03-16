@@ -298,7 +298,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	} else {
 		logger.Debugf("Starting mDNS discovery in background...")
 		go m.discoverViaMDNS(ctx)
-		go m.logMDNSStatus(ctx)
 	}
 
 	if !m.dhtEnabled {
@@ -312,7 +311,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.populateDHTFromConnectedPeers()
 
-	go m.logRoutingTableSize(ctx)
+	go m.logNetworkStatus(ctx)
 	go m.discoverViaDHT(ctx)
 	go m.advertisePeriodically(ctx)
 	return nil
@@ -885,7 +884,7 @@ func (m *Manager) advertisePeriodically(ctx context.Context) {
 	}
 }
 
-func (m *Manager) logRoutingTableSize(ctx context.Context) {
+func (m *Manager) logNetworkStatus(ctx context.Context) {
 	ticker := time.NewTicker(constants.DHTLogInterval)
 	defer ticker.Stop()
 
@@ -894,13 +893,22 @@ func (m *Manager) logRoutingTableSize(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			dhtSize := 0
+			peerstoreCount := 0
+			connectedCount := 0
 			if m.dht != nil {
-				connectedCount := len(m.host.Peerstore().Peers())
-				dhtSize := m.dht.RoutingTable().Size()
-				networkPeers := len(m.host.Network().Peers())
-				logger.Debugf("DHT status: routing_table_size=%d total_discovered_peers=%d active_connections=%d",
-					dhtSize, connectedCount, networkPeers)
+				dhtSize = m.dht.RoutingTable().Size()
 			}
+			if m.host != nil {
+				peerstoreCount = len(m.host.Peerstore().Peers())
+				connectedCount = len(m.host.Network().Peers())
+			}
+
+			m.stateMu.RLock()
+			mdnsPeers := int(m.mdnsPeerCount)
+			m.stateMu.RUnlock()
+			logger.Debugf("Network status: dht_routing=%d peerstore=%d connected=%d mdns=%d",
+				dhtSize, peerstoreCount, connectedCount, mdnsPeers)
 		}
 	}
 }
@@ -993,21 +1001,6 @@ func (m *Manager) discoverViaMDNS(ctx context.Context) {
 	logger.Debugf("mDNS service started, running continuously...")
 	<-ctx.Done()
 	logger.Debugf("mDNS discovery stopped")
-}
-
-func (m *Manager) logMDNSStatus(ctx context.Context) {
-	ticker := time.NewTicker(constants.MDNSLogInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			mdnsCount := m.mdnsPeerCount
-			logger.Debugf("mDNS status: discovered_peers=%d", mdnsCount)
-		}
-	}
 }
 
 type mdnsNotifee struct {

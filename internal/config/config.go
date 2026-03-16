@@ -36,6 +36,10 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
+	musicDir := "./music"
+	if defaultMusicDir, err := MusicDir(); err == nil {
+		musicDir = defaultMusicDir
+	}
 	return Config{
 		Host:           constants.DefaultHost,
 		Port:           constants.DefaultPort,
@@ -44,7 +48,7 @@ func DefaultConfig() Config {
 		DHTEnabled:     true,
 		MaxPeers:       constants.DefaultMaxPeers,
 		BootstrapPeers: []string{},
-		MusicDir:       "./music",
+		MusicDir:       musicDir,
 		Volume:         constants.DefaultVolume,
 		Network:        false,
 		LogLevel:       "info",

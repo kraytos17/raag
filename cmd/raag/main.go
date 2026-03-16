@@ -26,7 +26,7 @@ func main() {
 
 	rootCmd.PersistentFlags().String("config", "", "config file (default is $HOME/.config/raag/config.yaml)")
 	rootCmd.PersistentFlags().MarkHidden("config")
-	rootCmd.PersistentFlags().String("music-dir", "./music", "Directory containing music files")
+	rootCmd.PersistentFlags().String("music-dir", "", "Directory containing music files (default: ~/.config/raag/music)")
 	rootCmd.PersistentFlags().Bool("network", false, "Enable network mode for peer discovery")
 	rootCmd.PersistentFlags().Bool("tui", false, "Start in TUI mode")
 	rootCmd.PersistentFlags().String("tracker", constants.DefaultTrackerURL, "Centralized tracker URL for peer discovery")

@@ -191,7 +191,7 @@ Security features:
 | `--dht` | `true` | Enable DHT discovery |
 | `--bootstrap` | - | Bootstrap peers (comma-separated) |
 | `--max-peers` | `100` | Maximum peers |
-| `--music-dir` | `./music` | Music directory |
+| `--music-dir` | `~/.config/raag/music` | Music directory |
 | `--tui` | `false` | Start TUI |
 | `--json` | `false` | JSON logging |
 | `--log-level` | `info` | Log level (debug, info, warn, error) |
@@ -341,6 +341,7 @@ Config stored in `~/.config/raag/`:
 - `daemon.sock` - Daemon socket
 - `playlists.json` - Playlist data
 - `peers.json` - Discovered peers cache
+- `music/` - Music files directory
 
 **Important:** `identity.key` determines your peer ID. Keep it safe! If lost, you'll get a new peer ID.
 

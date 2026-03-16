@@ -61,3 +61,11 @@ func IdentityKeyPath() (string, error) {
 	}
 	return filepath.Join(dir, "identity.key"), nil
 }
+
+func MusicDir() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "music"), nil
+}
