@@ -212,7 +212,7 @@ jobs:
     name: Docker Build & Security
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name != 'pull_request' || inputs.force_deploy
+    if: github.event_name != 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.force_deploy)
     permissions:
       contents: read
       packages: write
@@ -304,10 +304,20 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Check for GPG key
+        id: check_gpg
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            echo "has_gpg=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_gpg=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
       - name: Import GPG key
         id: gpg
+        if: steps.check_gpg.outputs.has_gpg == 'true'
         uses: crazy-max/ghaction-import-gpg@v6
-        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
