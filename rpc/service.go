@@ -32,6 +32,11 @@ func (s *DaemonService) Register() {
 	rpc.Register(s)
 }
 
+type (
+	EmptyArgs   struct{}
+	EmptyResult struct{}
+)
+
 // PeerInfo is a simplified peer representation for RPC.
 type PeerInfo struct {
 	ID        string `json:"id"`
@@ -64,7 +69,7 @@ type PeerListResult struct {
 	Peers []PeerInfo `json:"peers"`
 }
 
-func (s *DaemonService) PeersList(result *PeerListResult) error {
+func (s *DaemonService) PeersList(_ *EmptyArgs, result *PeerListResult) error {
 	peers := s.app.NetMgr.GetPeers()
 	result.Peers = make([]PeerInfo, len(peers))
 	for i, p := range peers {
@@ -81,7 +86,7 @@ type PeersInfoResult struct {
 	KnownCount     int               `json:"known_peer_count"`
 }
 
-func (s *DaemonService) PeersInfo(result *PeersInfoResult) error {
+func (s *DaemonService) PeersInfo(_ *EmptyArgs, result *PeersInfoResult) error {
 	peerID := s.app.NetMgr.GetPeerID()
 	multiaddr := s.app.NetMgr.GetMultiaddr()
 	connectedPeers := s.app.NetMgr.GetPeers()
@@ -150,7 +155,7 @@ type LibraryListResult struct {
 	Songs []LibrarySong `json:"songs"`
 }
 
-func (s *DaemonService) LibraryList(result *LibraryListResult) error {
+func (s *DaemonService) LibraryList(_ *EmptyArgs, result *LibraryListResult) error {
 	songs := slices.Collect(s.app.Lib.AllSongs())
 	result.Songs = make([]LibrarySong, len(songs))
 	for i, song := range songs {
@@ -163,7 +168,7 @@ type NetworkStatusResult struct {
 	State discovery.NetworkState `json:"state"`
 }
 
-func (s *DaemonService) NetworkStatus(result *NetworkStatusResult) error {
+func (s *DaemonService) NetworkStatus(_ *EmptyArgs, result *NetworkStatusResult) error {
 	state, err := s.app.NetMgr.GetNetworkState()
 	if err != nil {
 		return err
@@ -176,7 +181,7 @@ type AuthKeyResult struct {
 	AuthPublicKey string `json:"auth_public_key"`
 }
 
-func (s *DaemonService) AuthKey(result *AuthKeyResult) error {
+func (s *DaemonService) AuthKey(_ *EmptyArgs, result *AuthKeyResult) error {
 	result.AuthPublicKey = s.app.NetMgr.GetAuthPublicKey()
 	return nil
 }
@@ -189,7 +194,7 @@ type StatusResult struct {
 	Version   string `json:"version"`
 }
 
-func (s *DaemonService) Status(result *StatusResult) error {
+func (s *DaemonService) Status(_ *EmptyArgs, result *StatusResult) error {
 	result.Running = true
 	result.PeerCount = s.app.NetMgr.GetPeerCount()
 	result.Connected = s.app.NetMgr.IsOnline()
@@ -224,7 +229,7 @@ type KnownPeersResult struct {
 	Peers []PeerInfo `json:"peers"`
 }
 
-func (s *DaemonService) KnownPeers(result *KnownPeersResult) error {
+func (s *DaemonService) KnownPeers(_ *EmptyArgs, result *KnownPeersResult) error {
 	allKnown := s.app.NetMgr.GetAllKnownPeers()
 	result.Peers = make([]PeerInfo, len(allKnown))
 	for i, p := range allKnown {
@@ -232,11 +237,6 @@ func (s *DaemonService) KnownPeers(result *KnownPeersResult) error {
 	}
 	return nil
 }
-
-type (
-	EmptyArgs   struct{}
-	EmptyResult struct{}
-)
 
 type PlayArgs struct {
 	Song string `json:"song"`
@@ -255,26 +255,26 @@ func (s *DaemonService) Play(args *PlayArgs, result *EmptyResult) error {
 	return nil
 }
 
-func (s *DaemonService) Pause(result *EmptyResult) error {
+func (s *DaemonService) Pause(_ *EmptyArgs, result *EmptyResult) error {
 	s.app.Player.Pause()
 	return nil
 }
 
-func (s *DaemonService) Resume(result *EmptyResult) error {
+func (s *DaemonService) Resume(_ *EmptyArgs, result *EmptyResult) error {
 	s.app.Player.Resume()
 	return nil
 }
 
-func (s *DaemonService) StopPlayback(result *EmptyResult) error {
+func (s *DaemonService) StopPlayback(_ *EmptyArgs, result *EmptyResult) error {
 	s.app.Player.Stop()
 	return nil
 }
 
-func (s *DaemonService) Next(result *EmptyResult) error {
+func (s *DaemonService) Next(_ *EmptyArgs, result *EmptyResult) error {
 	return s.app.Player.Next()
 }
 
-func (s *DaemonService) Previous(result *EmptyResult) error {
+func (s *DaemonService) Previous(_ *EmptyArgs, result *EmptyResult) error {
 	return s.app.Player.Previous()
 }
 
@@ -299,7 +299,7 @@ type QueueResult struct {
 	Current int           `json:"current_index"`
 }
 
-func (s *DaemonService) GetQueue(result *QueueResult) error {
+func (s *DaemonService) GetQueue(_ *EmptyArgs, result *QueueResult) error {
 	songs := s.app.Player.GetQueue()
 	result.Songs = make([]LibrarySong, len(songs))
 	for i, song := range songs {
@@ -319,7 +319,7 @@ type NowPlayingResult struct {
 	Paused   bool    `json:"paused"`
 }
 
-func (s *DaemonService) NowPlaying(result *NowPlayingResult) error {
+func (s *DaemonService) NowPlaying(_ *EmptyArgs, result *NowPlayingResult) error {
 	song := s.app.Player.GetCurrentSong()
 	if song == nil {
 		return nil
@@ -381,7 +381,7 @@ type RescanResult struct {
 	Count int `json:"count"`
 }
 
-func (s *DaemonService) LibraryRescan(result *RescanResult) error {
+func (s *DaemonService) LibraryRescan(_ *EmptyArgs, result *RescanResult) error {
 	musicDir := s.app.Lib.GetMusicDir()
 	if err := s.app.Lib.ScanMusicLibrary(musicDir); err != nil {
 		return err
@@ -417,7 +417,7 @@ type PlaylistListResult struct {
 	Names []string `json:"names"`
 }
 
-func (s *DaemonService) PlaylistList(result *PlaylistListResult) error {
+func (s *DaemonService) PlaylistList(_ *EmptyArgs, result *PlaylistListResult) error {
 	result.Names = s.app.PM.List()
 	return nil
 }
@@ -448,7 +448,7 @@ type ConfigGetResult struct {
 	Config map[string]any `json:"config"`
 }
 
-func (s *DaemonService) ConfigGet(result *ConfigGetResult) error {
+func (s *DaemonService) ConfigGet(_ *EmptyArgs, result *ConfigGetResult) error {
 	cfg := s.app.Cfg
 	result.Config = map[string]any{
 		"music_dir":  cfg.MusicDir,
@@ -481,29 +481,29 @@ type FullStateResult struct {
 	Library    *LibraryListResult
 }
 
-func (s *DaemonService) GetFullState(result *FullStateResult) error {
+func (s *DaemonService) GetFullState(_ *EmptyArgs, result *FullStateResult) error {
 	var nowPlaying NowPlayingResult
-	if err := s.NowPlaying(&nowPlaying); err == nil {
+	if err := s.NowPlaying(&EmptyArgs{}, &nowPlaying); err == nil {
 		result.NowPlaying = &nowPlaying
 	}
 
 	var queue QueueResult
-	if err := s.GetQueue(&queue); err == nil {
+	if err := s.GetQueue(&EmptyArgs{}, &queue); err == nil {
 		result.Queue = &queue
 	}
 
 	var network NetworkStatusResult
-	if err := s.NetworkStatus(&network); err == nil {
+	if err := s.NetworkStatus(&EmptyArgs{}, &network); err == nil {
 		result.Network = &network
 	}
 
 	var status StatusResult
-	if err := s.Status(&status); err == nil {
+	if err := s.Status(&EmptyArgs{}, &status); err == nil {
 		result.Status = &status
 	}
 
 	var library LibraryListResult
-	if err := s.LibraryList(&library); err == nil {
+	if err := s.LibraryList(&EmptyArgs{}, &library); err == nil {
 		result.Library = &library
 	}
 	return nil

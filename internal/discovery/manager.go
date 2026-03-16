@@ -502,7 +502,7 @@ func (m *Manager) tryRefreshRegistration(ctx context.Context) error {
 
 	advertisedAddrs := m.selectAdvertisedAddresses(addrs)
 	if len(advertisedAddrs) == 0 {
-		return fmt.Errorf("host has no advertisable addresses")
+		logger.Debugf("No public addresses, letting tracker use observed IP")
 	}
 
 	addrWithPeerID := make([]string, 0, len(advertisedAddrs))
