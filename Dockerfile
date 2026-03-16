@@ -1,6 +1,7 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
-RUN apk add --no-cache git
+# Install git for version info + ALSA for audio (CGO required)
+RUN apk add --no-cache git libasound-dev
 
 WORKDIR /app
 
@@ -12,8 +13,8 @@ COPY . .
 ARG VERSION=dev
 ARG BUILD_TIME=unknown
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o tracker ./tracker/cmd/tracker && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o raag ./cmd/raag
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o tracker ./tracker/cmd/tracker && \
+    CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o raag ./cmd/raag
 
 FROM ubuntu:24.04 AS runtime
 
