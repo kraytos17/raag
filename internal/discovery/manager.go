@@ -362,12 +362,12 @@ func filterReachableAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr
 		if isReachableAddr(addr) {
 			filtered = append(filtered, addr)
 		} else {
-			logger.Debugf("Filtered unreachable address: %s", addr.String())
+			logger.Debugf("Filtered private address: %s", addr.String())
 		}
 	}
-	if len(filtered) == 0 && len(addrs) > 0 {
-		logger.Debugf("All addresses filtered, using original list")
-		return addrs
+	if len(filtered) == 0 {
+		logger.Warnf("No public addresses available, will use observed IP from tracker")
+		return nil
 	}
 	return filtered
 }

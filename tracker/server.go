@@ -232,12 +232,20 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if len(req.Addrs) == 0 || req.PeerID == "" {
-		http.Error(w, "Missing addrs or peer_id", http.StatusBadRequest)
+	if req.PeerID == "" {
+		http.Error(w, "Missing peer_id", http.StatusBadRequest)
 		return
 	}
 
 	remoteIP := extractRemoteIP(r)
+	if len(req.Addrs) == 0 {
+		logger.Debugf("No addresses provided, using observed IP: %s", remoteIP)
+		req.Addrs = []string{
+			fmt.Sprintf("/ip4/%s/tcp/45678/p2p/%s", remoteIP, req.PeerID),
+			fmt.Sprintf("/ip4/%s/udp/45678/quic-v1/p2p/%s", remoteIP, req.PeerID),
+		}
+	}
+
 	validatedAddrs := make([]string, 0, len(req.Addrs))
 	for _, addr := range req.Addrs {
 		addrInfo, err := peer.AddrInfoFromString(addr)
