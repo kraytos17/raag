@@ -344,6 +344,10 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.advertisePeriodically(ctx)
 		return nil
 	})
+	g.Go(func() error {
+		m.refreshDHTFromTrackerPeriodically(ctx)
+		return nil
+	})
 
 	if err := g.Wait(); err != nil {
 		logger.Warnf("Background service error: %v", err)
@@ -841,9 +845,23 @@ func (m *Manager) connectBootstrapPeers(ctx context.Context) error {
 
 func (m *Manager) initDHT(ctx context.Context) error {
 	connectedPeers := m.host.Network().Peers()
+	connectedPeerSet := make(map[peer.ID]bool)
 	var bootstrapPeers []peer.AddrInfo
 	for _, pid := range connectedPeers {
 		if pid == m.host.ID() {
+			continue
+		}
+
+		connectedPeerSet[pid] = true
+		addrs := m.host.Peerstore().Addrs(pid)
+		if len(addrs) > 0 {
+			bootstrapPeers = append(bootstrapPeers, peer.AddrInfo{ID: pid, Addrs: addrs})
+		}
+	}
+
+	allPeers := m.host.Peerstore().Peers()
+	for _, pid := range allPeers {
+		if pid == m.host.ID() || connectedPeerSet[pid] {
 			continue
 		}
 
@@ -851,6 +869,22 @@ func (m *Manager) initDHT(ctx context.Context) error {
 		if len(addrs) > 0 {
 			bootstrapPeers = append(bootstrapPeers, peer.AddrInfo{ID: pid, Addrs: addrs})
 		}
+	}
+	if len(allPeers) > 0 {
+		logger.Debugf("DHT seeded with persisted peers count=%d", len(allPeers)-1)
+	}
+
+	trackerPeers := m.fetchTrackerPeersForDHT(ctx)
+	for _, p := range trackerPeers {
+		if p.ID == m.host.ID() {
+			continue
+		}
+
+		m.host.Peerstore().AddAddrs(p.ID, p.Addrs, 24*time.Hour)
+		bootstrapPeers = append(bootstrapPeers, p)
+	}
+	if len(trackerPeers) > 0 {
+		logger.Debugf("DHT seeded with tracker peers count=%d", len(trackerPeers))
 	}
 
 	var opts []dht.Option
@@ -874,6 +908,26 @@ func (m *Manager) initDHT(ctx context.Context) error {
 	logger.Debugf("DHT initialized successfully")
 	logger.Debugf("DHT routing table size (initial) size=%d", m.dht.RoutingTable().Size())
 	return nil
+}
+
+func (m *Manager) fetchTrackerPeersForDHT(ctx context.Context) []peer.AddrInfo {
+	if m.tracker == nil || m.trackerURL == "" {
+		return nil
+	}
+
+	peers, err := m.tracker.FetchPeers(ctx)
+	if err != nil {
+		logger.Debugf("Failed to fetch tracker peers for DHT: %v", err)
+		return nil
+	}
+
+	var result []peer.AddrInfo
+	for _, p := range peers {
+		if p.ID != m.host.ID() {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 func (m *Manager) waitForPeers(ctx context.Context, timeout time.Duration) bool {
@@ -930,6 +984,44 @@ func (m *Manager) advertisePeriodically(ctx context.Context) {
 				_, _ = m.discovery.Advertise(ctx, m.rendezvous)
 			}
 		}
+	}
+}
+
+func (m *Manager) refreshDHTFromTrackerPeriodically(ctx context.Context) {
+	ticker := time.NewTicker(constants.DHTTrackerRefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.refreshDHTFromTracker(ctx)
+		}
+	}
+}
+
+func (m *Manager) refreshDHTFromTracker(ctx context.Context) {
+	if m.dht == nil {
+		return
+	}
+
+	peers := m.fetchTrackerPeersForDHT(ctx)
+	if len(peers) == 0 {
+		return
+	}
+
+	added := 0
+	for _, p := range peers {
+		if p.ID == m.host.ID() {
+			continue
+		}
+		m.host.Peerstore().AddAddrs(p.ID, p.Addrs, 24*time.Hour)
+		added++
+	}
+	if added > 0 {
+		m.throttledBootstrap(ctx)
+		logger.Debugf("Refreshed DHT with tracker peers count=%d", added)
 	}
 }
 

@@ -73,6 +73,9 @@ const (
 
 	// DHTBootstrapPeerThreshold is the number of new peers needed to trigger bootstrap
 	DHTBootstrapPeerThreshold = 5
+
+	// DHTTrackerRefreshInterval is how often to refresh DHT with tracker peers
+	DHTTrackerRefreshInterval = 5 * time.Minute
 )
 
 // Tracker Authentication
