@@ -140,17 +140,15 @@ func (t *Tracker) Start() error {
 
 	go t.cleanupOldPeers()
 	if t.tlsEnabled {
-		if t.tlsCertFile == "" || t.tlsKeyFile == "" {
-			logger.Infof("TLS enabled but no certs provided, generating self-signed cert...")
-			certFile, keyFile, err := GenerateSelfSignedCert()
-			if err != nil {
-				logger.Warnf("Failed to generate self-signed cert: %v, falling back to HTTP", err)
-				t.tlsEnabled = false
-			} else {
-				t.tlsCertFile = certFile
-				t.tlsKeyFile = keyFile
-				logger.Infof("Auto-generated self-signed cert: %s", certFile)
-			}
+		logger.Infof("TLS enabled, loading or generating certificates...")
+		certFile, keyFile, err := LoadOrGenerateCerts(t.tlsCertFile, t.tlsKeyFile)
+		if err != nil {
+			logger.Warnf("Failed to load/generate certs: %v, falling back to HTTP", err)
+			t.tlsEnabled = false
+		} else {
+			t.tlsCertFile = certFile
+			t.tlsKeyFile = keyFile
+			logger.Infof("Using TLS certificate: %s", certFile)
 		}
 	}
 

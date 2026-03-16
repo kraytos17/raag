@@ -17,9 +17,13 @@ import (
 )
 
 func GenerateSelfSignedCert() (certFile, keyFile string, err error) {
-	tmpDir := os.TempDir()
-	certFile = filepath.Join(tmpDir, "raag-tracker.crt")
-	keyFile = filepath.Join(tmpDir, "raag-tracker.key")
+	certDir := "/app/certs"
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return "", "", fmt.Errorf("failed to create certs directory: %w", err)
+	}
+	
+	certFile = filepath.Join(certDir, "raag-tracker.crt")
+	keyFile = filepath.Join(certDir, "raag-tracker.key")
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate private key: %w", err)
@@ -48,7 +52,7 @@ func GenerateSelfSignedCert() (certFile, keyFile string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("failed to write cert: %w", err)
 	}
-	
+
 	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	certOut.Close()
 	keyOut, err := os.Create(keyFile)
