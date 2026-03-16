@@ -14,6 +14,7 @@ if [ "$TLS_ENABLED" = "true" ]; then
 fi
 
 if [ -n "$AUTH_KEY" ]; then
+    OLD_IFS="$IFS"
     IFS=','
     for key in $AUTH_KEY; do
         key=$(echo "$key" | xargs)
@@ -21,7 +22,7 @@ if [ -n "$AUTH_KEY" ]; then
             ARGS="$ARGS --auth-key $key"
         fi
     done
-    unset IFS
+    IFS="$OLD_IFS"
 fi
 
 # Note: AUTH_SECRET is handled internally by the tracker application

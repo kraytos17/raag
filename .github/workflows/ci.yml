@@ -1,4 +1,5 @@
 name: CI/CD Pipeline
+
 on:
   push:
     branches: [main]
@@ -12,20 +13,24 @@ on:
         required: false
         type: boolean
         default: false
+
 permissions:
   contents: read
   packages: write
   security-events: write
   id-token: write
   pull-requests: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   GO_VERSION: "1.26.0"
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}/raag-tracker
   DOCKER_BUILDKIT: 1
+
 jobs:
   validate:
     name: Validate
@@ -37,11 +42,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      # Fix: Go must be set up before go mod verify / go list are called
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
       - name: Validate YAML files
         run: |
-          # Check for common YAML issues
-          find . -name "*.yml" -o -name "*.yaml" | xargs -I {} sh -c 'python3 -c "import yaml; yaml.safe_load(open(\"{}\"))" 2>/dev/null || echo "Invalid YAML: {}"' || true
+          find . -name "*.yml" -o -name "*.yaml" | xargs -I {} sh -c \
+            'python3 -c "import yaml; yaml.safe_load(open(\"{}\"))" 2>/dev/null || echo "Invalid YAML: {}"' || true
+
       - name: Check go.sum is up to date
         run: |
           go mod verify
@@ -50,10 +65,12 @@ jobs:
             echo "::error::go.sum is out of date. Run 'go mod tidy' to fix."
             exit 1
           fi
+
       - name: Lint shell scripts
         run: |
           which shellcheck > /dev/null 2>&1 || sudo apt-get install -y shellcheck
           find . -name "*.sh" -type f | xargs shellcheck --severity=warning
+
   quality:
     name: Code Quality
     runs-on: ubuntu-latest
@@ -66,13 +83,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
+
       - name: Cache apt packages
         uses: actions/cache@v4
         with:
@@ -80,8 +99,10 @@ jobs:
           key: ${{ runner.os }}-apt-${{ hashFiles('**/Dockerfile') }}
           restore-keys: |
             ${{ runner.os }}-apt-
+
       - name: Install ALSA development libraries
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
+
       - name: Format check (gofumpt)
         run: |
           go install mvdan.cc/gofumpt@latest
@@ -91,22 +112,27 @@ jobs:
             echo "$output"
             exit 1
           fi
+
       - name: Go vet
         run: go vet -all ./...
+
       - name: Staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck -f stylish ./...
+
       - name: Security scan (gosec)
         uses: securego/gosec@master
         with:
           args: "-no-fail -fmt sarif -out gosec-results.sarif ./..."
         continue-on-error: true
+
       - name: Upload gosec SARIF
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: gosec-results.sarif
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest
@@ -119,13 +145,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
+
       - name: Cache apt packages
         uses: actions/cache@v4
         with:
@@ -133,12 +161,16 @@ jobs:
           key: ${{ runner.os }}-apt-${{ hashFiles('**/Dockerfile') }}
           restore-keys: |
             ${{ runner.os }}-apt-
+
       - name: Install ALSA development libraries
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
+
       - name: Run tests with race detector + coverage
         run: go test -race -coverprofile=coverage.out -covermode=atomic -timeout=10m ./...
+
       - name: Display coverage summary
         run: go tool cover -func=coverage.out
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
@@ -146,12 +178,14 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: true
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.out
           retention-days: 14
+
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
@@ -168,32 +202,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: ${{ runner.os }}-apt-${{ hashFiles('**/Dockerfile') }}
-          restore-keys: |
-            ${{ runner.os }}-apt-
+
       - name: Install ALSA development libraries
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: go
+
       - name: Build for CodeQL
         run: |
           go build -o raag-analysis ./cmd/raag
           go build -o tracker-analysis ./tracker/cmd/tracker
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
+
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
@@ -206,12 +239,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
           comment-summary-in-pr: always
+
   build:
     name: Build Verification
     runs-on: ubuntu-latest
@@ -224,13 +259,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
+
       - name: Cache apt packages
         uses: actions/cache@v4
         with:
@@ -238,8 +275,10 @@ jobs:
           key: ${{ runner.os }}-apt-${{ hashFiles('**/Dockerfile') }}
           restore-keys: |
             ${{ runner.os }}-apt-
+
       - name: Install ALSA development libraries
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
+
       - name: Build binaries
         run: |
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -251,6 +290,7 @@ jobs:
 
           echo "Building tracker..."
           go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o bin/tracker ./tracker/cmd/tracker
+
       - name: Verify binaries
         run: |
           echo "Verifying raag binary:"
@@ -260,21 +300,26 @@ jobs:
           echo "Verifying tracker binary:"
           file bin/tracker
           bin/tracker --help || true
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ github.sha }}
           path: bin/
           retention-days: 7
+
   docker:
     name: Docker Build & Security
     runs-on: ubuntu-latest
     needs: build
+    # Fix: wrapped first block in parens to prevent || precedence bug
     if: |
-      github.event_name != 'pull_request' &&
-      !contains(github.event.head_commit.message, '[skip ci]') &&
-      !contains(github.event.head_commit.message, '[ci skip]') &&
-      !contains(github.event.head_commit.message, '[docs only]') ||
+      (
+        github.event_name != 'pull_request' &&
+        !contains(github.event.head_commit.message, '[skip ci]') &&
+        !contains(github.event.head_commit.message, '[ci skip]') &&
+        !contains(github.event.head_commit.message, '[docs only]')
+      ) ||
       (github.event_name == 'workflow_dispatch' && inputs.force_deploy)
     permissions:
       contents: read
@@ -285,17 +330,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -308,6 +357,7 @@ jobs:
             type=semver,pattern={{major}}
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Build and push Docker image
         id: build
         uses: docker/build-push-action@v6
@@ -321,27 +371,33 @@ jobs:
           cache-to: type=gha,mode=max,scope=raag
           provenance: true
           sbom: true
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # Fix: metadata-action produces "sha-<short_sha>", not raw github.sha
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
         continue-on-error: true
+
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: trivy-results.sarif
         continue-on-error: true
+
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # Fix: same sha- prefix fix as Trivy above
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           format: spdx-json
           output-file: sbom.spdx.json
         continue-on-error: true
+
       - name: Upload SBOM
         uses: actions/upload-artifact@v4
         with:
@@ -349,6 +405,7 @@ jobs:
           path: sbom.spdx.json
           retention-days: 90
         continue-on-error: true
+
   docker-multi:
     name: Docker Multi-Platform
     runs-on: ubuntu-latest
@@ -366,17 +423,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -389,6 +450,7 @@ jobs:
             type=semver,pattern={{major}}
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Build and push multi-platform image
         uses: docker/build-push-action@v6
         with:
@@ -400,6 +462,7 @@ jobs:
           cache-from: type=gha,scope=raag-multi
           cache-to: type=gha,mode=max,scope=raag-multi
           provenance: true
+
   release:
     name: Release
     runs-on: ubuntu-latest
@@ -414,12 +477,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
+
       - name: Check for GPG key
         id: check_gpg
         run: |
@@ -430,13 +495,16 @@ jobs:
           fi
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
       - name: Import GPG key
         id: gpg
         if: steps.check_gpg.outputs.has_gpg == 'true'
-        uses: crazy-max/ghaaction-import-gpg@v6
+        # Fix: was "ghaaction-import-gpg" (typo) — correct name is "ghaction-import-gpg"
+        uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

@@ -1,7 +1,10 @@
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm AS builder
 
-# Install git for version info + ALSA for audio (CGO required)
-RUN apk add --no-cache git libasound-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    libasound2-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -12,9 +15,15 @@ COPY . .
 
 ARG VERSION=dev
 ARG BUILD_TIME=unknown
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
 
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o tracker ./tracker/cmd/tracker && \
-    CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o raag ./cmd/raag
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+    -o tracker ./tracker/cmd/tracker && \
+    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+    -o raag ./cmd/raag
 
 FROM ubuntu:24.04 AS runtime
 
@@ -27,9 +36,12 @@ ARG TLS_KEY_FILE=
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    libasound2t64 \
+    wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 raag 2>/dev/null || groupadd -f --gid 1000 raag \
-    && useradd -o -u 1000 --gid raag --shell /bin/false --create-home raag 2>/dev/null || usermod -o -u 1000 raag 2>/dev/null || true
+    && useradd -o -u 1000 --gid raag --shell /bin/false --create-home raag 2>/dev/null \
+    || usermod -o -u 1000 raag 2>/dev/null || true
 
 WORKDIR /home/raag
 
@@ -51,6 +63,6 @@ ENV TLS_KEY_FILE=${TLS_KEY_FILE}
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
 
-EXPOSE 8080 45678
+EXPOSE ${PORT} ${LIBP2P_PORT}
 
 ENTRYPOINT ["./entrypoint.sh"]

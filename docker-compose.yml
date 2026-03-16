@@ -8,19 +8,20 @@ services:
       - "${PORT:-8080}:${PORT:-8080}"
       - "${LIBP2P_PORT:-45678}:${LIBP2P_PORT:-45678}"
     environment:
-      PORT: "8080"
-      LIBP2P_PORT: "45678"
-      AUTH_SECRET: "raag-secret"
-      # TLS/HTTPS (optional)
-      # TLS_ENABLED: "true"
+      PORT: "${PORT:-8080}"
+      LIBP2P_PORT: "${LIBP2P_PORT:-45678}"
+      AUTH_SECRET: "${AUTH_SECRET:-raag-secret}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      # Uncomment and set these for TLS:
       # TLS_CERT_FILE: "/app/certs/cert.pem"
       # TLS_KEY_FILE: "/app/certs/key.pem"
-      # For Railway: Set AUTH_SECRET in Railway Dashboard → Variables
-      # For custom secret: AUTH_SECRET=yourpassword docker-compose up -d
-      # For HTTPS: TLS_ENABLED=true docker-compose up -d
+      #
+      # For Railway: set AUTH_SECRET in Railway Dashboard → Variables
+      # For custom secret: AUTH_SECRET=yourpassword docker compose up -d
+      # For HTTPS: TLS_ENABLED=true docker compose up -d
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8080}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -32,6 +33,7 @@ services:
         max-file: "3"
     networks:
       - raag-network
+
 networks:
   raag-network:
     driver: bridge
