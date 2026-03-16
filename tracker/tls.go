@@ -18,10 +18,10 @@ import (
 
 func GenerateSelfSignedCert() (certFile, keyFile string, err error) {
 	certDir := "/app/certs"
-	if err := os.MkdirAll(certDir, 0755); err != nil {
+	if err := os.MkdirAll(certDir, 0o755); err != nil {
 		return "", "", fmt.Errorf("failed to create certs directory: %w", err)
 	}
-	
+
 	certFile = filepath.Join(certDir, "raag-tracker.crt")
 	keyFile = filepath.Join(certDir, "raag-tracker.key")
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
