@@ -79,6 +79,9 @@ type Tracker struct {
 	usedTokenNonces map[string]time.Time
 	nonceMu         sync.Mutex
 	rateLimiter     *RateLimiter
+	tlsEnabled      bool
+	tlsCertFile     string
+	tlsKeyFile      string
 }
 
 type registeredPeer struct {
@@ -92,6 +95,9 @@ type TrackerConfig struct {
 	Libp2pPort     int
 	RelayEnabled   bool
 	AuthPublicKeys []string
+	TLSEnabled     bool
+	TLSCertFile    string
+	TLSKeyFile     string
 }
 
 func NewTracker(cfg TrackerConfig) *Tracker {
@@ -110,6 +116,9 @@ func NewTracker(cfg TrackerConfig) *Tracker {
 		startedAt:       time.Now(),
 		usedTokenNonces: make(map[string]time.Time),
 		rateLimiter:     NewRateLimiter(),
+		tlsEnabled:      cfg.TLSEnabled,
+		tlsCertFile:     cfg.TLSCertFile,
+		tlsKeyFile:      cfg.TLSKeyFile,
 	}
 	if len(cfg.AuthPublicKeys) > 0 {
 		t.trustedKeyMgr = auth.NewTrustedKeyManager()
@@ -130,20 +139,58 @@ func (t *Tracker) Start() error {
 	}
 
 	go t.cleanupOldPeers()
-	logger.Infof("Tracker HTTP server starting on port %d", t.httpPort)
+	if t.tlsEnabled {
+		if t.tlsCertFile == "" || t.tlsKeyFile == "" {
+			logger.Infof("TLS enabled but no certs provided, generating self-signed cert...")
+			certFile, keyFile, err := GenerateSelfSignedCert()
+			if err != nil {
+				logger.Warnf("Failed to generate self-signed cert: %v, falling back to HTTP", err)
+				t.tlsEnabled = false
+			} else {
+				t.tlsCertFile = certFile
+				t.tlsKeyFile = keyFile
+				logger.Infof("Auto-generated self-signed cert: %s", certFile)
+			}
+		}
+	}
+
+	addr := fmt.Sprintf(":%d", t.httpPort)
 	server := &http.Server{
-		Addr:              fmt.Sprintf(":%d", t.httpPort),
+		Addr:              addr,
 		Handler:           t,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 
+	logger.Infof("Tracker HTTP server starting on %s", addr)
+	serveErr := make(chan error, 1)
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Errorf("HTTP server failed: %v", err)
+		var err error
+		if t.tlsEnabled {
+			tlsConfig, tlsErr := GetTLSConfig(t.tlsCertFile, t.tlsKeyFile)
+			if tlsErr != nil {
+				logger.Warnf("Failed to load TLS config: %v, falling back to HTTP", tlsErr)
+				err = server.ListenAndServe()
+			} else {
+				server.TLSConfig = tlsConfig
+				logger.Infof("HTTPS enabled with TLS 1.3, cert=%s", t.tlsCertFile)
+				err = server.ListenAndServeTLS(t.tlsCertFile, t.tlsKeyFile)
+			}
+		} else {
+			err = server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			serveErr <- err
 		}
 	}()
+
+	select {
+	case err := <-serveErr:
+		logger.Errorf("HTTP server failed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+		logger.Infof("Tracker HTTP server started on port %d", t.httpPort)
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -494,7 +541,7 @@ func (t *Tracker) cleanupOldNonces(now time.Time) {
 	defer t.nonceMu.Unlock()
 
 	for nonce, usedAt := range t.usedTokenNonces {
-		if now.Sub(usedAt) > constants.PeerCleanupInterval {
+		if now.Sub(usedAt) > constants.NonceExpiry {
 			delete(t.usedTokenNonces, nonce)
 		}
 	}

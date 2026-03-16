@@ -33,7 +33,7 @@ func GenerateKeyPair() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 
 // DeriveKey derives an ed25519 auth key from input bytes using a salt
 func DeriveKey(input []byte, salt string) (ed25519.PrivateKey, error) {
-	seed := pbkdf2.Key(input, []byte(salt), 100000, 32, sha256.New)
+	seed := pbkdf2.Key(input, []byte(salt), 50_000, 32, sha256.New)
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 

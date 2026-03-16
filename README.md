@@ -63,7 +63,7 @@ docker-compose up -d
 ./bin/raag daemon --network --auth-secret mysecretpassword
 ```
 
-The system automatically derives a cryptographic key from the password using PBKDF2 (100,000 iterations, SHA-256).
+The system automatically derives a cryptographic key from the password using PBKDF2.
 
 ### Option 2: Per-Peer Keys (More Secure)
 
@@ -86,7 +86,7 @@ AUTH_KEY=key1,key2,key3 railway up
 **Client:**
 ```bash
 # No extra flag needed - uses identity.key automatically
-./bin/ran daemon --network
+./bin/raag daemon --network
 ```
 
 ### How Auth Works
@@ -94,7 +94,7 @@ AUTH_KEY=key1,key2,key3 railway up
 ```
 Shared Secret / Identity Key
          ↓
-    PBKDF2 (100k iterations)
+    PBKDF2 (50k iterations)
          ↓
     Ed25519 Key Pair
          ↓
@@ -105,12 +105,14 @@ Shared Secret / Identity Key
 
 Security features:
 - Password never sent over network
-- PBKDF2 key derivation (100,000 iterations)
+- PBKDF2 key derivation (50k iterations)
 - Token expires after 24 hours
+- Automatic token refresh before expiration (1 hour threshold)
 - Clock skew tolerance: 60 seconds
 - Signature verification prevents tampering
 - Nonce tracking prevents replay attacks
 - Rate limiting on tracker registration (10 req/min/IP)
+- HTTPS support for production deployments
 
 ## Commands
 
@@ -205,6 +207,21 @@ Security features:
 | `--relay` | `true` | Enable circuit relay |
 | `--auth-key` | - | Trusted auth key (repeatable) |
 | `--auth-secret` | - | Shared secret for auth |
+| `--tls` | `false` | Enable HTTPS |
+| `--tls-cert` | - | TLS certificate file path |
+| `--tls-key` | - | TLS key file path |
+
+### Tracker Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AUTH_SECRET` | Shared secret for auth |
+| `AUTH_KEY` | Comma-separated trusted keys |
+| `TLS_ENABLED` | Enable HTTPS (`true`/`false`) |
+| `TLS_CERT_FILE` | TLS certificate file path |
+| `TLS_KEY_FILE` | TLS key file path |
+
+**Auto TLS**: If `TLS_ENABLED=true` is set but no cert/key files provided, the tracker automatically generates a self-signed certificate.
 
 ## Deployment
 

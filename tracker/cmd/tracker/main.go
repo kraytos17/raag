@@ -19,6 +19,9 @@ func main() {
 		libp2pPort     int
 		relayEnabled   bool
 		authPublicKeys []string
+		tlsEnabled     bool
+		tlsCertFile    string
+		tlsKeyFile     string
 	}
 
 	rootCmd := &cobra.Command{
@@ -62,11 +65,24 @@ Example:
 			}
 
 			cfg.authPublicKeys = uniqueKeys
+			if tlsEnabled := os.Getenv("TLS_ENABLED"); tlsEnabled == "true" {
+				cfg.tlsEnabled = true
+			}
+			if certFile := os.Getenv("TLS_CERT_FILE"); certFile != "" {
+				cfg.tlsCertFile = certFile
+			}
+			if keyFile := os.Getenv("TLS_KEY_FILE"); keyFile != "" {
+				cfg.tlsKeyFile = keyFile
+			}
+
 			config := tracker.TrackerConfig{
 				HTTPPort:       cfg.httpPort,
 				Libp2pPort:     cfg.libp2pPort,
 				RelayEnabled:   cfg.relayEnabled,
 				AuthPublicKeys: cfg.authPublicKeys,
+				TLSEnabled:     cfg.tlsEnabled,
+				TLSCertFile:    cfg.tlsCertFile,
+				TLSKeyFile:     cfg.tlsKeyFile,
 			}
 
 			t := tracker.NewTracker(config)
@@ -78,6 +94,9 @@ Example:
 	rootCmd.Flags().IntVar(&cfg.libp2pPort, "libp2p-port", constants.DefaultPort, "libp2p listen port (for relay)")
 	rootCmd.Flags().BoolVar(&cfg.relayEnabled, "relay", true, "Enable circuit relay for NAT traversal")
 	rootCmd.Flags().StringArrayVar(&cfg.authPublicKeys, "auth-key", nil, "Trusted ed25519 public key(s) for peer authentication (hex encoded, can be specified multiple times)")
+	rootCmd.Flags().BoolVar(&cfg.tlsEnabled, "tls", false, "Enable HTTPS")
+	rootCmd.Flags().StringVar(&cfg.tlsCertFile, "tls-cert", "", "TLS certificate file path")
+	rootCmd.Flags().StringVar(&cfg.tlsKeyFile, "tls-key", "", "TLS key file path")
 	if err := rootCmd.Execute(); err != nil {
 		logger.Errorf("failed to execute command error=%v", err)
 		os.Exit(1)

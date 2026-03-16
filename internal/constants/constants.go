@@ -37,6 +37,9 @@ const (
 
 	// PeerTimeout is how long before a peer is considered stale
 	PeerTimeout = 10 * time.Minute
+
+	// NonceExpiry is how long used nonces are kept (prevents reuse within token validity)
+	NonceExpiry = 24 * time.Hour
 )
 
 // Discovery Intervals
@@ -60,10 +63,10 @@ const (
 	TrackerRefreshInterval = 30 * time.Second
 
 	// TrackerRetryInitialDelay is the starting backoff delay for tracker retries
-	TrackerRetryInitialDelay = 1 * time.Second
+	TrackerRetryInitialDelay = 250 * time.Millisecond
 
 	// TrackerRetryMaxDelay is the max backoff delay for tracker retries
-	TrackerRetryMaxDelay = 30 * time.Second
+	TrackerRetryMaxDelay = 10 * time.Second
 
 	// DHTBootstrapThrottle is the minimum interval between DHT bootstrap calls
 	DHTBootstrapThrottle = 30 * time.Second
@@ -76,6 +79,9 @@ const (
 const (
 	// TokenExpiration is how long auth tokens are valid
 	TokenExpiration = 24 * time.Hour
+
+	// TokenRefreshThreshold is how long before expiration to refresh the token
+	TokenRefreshThreshold = 1 * time.Hour
 
 	// TokenFutureTolerance is the max allowed clock skew (tokens issued in the future)
 	TokenFutureTolerance = 60 * time.Second

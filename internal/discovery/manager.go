@@ -398,17 +398,33 @@ func prioritizeAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 }
 
 func (m *Manager) getAuthData() (string, error) {
-	if m.authToken == nil && m.authKeyPair != nil {
-		token, err := auth.GenerateToken(m.host.ID(), m.authKeyPair)
-		if err != nil {
-			return "", fmt.Errorf("failed to generate auth token: %w", err)
-		}
-		m.authToken = token
-	}
+	m.regenerateAuthToken()
 	if m.authToken == nil {
 		return "", fmt.Errorf("no auth key pair available")
 	}
 	return auth.SerializeToken(m.authToken)
+}
+
+func (m *Manager) regenerateAuthToken() {
+	if m.authKeyPair == nil {
+		return
+	}
+	if m.authToken != nil {
+		timeUntilExpiry := time.Until(time.Unix(m.authToken.ExpiresAt, 0))
+		if timeUntilExpiry > constants.TokenRefreshThreshold {
+			return
+		}
+		logger.Debugf("Token expiring soon (%v), regenerating", timeUntilExpiry)
+	}
+
+	token, err := auth.GenerateToken(m.host.ID(), m.authKeyPair)
+	if err != nil {
+		logger.Warnf("Failed to regenerate auth token: %v", err)
+		return
+	}
+
+	m.authToken = token
+	logger.Infof("Auth token regenerated, expires in %v", time.Until(time.Unix(token.ExpiresAt, 0)))
 }
 
 func (m *Manager) GetAuthData() (string, error) {
