@@ -25,7 +25,7 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
     -o raag ./cmd/raag
 
-FROM ubuntu:24.04 AS runtime
+FROM debian:bookworm-slim AS runtime
 
 ARG PORT=8080
 ARG LIBP2P_PORT=45678
@@ -36,7 +36,7 @@ ARG TLS_KEY_FILE=
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libasound2t64 \
+    libasound2 \
     wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 raag 2>/dev/null || groupadd -f --gid 1000 raag \
