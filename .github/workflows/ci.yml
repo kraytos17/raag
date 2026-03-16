@@ -27,9 +27,41 @@ env:
   IMAGE_NAME: ${{ github.repository }}/raag-tracker
   DOCKER_BUILDKIT: 1
 jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    if: |
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[ci skip]')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Validate YAML files
+        run: |
+          # Check for common YAML issues
+          find . -name "*.yml" -o -name "*.yaml" | xargs -I {} sh -c 'python3 -c "import yaml; yaml.safe_load(open(\"{}\"))" 2>/dev/null || echo "Invalid YAML: {}"' || true
+      - name: Check go.sum is up to date
+        run: |
+          go mod verify
+          go list -m all > /dev/null
+          if [ -n "$(git diff go.sum)" ]; then
+            echo "::error::go.sum is out of date. Run 'go mod tidy' to fix."
+            exit 1
+          fi
+      - name: Lint shell scripts
+        run: |
+          which shellcheck > /dev/null 2>&1 || sudo apt-get install -y shellcheck
+          find . -name "*.sh" -type f | xargs shellcheck --severity=warning
   quality:
     name: Code Quality
     runs-on: ubuntu-latest
+    needs: validate
+    if: |
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[ci skip]') &&
+      !contains(github.event.head_commit.message, '[docs only]')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -78,6 +110,11 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
+    needs: validate
+    if: |
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[ci skip]') &&
+      !contains(github.event.head_commit.message, '[docs only]')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -118,6 +155,11 @@ jobs:
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
+    needs: validate
+    if: |
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[ci skip]') &&
+      !contains(github.event.head_commit.message, '[docs only]')
     permissions:
       actions: read
       contents: read
@@ -133,6 +175,15 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+      - name: Install ALSA development libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -146,6 +197,7 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
+    needs: validate
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -163,7 +215,11 @@ jobs:
   build:
     name: Build Verification
     runs-on: ubuntu-latest
-    needs: [quality, test]
+    needs: [validate, quality, test]
+    if: |
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[ci skip]') &&
+      !contains(github.event.head_commit.message, '[docs only]')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -214,7 +270,12 @@ jobs:
     name: Docker Build & Security
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name != 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.force_deploy)
+    if: |
+      github.event_name != 'pull_request' &&
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[ci skip]') &&
+      !contains(github.event.head_commit.message, '[docs only]') ||
+      (github.event_name == 'workflow_dispatch' && inputs.force_deploy)
     permissions:
       contents: read
       packages: write
@@ -292,7 +353,12 @@ jobs:
     name: Docker Multi-Platform
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: |
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[ci skip]') &&
+      !contains(github.event.head_commit.message, '[docs only]')
     permissions:
       contents: read
       packages: write

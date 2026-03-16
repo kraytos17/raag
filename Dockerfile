@@ -4,7 +4,6 @@ RUN apk add --no-cache git
 
 WORKDIR /app
 
-# Copy dependency files first for better layer caching
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
@@ -18,11 +17,18 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.versi
 
 FROM ubuntu:24.04 AS runtime
 
+ARG PORT=8080
+ARG LIBP2P_PORT=45678
+ARG AUTH_SECRET=
+ARG TLS_ENABLED=false
+ARG TLS_CERT_FILE=
+ARG TLS_KEY_FILE=
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 1000 raag \
-    && useradd --uid 1000 --gid raag --shell /bin/false --create-home raag
+    && groupadd --gid 1000 raag 2>/dev/null || groupadd -f --gid 1000 raag \
+    && useradd -o -u 1000 --gid raag --shell /bin/false --create-home raag 2>/dev/null || usermod -o -u 1000 raag 2>/dev/null || true
 
 WORKDIR /home/raag
 
@@ -34,12 +40,12 @@ RUN chmod +x entrypoint.sh && \
 
 USER raag
 
-ENV PORT=${PORT:-8080}
-ENV LIBP2P_PORT=${LIBP2P_PORT:-45678}
-ENV AUTH_SECRET=${AUTH_SECRET:-}
-ENV TLS_ENABLED=${TLS_ENABLED:-false}
-ENV TLS_CERT_FILE=${TLS_CERT_FILE:-}
-ENV TLS_KEY_FILE=${TLS_KEY_FILE:-}
+ENV PORT=${PORT}
+ENV LIBP2P_PORT=${LIBP2P_PORT}
+ENV AUTH_SECRET=${AUTH_SECRET}
+ENV TLS_ENABLED=${TLS_ENABLED}
+ENV TLS_CERT_FILE=${TLS_CERT_FILE}
+ENV TLS_KEY_FILE=${TLS_KEY_FILE}
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
