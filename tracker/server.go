@@ -241,8 +241,8 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 	if len(req.Addrs) == 0 {
 		logger.Debugf("No addresses provided, using observed IP: %s", remoteIP)
 		req.Addrs = []string{
-			fmt.Sprintf("/ip4/%s/tcp/45678/p2p/%s", remoteIP, req.PeerID),
-			fmt.Sprintf("/ip4/%s/udp/45678/quic-v1/p2p/%s", remoteIP, req.PeerID),
+			fmt.Sprintf("/ip4/%s/tcp/%d/p2p/%s", remoteIP, constants.DefaultPort, req.PeerID),
+			fmt.Sprintf("/ip4/%s/udp/%d/quic-v1/p2p/%s", remoteIP, constants.DefaultPort, req.PeerID),
 		}
 	}
 

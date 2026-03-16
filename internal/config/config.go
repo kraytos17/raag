@@ -24,6 +24,7 @@ type Config struct {
 	DHTEnabled     bool     `json:"discovery.dht_enabled"`
 	MaxPeers       int      `json:"discovery.max_peers"`
 	BootstrapPeers []string `json:"discovery.bootstrap_peers"`
+	AuthSecret     string   `mapstructure:"-" json:"-"`
 
 	// Playback - persistent playback settings
 	MusicDir string `json:"playback.music_dir"`
@@ -95,6 +96,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("discovery.dht_enabled", defaults.DHTEnabled)
 	v.SetDefault("discovery.max_peers", defaults.MaxPeers)
 	v.SetDefault("discovery.bootstrap_peers", defaults.BootstrapPeers)
+	v.SetDefault("discovery.auth_secret", os.Getenv("AUTH_SECRET"))
 	v.SetDefault("playback.music_dir", defaults.MusicDir)
 }
 
@@ -107,6 +109,7 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	v.BindPFlag("discovery.dht_enabled", root.PersistentFlags().Lookup("dht"))
 	v.BindPFlag("discovery.max_peers", root.PersistentFlags().Lookup("max-peers"))
 	v.BindPFlag("discovery.bootstrap_peers", root.PersistentFlags().Lookup("bootstrap"))
+	v.BindPFlag("discovery.auth_secret", root.PersistentFlags().Lookup("auth-secret"))
 	v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("music-dir"))
 }
 
@@ -120,6 +123,7 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 		DHTEnabled:     v.GetBool("discovery.dht_enabled"),
 		MaxPeers:       v.GetInt("discovery.max_peers"),
 		BootstrapPeers: v.GetStringSlice("discovery.bootstrap_peers"),
+		AuthSecret:     v.GetString("discovery.auth_secret"),
 		MusicDir:       v.GetString("playback.music_dir"),
 	}
 
@@ -133,7 +137,6 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, fmt.Errorf("invalid port number: %d", cfg.Port)
 	}
-
 	return cfg, nil
 }
 

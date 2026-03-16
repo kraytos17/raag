@@ -55,8 +55,9 @@ type Manager struct {
 
 type ManagerConfig struct {
 	Host             host.Host
-	IdentityKeyBytes []byte
 	TrackerURL       string
+	IdentityKeyBytes []byte
+	AuthSecret       string
 	MaxPeers         int
 	ListenHost       string
 	Rendezvous       string
@@ -68,21 +69,29 @@ func NewManager(cfg ManagerConfig) *Manager {
 	h := cfg.Host
 	var authKeyPair ed25519.PrivateKey
 	var err error
-	if len(cfg.IdentityKeyBytes) > 0 {
-		authKeyPair, err = auth.DeriveAuthKey(cfg.IdentityKeyBytes)
+
+	// Priority: AuthSecret > IdentityKey > Random
+	if cfg.AuthSecret != "" {
+		authKeyPair, err = auth.DeriveKey([]byte(cfg.AuthSecret), "raag-secret-v1")
+		if err != nil {
+			logger.Warnf("Failed to derive auth key from secret: %v", err)
+		} else {
+			logger.Infof("Auth enabled via shared secret")
+		}
+	} else if len(cfg.IdentityKeyBytes) > 0 {
+		authKeyPair, err = auth.DeriveKey(cfg.IdentityKeyBytes, "raag-identity-v1")
 		if err != nil {
 			logger.Warnf("Failed to derive auth key from identity: %v", err)
 		} else {
-			pubKey := hex.EncodeToString(authKeyPair.Public().(ed25519.PublicKey))
-			logger.Infof("Derived auth key from identity (pubkey: %s)", pubKey)
+			logger.Infof("Auth enabled via identity key")
 		}
 	}
 	if authKeyPair == nil {
-		authKeyPair, err = auth.GenerateAuthKeyPair()
+		_, authKeyPair, err = auth.GenerateKeyPair()
 		if err != nil {
 			logger.Warnf("Failed to generate auth key pair: %v", err)
 		} else {
-			logger.Warnf("No identity key provided, generated random auth key")
+			logger.Warnf("No auth configured, generated random key")
 		}
 	}
 	return &Manager{

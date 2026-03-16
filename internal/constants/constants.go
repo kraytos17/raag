@@ -19,6 +19,9 @@ const (
 
 	// EnvTrackerURL is the environment variable name for tracker URL
 	EnvTrackerURL = "TRACKER_URL"
+
+	// EnvAuthSecret is the environment variable name for shared auth secret
+	EnvAuthSecret = "AUTH_SECRET"
 )
 
 // Peer Discovery
@@ -50,9 +53,6 @@ const (
 	// MDNSLogInterval is how often to log mDNS peer count
 	MDNSLogInterval = 10 * time.Second
 
-	// TrackerRetryInterval is how long to wait before retrying tracker connection
-	TrackerRetryInterval = 5 * time.Minute
-
 	// TrackerHeartbeatInterval is how often peers refresh tracker registration
 	TrackerHeartbeatInterval = 2 * time.Minute
 
@@ -74,11 +74,11 @@ const (
 
 // Tracker Authentication
 const (
-	// AuthTokenLength is the expected length of auth tokens
-	AuthTokenLength = 32
-
 	// TokenExpiration is how long auth tokens are valid
 	TokenExpiration = 24 * time.Hour
+
+	// TokenFutureTolerance is the max allowed clock skew (tokens issued in the future)
+	TokenFutureTolerance = 60 * time.Second
 
 	// EnvAuthKey is the environment variable name for tracker auth key(s)
 	// Supports multiple keys comma-separated

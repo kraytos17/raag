@@ -2,8 +2,6 @@ package tracker
 
 import (
 	"bytes"
-	"crypto/ed25519"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,12 +14,12 @@ import (
 )
 
 func TestHandleRegisterPeerRejectsMismatchedIdentityClaims(t *testing.T) {
-	authPriv, err := auth.GenerateAuthKeyPair()
+	_, authPriv, err := auth.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate auth key: %v", err)
 	}
 
-	trustedAuthKey := hex.EncodeToString(authPriv.Public().(ed25519.PublicKey))
+	trustedAuthKey := auth.GetPublicKeyHex(authPriv)
 	requestPeerID := mustPeerID(t)
 	otherPeerID := mustPeerID(t)
 	tests := []struct {
@@ -96,12 +94,12 @@ func TestHandleRegisterPeerRejectsMismatchedIdentityClaims(t *testing.T) {
 }
 
 func TestHandleRegisterPeerAcceptsMatchingIdentityClaims(t *testing.T) {
-	authPriv, err := auth.GenerateAuthKeyPair()
+	_, authPriv, err := auth.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate auth key: %v", err)
 	}
 
-	trustedAuthKey := hex.EncodeToString(authPriv.Public().(ed25519.PublicKey))
+	trustedAuthKey := auth.GetPublicKeyHex(authPriv)
 	peerID := mustPeerID(t)
 	token, err := auth.GenerateToken(peerID, authPriv)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/p-society/raag/internal/auth"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/tracker"
@@ -31,7 +32,17 @@ Optionally provides circuit relay for NAT traversal between peers.
 Example:
   ./tracker --http-port 8080 --libp2p-port 45678 --relay`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if authKeyEnv := os.Getenv(constants.EnvAuthKey); authKeyEnv != "" {
+			// If AUTH_SECRET is set, derive trust from it
+			if authSecret := os.Getenv(constants.EnvAuthSecret); authSecret != "" {
+				derivedKeyPair, err := auth.DeriveKey([]byte(authSecret), "raag-secret-v1")
+				if err == nil {
+					derivedKey := auth.GetPublicKeyHex(derivedKeyPair)
+					cfg.authPublicKeys = append(cfg.authPublicKeys, derivedKey)
+					logger.Infof("Auth enabled via shared secret")
+				}
+			}
+			// If AUTH_KEY env is set AND --auth-key flags are used, prefer flags
+			if authKeyEnv := os.Getenv(constants.EnvAuthKey); authKeyEnv != "" && len(cfg.authPublicKeys) == 0 {
 				envKeys := strings.SplitSeq(authKeyEnv, ",")
 				for k := range envKeys {
 					k = strings.TrimSpace(k)
@@ -40,6 +51,17 @@ Example:
 					}
 				}
 			}
+
+			seen := make(map[string]bool)
+			uniqueKeys := []string{}
+			for _, k := range cfg.authPublicKeys {
+				if !seen[k] {
+					seen[k] = true
+					uniqueKeys = append(uniqueKeys, k)
+				}
+			}
+
+			cfg.authPublicKeys = uniqueKeys
 			config := tracker.TrackerConfig{
 				HTTPPort:       cfg.httpPort,
 				Libp2pPort:     cfg.libp2pPort,

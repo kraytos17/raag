@@ -347,6 +347,7 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 	discoveryMgr := discovery.NewManager(discovery.ManagerConfig{
 		Host:             host,
 		IdentityKeyBytes: identityKeyBytes,
+		AuthSecret:       cfg.AuthSecret,
 		TrackerURL:       cfg.TrackerURL,
 		MaxPeers:         maxPeers,
 		ListenHost:       cfg.Host,
