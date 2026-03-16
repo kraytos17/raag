@@ -13,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // AuthToken represents a strong authentication token with signature
@@ -32,9 +33,8 @@ func GenerateKeyPair() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 
 // DeriveKey derives an ed25519 auth key from input bytes using a salt
 func DeriveKey(input []byte, salt string) (ed25519.PrivateKey, error) {
-	salted := append([]byte(salt), input...)
-	seed := sha256.Sum256(salted)
-	return ed25519.NewKeyFromSeed(seed[:]), nil
+	seed := pbkdf2.Key(input, []byte(salt), 100000, 32, sha256.New)
+	return ed25519.NewKeyFromSeed(seed), nil
 }
 
 // GetPublicKeyHex returns the hex-encoded public key from a private key
@@ -173,7 +173,11 @@ func NewTrustedKeyManager() *TrustedKeyManager {
 func (tk *TrustedKeyManager) AddKey(publicKeyHex string) {
 	if _, exists := tk.trustedKeys[publicKeyHex]; !exists {
 		tk.trustedKeys[publicKeyHex] = struct{}{}
-		logger.Infof("Added trusted auth key: %s...", publicKeyHex[:16])
+		prefix := publicKeyHex
+		if len(prefix) > 16 {
+			prefix = prefix[:16]
+		}
+		logger.Infof("Added trusted auth key: %s...", prefix)
 	}
 }
 

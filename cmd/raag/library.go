@@ -11,6 +11,7 @@ func libraryCommand() *cobra.Command {
 		Use:   "library",
 		Short: "Manage music library",
 	}
+
 	cmd.AddCommand(libraryListCommand())
 	cmd.AddCommand(librarySearchCommand())
 	cmd.AddCommand(libraryRescanCommand())

@@ -28,7 +28,7 @@ go build -o bin/raag ./cmd/raag
 go build -o bin/tracker ./tracker/cmd/tracker
 ```
 
-### Run
+### Run Client
 
 ```bash
 # Local playback with TUI
@@ -41,15 +41,76 @@ go build -o bin/tracker ./tracker/cmd/tracker
 ./bin/raag daemon --network
 ```
 
-### Run with Tracker
+## Authentication
 
+### Option 1: Shared Secret (Recommended - Easy)
+
+Use a shared password for all peers:
+
+**Tracker:**
 ```bash
-# Start tracker (on public server)
-./bin/tracker --http-port 8080 --auth-key <your-auth-key>
+# Set environment variable
+AUTH_SECRET=mysecretpassword
 
-# Connect client to tracker
-./bin/raag daemon --network --tracker https://your-tracker.example.com
+# Deploy
+railway up
+# OR locally with docker
+docker-compose up -d
 ```
+
+**Client:**
+```bash
+./bin/raag daemon --network --auth-secret mysecretpassword
+```
+
+The system automatically derives a cryptographic key from the password using PBKDF2 (100,000 iterations, SHA-256).
+
+### Option 2: Per-Peer Keys (More Secure)
+
+Each peer has a unique key derived from their identity:
+
+**Get your auth key:**
+```bash
+./bin/raag --network network auth-key
+```
+
+**Tracker:**
+```bash
+# Single key
+AUTH_KEY=23eb477a60833ed094e456110928584093d349b35f6f793f5057cc781aee586d railway up
+
+# Multiple keys (comma-separated)
+AUTH_KEY=key1,key2,key3 railway up
+```
+
+**Client:**
+```bash
+# No extra flag needed - uses identity.key automatically
+./bin/ran daemon --network
+```
+
+### How Auth Works
+
+```
+Shared Secret / Identity Key
+         ↓
+    PBKDF2 (100k iterations)
+         ↓
+    Ed25519 Key Pair
+         ↓
+    Sign registration token
+         ↓
+    Tracker verifies & accepts
+```
+
+Security features:
+- Password never sent over network
+- PBKDF2 key derivation (100,000 iterations)
+- Token expires after 24 hours
+- Clock skew tolerance: 60 seconds
+- Signature verification prevents tampering
+- Nonce tracking prevents replay attacks
+- Rate limiting on tracker registration (10 req/min/IP)
 
 ## Commands
 
@@ -107,11 +168,14 @@ go build -o bin/tracker ./tracker/cmd/tracker
 ### Daemon & Config
 
 ```bash
-./bin/raag daemon
-./bin/raag status
-./bin/raag config show
+./bin/raag daemon              # Start daemon
+./bin/raag daemon --network    # With networking
+./bin/raag status              # Check status
+./bin/raag config show        # Show config
 ./bin/raag config set <key> <value>
 ```
+
+**Daemon RPC:** Commands communicate with the daemon via Unix socket (`~/.config/raag/daemon.sock`). RPC timeout is 10 seconds.
 
 ## Flags
 
@@ -123,12 +187,14 @@ go build -o bin/tracker ./tracker/cmd/tracker
 | `--host` | `0.0.0.0` | Bind address |
 | `--port` | `45678` | Peer listen port |
 | `--tracker` | (none) | Tracker URL |
+| `--auth-secret` | (none) | Shared secret for auth |
 | `--dht` | `true` | Enable DHT discovery |
 | `--bootstrap` | - | Bootstrap peers (comma-separated) |
 | `--max-peers` | `100` | Maximum peers |
 | `--music-dir` | `./music` | Music directory |
 | `--tui` | `false` | Start TUI |
 | `--json` | `false` | JSON logging |
+| `--log-level` | `info` | Log level (debug, info, warn, error) |
 
 ### Tracker
 
@@ -136,44 +202,58 @@ go build -o bin/tracker ./tracker/cmd/tracker
 |------|---------|-------------|
 | `--http-port` | `8080` | HTTP API port |
 | `--libp2p-port` | `45678` | Libp2p port |
-| `--relay` | `true` | Enable relay |
+| `--relay` | `true` | Enable circuit relay |
 | `--auth-key` | - | Trusted auth key (repeatable) |
+| `--auth-secret` | - | Shared secret for auth |
 
-## Security
+## Deployment
 
-### Authentication Model
+### Railway (Recommended)
 
-Raag implements production-grade P2P authentication:
+1. Set environment variables in Railway Dashboard:
+   - `AUTH_SECRET=yourpassword` (shared secret) OR
+   - `AUTH_KEY=key1,key2` (per-peer keys)
 
-1. **Identity Binding** - Auth key derived from libp2p identity (`identity.key`)
-2. **Token-based Auth** - Each peer has a signed authentication token
-3. **Peer ID Verification** - Tokens bound to specific peer IDs
-4. **Session Nonces** - Unique per-transfer nonces prevent replay attacks
-
-### Trust Flow
-
-```
-identity.key → Peer ID
-identity.key → Derived Auth Key → Signed Token
-Token + Peer ID → Tracker Registration → Peer Trust
+2. Deploy:
+```bash
+railway up
 ```
 
-### Get Your Auth Key
+3. Enable networking in Railway:
+   - Go to Service Settings → Networking
+   - Add TCP port 45678
+   - Add UDP port 45678
+
+### Local Docker
 
 ```bash
-./bin/raag --network network auth-key
+docker-compose up -d
 ```
 
-### Run Authenticated Tracker
+The tracker will start with `AUTH_SECRET=raag-secret` from docker-compose.yml.
+
+### Manual
 
 ```bash
-./bin/tracker --http-port 8080 --auth-key <your-key>
+# Start tracker
+./bin/tracker --http-port 8080 --relay
+
+# Or with shared secret auth
+./bin/tracker --http-port 8080 --relay --auth-secret mypassword
+
+# Or with per-peer keys
+./bin/tracker --http-port 8080 --relay --auth-key <key1> --auth-key <key2>
 ```
 
-Multiple keys:
-```bash
-./bin/tracker --auth-key KEY1 --auth-key KEY2 --auth-key KEY3
-```
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PORT` | HTTP API port (default: 8080) |
+| `AUTH_SECRET` | Shared secret for authentication |
+| `AUTH_KEY` | Comma-separated trusted keys (tracker) |
+| `TRACKER_URL` | Default tracker URL (client) |
+| `XDG_CONFIG_HOME` | Config directory (default: ~/.config/raag) |
 
 ## Architecture
 
@@ -190,6 +270,7 @@ raag CLI/TUI
             ├── DHT discovery (decentralized)
             ├── tracker client (registration)
             ├── NAT traversal (hole punch, UPnP, AutoNAT)
+            ├── presence protocol (peer online/offline)
             └── file transfer protocol
 ```
 
@@ -204,38 +285,9 @@ raag CLI/TUI
 - Framed libp2p stream protocol
 - Metadata: title, artist, album, size, SHA-256
 - Encrypted via libp2p's Noise protocol
-- Idle timeout protection
+- Idle timeout protection (30s)
 - Atomic write with temp files
-
-## Deployment
-
-### Local Tracker
-
-```bash
-make run-tracker
-# or
-./bin/tracker --http-port 8080
-```
-
-### Docker
-
-```bash
-docker build -t raag .
-docker run -p 8080:8080 -p 45678:45678 -e AUTH_KEY=<key> raag
-```
-
-### Railway
-
-Set environment variables:
-- `PORT` - HTTP port (provided by Railway)
-- `AUTH_KEY` - Trusted peer keys
-
-### Environment Variables (Tracker)
-
-| Variable | Description |
-|----------|-------------|
-| `PORT` | HTTP API port (default: 8080) |
-| `AUTH_KEY` | Comma-separated trusted keys |
+- Max file size: 256MB
 
 ## Makefile Commands
 
@@ -252,6 +304,33 @@ Set environment variables:
 | `make lint` | Format + vet + staticcheck |
 | `make clean` | Remove artifacts |
 
+## Testing
+
+The project includes comprehensive tests:
+
+```bash
+# Run all tests
+make test
+
+# Run with race detector
+make test-race
+
+# Run specific package tests
+go test ./internal/auth/...     # Auth & crypto
+go test ./tracker/...           # Tracker server
+go test ./internal/network/...  # Network & transfer
+go test ./internal/playlist/... # Playlist manager
+go test ./internal/library/...   # Music library
+```
+
+### Test Coverage
+
+- **Authentication**: Key generation, PBKDF2 derivation, token signing/verification, nonce uniqueness
+- **Tracker**: Rate limiting, peer registration, auth validation, replay protection
+- **Network**: Framed transfer protocol, metadata serialization, address handling
+- **Playlist**: CRUD operations, song management
+- **Library**: Song scanning, searching, removal
+
 ## Files & Storage
 
 Config stored in `~/.config/raag/`:
@@ -263,35 +342,31 @@ Config stored in `~/.config/raag/`:
 - `playlists.json` - Playlist data
 - `peers.json` - Discovered peers cache
 
-**Important:** `identity.key` determines your peer ID and auth key. Keep it safe!
+**Important:** `identity.key` determines your peer ID. Keep it safe! If lost, you'll get a new peer ID.
 
 ## Troubleshooting
 
 ### No peers discovered
 
 ```bash
+# Check network status
 ./bin/raag network status
-# Check:
-# - --network flag used
-# - Tracker URL reachable
-# - Auth key trusted by tracker
-# - identity.key unchanged
+
+# Enable debug logging
+./bin/raag --log-level debug daemon --network
 ```
 
-### Tracker rejects registration
+### Tracker registration fails
 
-```bash
-# Get your auth key
-./bin/raag network auth-key
-
-# Verify it matches tracker's --auth-key
-```
+- Verify auth secret matches between tracker and client
+- Check tracker URL is reachable
+- For per-peer keys: verify your key is in tracker's trusted list
 
 ### Peer connection issues
 
-- Check NAT/firewall configuration
-- Use tracker for cross-network peers
-- Try manual ping: `./bin/raag peers ping <peer-id>`
+- Both peers need to be authenticated with the same tracker
+- NAT/firewall may block connections
+- Use relay mode (`--relay`) for NAT traversal
 
 ## License
 

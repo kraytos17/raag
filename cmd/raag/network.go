@@ -26,7 +26,7 @@ func statusCommand() *cobra.Command {
 		Short: "Show daemon status",
 		Run: func(cmd *cobra.Command, args []string) {
 			var result rpc.StatusResult
-			invokeRPC("DaemonService.Status", &rpc.StatusArgs{}, &result)
+			invokeRPC("DaemonService.Status", &rpc.EmptyArgs{}, &result)
 
 			logger.Infof("daemon status")
 			logger.Infof("running value=%v", result.Running)
@@ -55,7 +55,7 @@ func networkStatusCommand() *cobra.Command {
 		Short: "Show P2P network status",
 		Run: func(cmd *cobra.Command, args []string) {
 			var result rpc.NetworkStatusResult
-			invokeRPC("DaemonService.NetworkStatus", &rpc.NetworkStatusArgs{}, &result)
+			invokeRPC("DaemonService.NetworkStatus", &rpc.EmptyArgs{}, &result)
 
 			logger.Infof("Network status:")
 			logger.Infof("Self: %s", result.State.SelfID)
@@ -72,7 +72,7 @@ func networkAuthKeyCommand() *cobra.Command {
 		Short: "Print the full derived tracker auth key",
 		Run: func(cmd *cobra.Command, args []string) {
 			var result rpc.AuthKeyResult
-			invokeRPC("DaemonService.AuthKey", &rpc.AuthKeyArgs{}, &result)
+			invokeRPC("DaemonService.AuthKey", &rpc.EmptyArgs{}, &result)
 			if result.AuthPublicKey == "" {
 				logger.Errorf("No auth key available")
 				return

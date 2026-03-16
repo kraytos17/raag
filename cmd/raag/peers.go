@@ -39,7 +39,7 @@ func peersListCommand() *cobra.Command {
 		Short: "List connected peers",
 		Run: func(cmd *cobra.Command, args []string) {
 			var result rpc.PeerListResult
-			invokeRPC("DaemonService.PeersList", &rpc.PeerListArgs{}, &result)
+			invokeRPC("DaemonService.PeersList", &rpc.EmptyArgs{}, &result)
 
 			logger.Infof("connected peers count=%d", len(result.Peers))
 			for _, p := range result.Peers {
@@ -55,7 +55,7 @@ func peersInfoCommand() *cobra.Command {
 		Short: "Show all peer info",
 		Run: func(cmd *cobra.Command, args []string) {
 			var result rpc.PeersInfoResult
-			invokeRPC("DaemonService.PeersInfo", &rpc.PeersInfoArgs{}, &result)
+			invokeRPC("DaemonService.PeersInfo", &rpc.EmptyArgs{}, &result)
 
 			logger.Infof("self info")
 			logger.Infof("peer id id=%v", result.Self["peer_id"])
@@ -75,7 +75,7 @@ func peersConnectCommand() *cobra.Command {
 		Short: "Connect to a peer by multiaddr",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			var result rpc.ConnectResult
+			var result rpc.EmptyResult
 			invokeRPC("DaemonService.Connect", &rpc.ConnectArgs{Multiaddr: args[0]}, &result)
 			logger.Infof("connected to peer")
 		},
@@ -88,7 +88,7 @@ func peersDisconnectCommand() *cobra.Command {
 		Short: "Disconnect from a peer",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			var result rpc.DisconnectResult
+			var result rpc.EmptyResult
 			invokeRPC("DaemonService.Disconnect", &rpc.DisconnectArgs{PeerID: args[0]}, &result)
 			logger.Infof("disconnected from peer")
 		},
@@ -101,7 +101,7 @@ func peersTrackerCommand() *cobra.Command {
 		Short: "Set tracker URL",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			var result rpc.TrackerResult
+			var result rpc.EmptyResult
 			invokeRPC("DaemonService.UpdateTracker", &rpc.TrackerArgs{URL: args[0]}, &result)
 			logger.Infof("tracker URL updated successfully url=%s", args[0])
 		},
@@ -114,7 +114,7 @@ func peersBootstrapCommand() *cobra.Command {
 		Short: "Add bootstrap peer",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			var result rpc.BootstrapResult
+			var result rpc.EmptyResult
 			invokeRPC("DaemonService.AddBootstrap", &rpc.BootstrapArgs{Multiaddr: args[0]}, &result)
 			logger.Infof("bootstrap peer added successfully")
 		},

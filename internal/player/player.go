@@ -67,7 +67,7 @@ func (p *Player) Play(song metadata.Song) error {
 	}
 
 	p.mutex.Lock()
-	p.stopPlaybackLocked() // Clean up old state FIRST
+	p.stopPlaybackLocked() // Clean up old state first
 
 	p.trackEnded = make(chan struct{}, 1)
 	trackEnded := p.trackEnded

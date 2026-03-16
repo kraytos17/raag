@@ -2,14 +2,11 @@ package main
 
 import (
 	"strconv"
-	"time"
 
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/rpc"
 	"github.com/spf13/cobra"
 )
-
-var defaultRPCTimeout = 10 * time.Second
 
 func playCommand() *cobra.Command {
 	return &cobra.Command{

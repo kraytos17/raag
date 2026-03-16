@@ -5,6 +5,7 @@ import (
 	"os"
 
 	appconfig "github.com/p-society/raag/internal/config"
+	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/rpc"
 )
@@ -15,7 +16,7 @@ func newRPCClient() *rpc.Client {
 }
 
 func invokeRPC(method string, args, result any) {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultRPCTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), constants.RPCTimeout)
 	defer cancel()
 
 	client := requireDaemon()

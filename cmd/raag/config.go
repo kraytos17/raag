@@ -11,6 +11,7 @@ func configCommand() *cobra.Command {
 		Use:   "config",
 		Short: "Manage configuration",
 	}
+
 	cmd.AddCommand(configShowCommand())
 	cmd.AddCommand(configSetCommand())
 	cmd.AddCommand(configResetCommand())

@@ -9,7 +9,8 @@ services:
       - "45678:45678"
     environment:
       PORT: "8080"
-      # AUTH_KEY: "your-key"  # Comma-separated for multiple keys
+      # For local testing: AUTH_SECRET=yourpassword docker-compose up -d
+      # For Railway: Set AUTH_SECRET in Railway Dashboard → Variables
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]

@@ -99,6 +99,9 @@ const (
 	// HTTPClientTimeout is the timeout for HTTP client requests
 	HTTPClientTimeout = 10 * time.Second
 
+	// RPCTimeout is the timeout for RPC calls
+	RPCTimeout = 10 * time.Second
+
 	// TransferIdleTimeout is the max idle time for a transfer stream
 	TransferIdleTimeout = 30 * time.Second
 

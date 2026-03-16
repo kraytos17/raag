@@ -29,17 +29,56 @@ const (
 	maxPeers         = 10000 // Hard cap on peer map size
 	maxPeersResponse = 50    // Max peers returned per /peers request
 	maxRegisterBody  = 16384 // 16KB max payload for registration
+
+	rateLimitWindow           = 1 * time.Minute
+	rateLimitMaxRegistrations = 10 // Max registrations per IP per minute
 )
 
+// RateLimiter tracks registration attempts per IP
+type RateLimiter struct {
+	mu       sync.Mutex
+	requests map[string][]time.Time
+}
+
+func NewRateLimiter() *RateLimiter {
+	return &RateLimiter{
+		requests: make(map[string][]time.Time),
+	}
+}
+
+func (rl *RateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	windowStart := now.Add(-rateLimitWindow)
+
+	var valid []time.Time
+	for _, t := range rl.requests[ip] {
+		if t.After(windowStart) {
+			valid = append(valid, t)
+		}
+	}
+	if len(valid) >= rateLimitMaxRegistrations {
+		return false
+	}
+
+	rl.requests[ip] = append(valid, now)
+	return true
+}
+
 type Tracker struct {
-	mu            sync.RWMutex
-	peers         map[string]registeredPeer
-	httpPort      int
-	libp2pPort    int
-	host          host.Host
-	relayEnabled  bool
-	startedAt     time.Time
-	trustedKeyMgr *auth.TrustedKeyManager
+	mu              sync.RWMutex
+	peers           map[string]registeredPeer
+	httpPort        int
+	libp2pPort      int
+	host            host.Host
+	relayEnabled    bool
+	startedAt       time.Time
+	trustedKeyMgr   *auth.TrustedKeyManager
+	usedTokenNonces map[string]time.Time
+	nonceMu         sync.Mutex
+	rateLimiter     *RateLimiter
 }
 
 type registeredPeer struct {
@@ -64,11 +103,13 @@ func NewTracker(cfg TrackerConfig) *Tracker {
 	}
 
 	t := &Tracker{
-		peers:        make(map[string]registeredPeer),
-		httpPort:     cfg.HTTPPort,
-		libp2pPort:   cfg.Libp2pPort,
-		relayEnabled: cfg.RelayEnabled,
-		startedAt:    time.Now(),
+		peers:           make(map[string]registeredPeer),
+		httpPort:        cfg.HTTPPort,
+		libp2pPort:      cfg.Libp2pPort,
+		relayEnabled:    cfg.RelayEnabled,
+		startedAt:       time.Now(),
+		usedTokenNonces: make(map[string]time.Time),
+		rateLimiter:     NewRateLimiter(),
 	}
 	if len(cfg.AuthPublicKeys) > 0 {
 		t.trustedKeyMgr = auth.NewTrustedKeyManager()
@@ -238,6 +279,11 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	remoteIP := extractRemoteIP(r)
+	if !t.rateLimiter.Allow(remoteIP) {
+		logger.Warnf("Rate limit exceeded for IP: %s", remoteIP)
+		http.Error(w, "Too many requests", http.StatusTooManyRequests)
+		return
+	}
 	if len(req.Addrs) == 0 {
 		logger.Debugf("No addresses provided, using observed IP: %s", remoteIP)
 		req.Addrs = []string{
@@ -281,6 +327,11 @@ func (t *Tracker) handleRegisterPeer(w http.ResponseWriter, r *http.Request) {
 		}
 		if token.PeerID != req.PeerID {
 			logger.Warnf("Registration denied: token peer mismatch request=%s token=%s", req.PeerID, token.PeerID)
+			http.Error(w, "Authentication failed", http.StatusUnauthorized)
+			return
+		}
+		if !t.isNonceValid(token.Nonce) {
+			logger.Warnf("Registration denied: invalid or reused nonce for peer %s", req.PeerID)
 			http.Error(w, "Authentication failed", http.StatusUnauthorized)
 			return
 		}
@@ -416,6 +467,35 @@ func (t *Tracker) cleanupOldPeers() {
 				logger.Debugf("Removed stale peer: %s", peerID)
 			}
 		}
+
 		t.mu.Unlock()
+		t.cleanupOldNonces(now)
+	}
+}
+
+func (t *Tracker) isNonceValid(nonce string) bool {
+	if nonce == "" {
+		return false
+	}
+
+	t.nonceMu.Lock()
+	defer t.nonceMu.Unlock()
+
+	if _, exists := t.usedTokenNonces[nonce]; exists {
+		return false
+	}
+
+	t.usedTokenNonces[nonce] = time.Now()
+	return true
+}
+
+func (t *Tracker) cleanupOldNonces(now time.Time) {
+	t.nonceMu.Lock()
+	defer t.nonceMu.Unlock()
+
+	for nonce, usedAt := range t.usedTokenNonces {
+		if now.Sub(usedAt) > constants.PeerCleanupInterval {
+			delete(t.usedTokenNonces, nonce)
+		}
 	}
 }
