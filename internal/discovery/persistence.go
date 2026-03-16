@@ -56,7 +56,7 @@ func (p *PeerPersistence) Load() ([]peer.AddrInfo, error) {
 func (p *PeerPersistence) Save(peers []peer.AddrInfo) error {
 	multiaddrs := AddrInfoStrings(peers)
 	dir := filepath.Dir(p.peersFile)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	return storage.WriteJSONAtomic(p.peersFile, multiaddrs)

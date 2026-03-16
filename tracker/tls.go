@@ -18,12 +18,21 @@ import (
 
 func GenerateSelfSignedCert() (certFile, keyFile string, err error) {
 	certDir := "/app/certs"
-	if err := os.MkdirAll(certDir, 0o755); err != nil {
+	if err := os.MkdirAll(certDir, 0o750); err != nil {
 		return "", "", fmt.Errorf("failed to create certs directory: %w", err)
 	}
 
-	certFile = filepath.Join(certDir, "raag-tracker.crt")
-	keyFile = filepath.Join(certDir, "raag-tracker.key")
+	root, err := os.OpenRoot(certDir)
+	if err != nil {
+		return "", "", fmt.Errorf("error opening cert root: %w", err)
+	}
+
+	certTmpFile, err := root.Open("raag-tracker.crt")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create cert file: %w", err)
+	}
+	defer certTmpFile.Close()
+
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate private key: %w", err)
@@ -48,34 +57,46 @@ func GenerateSelfSignedCert() (certFile, keyFile string, err error) {
 		return "", "", fmt.Errorf("failed to create certificate: %w", err)
 	}
 
-	certOut, err := os.Create(certFile)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to write cert: %w", err)
+	if err := pem.Encode(certTmpFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return "", "", fmt.Errorf("failed to encode cert: %w", err)
 	}
 
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	certOut.Close()
-	keyOut, err := os.Create(keyFile)
+	keyTmpFile, err := root.Open("raag-key.pem")
 	if err != nil {
-		os.Remove(certFile)
-		return "", "", fmt.Errorf("failed to write key: %w", err)
+		return "", "", fmt.Errorf("failed to create key file: %w", err)
 	}
+	defer keyTmpFile.Close()
 
 	keyBytes, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
-		keyOut.Close()
-		os.Remove(certFile)
-		os.Remove(keyFile)
 		return "", "", fmt.Errorf("failed to marshal key: %w", err)
 	}
 
-	pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
-	keyOut.Close()
+	if err := pem.Encode(keyTmpFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}); err != nil {
+		return "", "", fmt.Errorf("failed to encode key: %w", err)
+	}
+
+	certFile = filepath.Join(certDir, "raag-tracker.crt")
+	keyFile = filepath.Join(certDir, "raag-tracker.key")
 	return certFile, keyFile, nil
 }
 
 func LoadOrGenerateCerts(certFile, keyFile string) (string, string, error) {
 	if certFile != "" && keyFile != "" {
+		certFile = filepath.Clean(certFile)
+		keyFile = filepath.Clean(keyFile)
+		certAbs, err := filepath.Abs(certFile)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to resolve cert path: %w", err)
+		}
+
+		keyAbs, err := filepath.Abs(keyFile)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to resolve key path: %w", err)
+		}
+
+		certFile = certAbs
+		keyFile = keyAbs
 		if _, err := os.Stat(certFile); err == nil {
 			if _, err := os.Stat(keyFile); err == nil {
 				return certFile, keyFile, nil

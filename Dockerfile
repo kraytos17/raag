@@ -9,9 +9,12 @@ COPY . .
 
 RUN go build -ldflags="-s -w" -o tracker ./tracker/cmd/tracker
 
-FROM alpine
+FROM ubuntu:24.04
 
-RUN apk --no-cache add ca-certificates wget
+# Install ca-certificates for SSL/TLS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/tracker .

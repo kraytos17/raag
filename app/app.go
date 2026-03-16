@@ -56,7 +56,9 @@ func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
 	}
 
 	pm := playlist.NewManager()
-	storage.LoadPlaylists(pm)
+	if err := storage.LoadPlaylists(pm); err != nil {
+		fmt.Printf("Warning: failed to load playlists: %v\n", err)
+	}
 	startTime := time.Now()
 	app := &App{
 		V:         v,
@@ -91,9 +93,9 @@ func (a *App) SaveState() {
 		state.Position = a.Player.GetPosition()
 	}
 
-	storage.SaveState(state)
-	storage.SavePlaylists(a.PM)
-	config.SaveConfig(a.V, a.Cfg)
+	_ = storage.SaveState(state)
+	_ = storage.SavePlaylists(a.PM)
+	_ = config.SaveConfig(a.V, a.Cfg)
 }
 
 // Close shuts down the application cleanly.
@@ -102,7 +104,7 @@ func (a *App) Close() {
 		a.cancel()
 	}
 	if a.NetMgr != nil {
-		a.NetMgr.Close()
+		_ = a.NetMgr.Close()
 	}
 	a.SaveState()
 }

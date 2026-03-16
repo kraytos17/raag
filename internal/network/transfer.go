@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,7 +45,11 @@ func buildTransferMetadata(song metadata.Song, fileSize int64, digest string, au
 	}
 }
 
+// writeTransferMetadata sends metadata about a file transfer including authentication token.
 func writeTransferMetadata(stream libp2pnetwork.Stream, meta transferMetadata) error {
+	//#nosec G117
+	// AuthToken is intentionally marshaled for secure P2P authentication transmission.
+	// This is not a secret leak - it's required for peer-to-peer authentication between trusted peers.
 	metadataBytes, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal transfer metadata: %w", err)
@@ -55,9 +60,17 @@ func writeTransferMetadata(stream libp2pnetwork.Stream, meta transferMetadata) e
 	if err := stream.SetWriteDeadline(time.Now().Add(constants.TransferIdleTimeout)); err != nil {
 		logger.Debugf("failed to set write deadline error=%v", err)
 	}
+	if len(metadataBytes) > math.MaxUint32 {
+		return fmt.Errorf("metadata too large for uint32 length prefix: %d", len(metadataBytes))
+	}
 
 	var lengthPrefix [4]byte
-	binary.BigEndian.PutUint32(lengthPrefix[:], uint32(len(metadataBytes)))
+	metadataLen := len(metadataBytes)
+	if metadataLen > int(^uint32(0)) {
+		return fmt.Errorf("metadata too large for uint32: %d", metadataLen)
+	}
+
+	binary.BigEndian.PutUint32(lengthPrefix[:], uint32(metadataLen))
 	if _, err := stream.Write(lengthPrefix[:]); err != nil {
 		return fmt.Errorf("write metadata length: %w", err)
 	}

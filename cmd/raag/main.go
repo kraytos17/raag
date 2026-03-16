@@ -20,12 +20,12 @@ func main() {
 			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Help()
+			_ = cmd.Help()
 		},
 	}
 
 	rootCmd.PersistentFlags().String("config", "", "config file (default is $HOME/.config/raag/config.yaml)")
-	rootCmd.PersistentFlags().MarkHidden("config")
+	_ = rootCmd.PersistentFlags().MarkHidden("config")
 	rootCmd.PersistentFlags().String("music-dir", "", "Directory containing music files (default: ~/.config/raag/music)")
 	rootCmd.PersistentFlags().Bool("network", false, "Enable network mode for peer discovery")
 	rootCmd.PersistentFlags().Bool("tui", false, "Start in TUI mode")

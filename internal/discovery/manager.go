@@ -194,7 +194,12 @@ func (m *Manager) GetNetworkState() NetworkState {
 	}
 
 	connectedPeers := m.host.Network().Peers()
-	state.MDNSDiscovered = int(m.mdnsPeerCount)
+	const maxInt32 = int64(1<<31 - 1)
+	if m.mdnsPeerCount > uint64(maxInt32) {
+		state.MDNSDiscovered = int(maxInt32)
+	} else {
+		state.MDNSDiscovered = int(m.mdnsPeerCount)
+	}
 	knownPeerIDs := m.host.Peerstore().Peers()
 	for _, pid := range knownPeerIDs {
 		if pid == m.host.ID() {
@@ -283,7 +288,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		go func() {
 			time.Sleep(2 * time.Second)
 			logger.Debugf("Retrying initial tracker discovery...")
-			if err := m.discoverFromTracker(context.Background()); err != nil {
+			if err := m.discoverFromTracker(ctx); err != nil {
 				logger.Debugf("Retry tracker discovery failed error=%v", err)
 			}
 		}()
@@ -922,8 +927,7 @@ func (m *Manager) advertisePeriodically(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if m.discovery != nil {
-				m.discovery.Advertise(ctx, m.rendezvous)
-				logger.Infof("DHT re-advertised presence")
+				_, _ = m.discovery.Advertise(ctx, m.rendezvous)
 			}
 		}
 	}
@@ -941,6 +945,7 @@ func (m *Manager) logNetworkStatus(ctx context.Context) {
 			dhtSize := 0
 			peerstoreCount := 0
 			connectedCount := 0
+			mdnsPeers := 0
 			if m.dht != nil {
 				dhtSize = m.dht.RoutingTable().Size()
 			}
@@ -950,7 +955,12 @@ func (m *Manager) logNetworkStatus(ctx context.Context) {
 			}
 
 			m.stateMu.RLock()
-			mdnsPeers := int(m.mdnsPeerCount)
+			const maxInt32 = int64(1<<31 - 1)
+			if m.mdnsPeerCount > uint64(maxInt32) {
+				mdnsPeers = int(maxInt32)
+			} else {
+				mdnsPeers = int(m.mdnsPeerCount)
+			}
 			m.stateMu.RUnlock()
 			logger.Debugf("Network status: dht_routing=%d peerstore=%d connected=%d mdns=%d",
 				dhtSize, peerstoreCount, connectedCount, mdnsPeers)
@@ -964,9 +974,12 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 	}
 
 	logger.Debugf("DHT: Advertising presence...")
-	m.discovery.Advertise(ctx, m.rendezvous)
-	logger.Debugf("DHT: Advertisement complete")
+	_, err := m.discovery.Advertise(ctx, m.rendezvous)
+	if err != nil {
+		logger.Warnf("DHT advertise failed error=%v", err)
+	}
 
+	logger.Debugf("DHT: Advertisement complete")
 	logger.Debugf("DHT: Waiting for peer connections...")
 	hasPeers := m.waitForPeers(ctx, constants.DHTWaitForPeersTimeout)
 	m.populateDHTFromConnectedPeers()

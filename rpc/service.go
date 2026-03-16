@@ -29,7 +29,9 @@ func NewDaemonService(a *app.App, ctx context.Context, shutdownFn func()) *Daemo
 
 // Register registers the service with the default RPC server.
 func (s *DaemonService) Register() {
-	rpc.Register(s)
+	if err := rpc.Register(s); err != nil {
+		logger.Errorf("Failed to register RPC service: %v", err)
+	}
 }
 
 type (

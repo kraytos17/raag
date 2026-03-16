@@ -201,7 +201,9 @@ func (t *Tracker) Start() error {
 		logger.Warnf("HTTP server shutdown error: %v", err)
 	}
 	if t.host != nil {
-		t.host.Close()
+		if err := t.host.Close(); err != nil {
+			logger.Warnf("Error closing libp2p host: %v", err)
+		}
 	}
 	return nil
 }

@@ -31,7 +31,7 @@ func NewLibrary(musicDir string) (*Library, error) {
 	}
 
 	lib.Songs.Store(&sync.Map{})
-	if err := os.MkdirAll(musicDir, 0o755); err != nil {
+	if err := os.MkdirAll(musicDir, 0o750); err != nil {
 		return nil, fmt.Errorf("error creating music directory: %w", err)
 	}
 	if err := lib.ScanMusicLibrary(musicDir); err != nil {
@@ -59,7 +59,7 @@ func (l *Library) StartWatcher() error {
 
 	l.watcher = watcher
 	if err := watcher.Add(l.musicDir); err != nil {
-		watcher.Close()
+		_ = watcher.Close()
 		return fmt.Errorf("failed to watch directory: %w", err)
 	}
 

@@ -53,7 +53,9 @@ func runDaemon(cmd *cobra.Command) {
 	}
 	if daemonTrackerURL != "" {
 		cfg.TrackerURL = daemonTrackerURL
-		config.SaveConfig(v, cfg)
+		if err := config.SaveConfig(v, cfg); err != nil {
+			logger.Warnf("failed to save config: %v", err)
+		}
 	}
 
 	a, err := app.NewApp(v, cfg)

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/rpc"
 	"os"
@@ -23,6 +24,9 @@ type Server struct {
 
 // NewServer creates a new RPC server using standard net/rpc.
 func NewServer(socketPath string, a *app.App, shutdownFn func()) *Server {
+	//#nosec G118
+	// The cancel function is stored in the Server struct and called in Stop().
+	// gosec cannot track this pattern statically, but the cancellation is properly handled.
 	ctx, cancel := context.WithCancel(context.Background())
 	svc := NewDaemonService(a, ctx, shutdownFn)
 	svc.Register()
@@ -37,14 +41,22 @@ func NewServer(socketPath string, a *app.App, shutdownFn func()) *Server {
 
 // Start begins listening for connections.
 func (s *Server) Start() error {
-	os.Remove(s.socketPath)
+	if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
+		logger.Warnf("Failed to remove existing socket: %v", err)
+	}
+
 	listener, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		return err
 	}
 
 	s.listener = listener
-	os.Chmod(s.socketPath, 0o600)
+	if err := os.Chmod(s.socketPath, 0o600); err != nil {
+		_ = s.listener.Close()
+		_ = os.Remove(s.socketPath)
+		return fmt.Errorf("failed to set socket permissions: %w", err)
+	}
+
 	logger.Infof("RPC server listening socket_path=%s", s.socketPath)
 	go s.acceptLoop()
 	return nil
@@ -56,9 +68,13 @@ func (s *Server) Stop() {
 		s.cancel()
 		close(s.shutdownCh)
 		if s.listener != nil {
-			s.listener.Close()
+			if err := s.listener.Close(); err != nil {
+				logger.Warnf("Error closing RPC listener: %v", err)
+			}
 		}
-		os.Remove(s.socketPath)
+		if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
+			logger.Warnf("Error removing socket file: %v", err)
+		}
 	})
 }
 

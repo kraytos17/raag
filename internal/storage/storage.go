@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
@@ -12,29 +13,36 @@ import (
 )
 
 func WriteJSONAtomic(filePath string, data any) error {
-	tmpPath := filePath + ".tmp"
-	file, err := os.Create(tmpPath)
+	dir, err := config.Dir()
+	if err != nil {
+		return err
+	}
+
+	tmpFile, err := os.CreateTemp(dir, "storage-*.tmp")
 	if err != nil {
 		return fmt.Errorf("error creating temp file: %w", err)
 	}
 
 	defer func() {
-		file.Close()
-		os.Remove(tmpPath)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
 	}()
 
-	encoder := json.NewEncoder(file)
+	encoder := json.NewEncoder(tmpFile)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(data); err != nil {
 		return fmt.Errorf("error encoding JSON: %w", err)
 	}
-	if err := file.Sync(); err != nil {
+	if err := tmpFile.Sync(); err != nil {
 		return fmt.Errorf("error syncing to disk: %w", err)
 	}
-	if err := file.Close(); err != nil {
+	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("error closing file: %w", err)
 	}
-	if err := os.Rename(tmpPath, filePath); err != nil {
+
+	finalPath := filepath.Clean(filePath)
+	tmpName := tmpFile.Name()
+	if err := os.Rename(tmpName, finalPath); err != nil {
 		return fmt.Errorf("error atomically saving file: %w", err)
 	}
 	return nil
@@ -54,7 +62,7 @@ func Init() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("error creating config directory: %w", err)
 	}
 	return nil
@@ -89,11 +97,33 @@ func LoadPlaylists(pm *playlist.Manager) error {
 		return err
 	}
 
-	data, err := os.ReadFile(filePath)
+	dir, err := config.Dir()
+	if err != nil {
+		return err
+	}
+
+	cleanPath := filepath.Clean(filePath)
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return fmt.Errorf("error opening config root: %w", err)
+	}
+
+	stat, err := root.Stat(cleanPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("error checking file: %w", err)
+	}
+	if stat.IsDir() {
+		return fmt.Errorf("path is a directory, not a file")
+	}
+
+	data, err := root.ReadFile(cleanPath)
+	if err != nil {
 		return fmt.Errorf("error reading playlists file: %w", err)
 	}
 	if len(data) == 0 {
@@ -111,7 +141,9 @@ func LoadPlaylists(pm *playlist.Manager) error {
 			continue
 		}
 		for _, song := range pl.Songs {
-			pm.AddSong(pl.Name, song)
+			if err := pm.AddSong(pl.Name, song); err != nil {
+				logger.Warnf("failed to add song %s to playlist %s: %v", song.Title, pl.Name, err)
+			}
 		}
 	}
 	return nil

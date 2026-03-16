@@ -67,7 +67,7 @@ func InitViper(cmd *cobra.Command) (*viper.Viper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not determine config file: %w", err)
 	}
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
 		return nil, fmt.Errorf("could not create config dir: %w", err)
 	}
 
@@ -106,15 +106,15 @@ func setDefaults(v *viper.Viper) {
 
 func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	root := cmd.Root()
-	v.BindPFlag("network.host", root.PersistentFlags().Lookup("host"))
-	v.BindPFlag("network.port", root.PersistentFlags().Lookup("port"))
-	v.BindPFlag("network.rendezvous", root.PersistentFlags().Lookup("rendezvous"))
-	v.BindPFlag("discovery.tracker_url", root.PersistentFlags().Lookup("tracker"))
-	v.BindPFlag("discovery.dht_enabled", root.PersistentFlags().Lookup("dht"))
-	v.BindPFlag("discovery.max_peers", root.PersistentFlags().Lookup("max-peers"))
-	v.BindPFlag("discovery.bootstrap_peers", root.PersistentFlags().Lookup("bootstrap"))
-	v.BindPFlag("discovery.auth_secret", root.PersistentFlags().Lookup("auth-secret"))
-	v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("music-dir"))
+	_ = v.BindPFlag("network.host", root.PersistentFlags().Lookup("host"))
+	_ = v.BindPFlag("network.port", root.PersistentFlags().Lookup("port"))
+	_ = v.BindPFlag("network.rendezvous", root.PersistentFlags().Lookup("rendezvous"))
+	_ = v.BindPFlag("discovery.tracker_url", root.PersistentFlags().Lookup("tracker"))
+	_ = v.BindPFlag("discovery.dht_enabled", root.PersistentFlags().Lookup("dht"))
+	_ = v.BindPFlag("discovery.max_peers", root.PersistentFlags().Lookup("max-peers"))
+	_ = v.BindPFlag("discovery.bootstrap_peers", root.PersistentFlags().Lookup("bootstrap"))
+	_ = v.BindPFlag("discovery.auth_secret", root.PersistentFlags().Lookup("auth-secret"))
+	_ = v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("music-dir"))
 }
 
 // LoadConfig loads configuration from Viper instance.

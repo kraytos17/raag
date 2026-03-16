@@ -15,6 +15,7 @@ import (
 	"github.com/faiface/beep/speaker"
 	"github.com/faiface/beep/vorbis"
 	"github.com/faiface/beep/wav"
+	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
 )
@@ -49,14 +50,25 @@ func NewPlayer() (*Player, error) {
 }
 
 func (p *Player) Play(song metadata.Song) error {
-	f, err := os.Open(song.Path)
+	cleanPath := filepath.Clean(song.Path)
+	musicDir, err := config.MusicDir()
+	if err != nil {
+		return fmt.Errorf("failed to get music dir: %w", err)
+	}
+
+	root, err := os.OpenRoot(musicDir)
+	if err != nil {
+		return fmt.Errorf("error opening music root: %w", err)
+	}
+
+	f, err := root.Open(cleanPath)
 	if err != nil {
 		return fmt.Errorf("error opening audio file: %w", err)
 	}
 
 	streamer, format, err := p.decodeAudio(f)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return fmt.Errorf("error decoding audio file: %w", err)
 	}
 
@@ -205,11 +217,11 @@ func (p *Player) stopPlaybackLocked() {
 	p.VolumeCtrl = nil
 	p.format = beep.Format{}
 	if p.streamCloser != nil {
-		p.streamCloser.Close()
+		_ = p.streamCloser.Close()
 		p.streamCloser = nil
 	}
 	if p.file != nil {
-		p.file.Close()
+		_ = p.file.Close()
 		p.file = nil
 	}
 }

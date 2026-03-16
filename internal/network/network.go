@@ -58,7 +58,35 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 		return key, nil
 	}
 
-	data, err := os.ReadFile(keyPath)
+	dir, err := config.Dir()
+	if err != nil {
+		logger.Warnf("Could not get config dir, generating new key: %v", err)
+		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+			if err != nil {
+				return nil, err
+			}
+			return key, nil
+		}
+
+		logger.Warnf("Could not open config root, generating new key: %v", err)
+		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+
+	data, err := root.ReadFile(keyPath)
 	if err == nil {
 		var sk serializedKey
 		if err := json.Unmarshal(data, &sk); err != nil {
@@ -127,7 +155,7 @@ type idleTimeoutWriter struct {
 }
 
 func (w *idleTimeoutWriter) Write(p []byte) (int, error) {
-	w.stream.SetWriteDeadline(time.Now().Add(w.timeout))
+	_ = w.stream.SetWriteDeadline(time.Now().Add(w.timeout))
 	return w.stream.Write(p)
 }
 
@@ -137,7 +165,7 @@ type idleTimeoutReader struct {
 }
 
 func (r *idleTimeoutReader) Read(p []byte) (int, error) {
-	r.stream.SetReadDeadline(time.Now().Add(r.timeout))
+	_ = r.stream.SetReadDeadline(time.Now().Add(r.timeout))
 	return r.stream.Read(p)
 }
 
@@ -550,7 +578,23 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 		return fmt.Errorf("file exceeds max transfer size: %d", song.Size)
 	}
 
-	file, err := os.Open(song.Path)
+	cleanPath := filepath.Clean(song.Path)
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve file path: %w", err)
+	}
+
+	root, err := os.OpenRoot(n.musicDir)
+	if err != nil {
+		return fmt.Errorf("error opening music root: %w", err)
+	}
+
+	relPath, err := filepath.Rel(n.musicDir, absPath)
+	if err != nil {
+		return fmt.Errorf("failed to get relative path: %w", err)
+	}
+
+	file, err := root.Open(relPath)
 	if err != nil {
 		return fmt.Errorf("open file for transfer: %w", err)
 	}
@@ -568,12 +612,13 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 	sessionNonce := generateSessionNonce()
 	meta := buildTransferMetadata(song, song.Size, song.Hash, authToken, sessionNonce)
 	if err := writeTransferMetadata(stream, meta); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		return fmt.Errorf("failed to send transfer metadata: %w", err)
 	}
+
 	writer := &idleTimeoutWriter{stream: stream, timeout: constants.TransferIdleTimeout}
 	if _, err := io.Copy(writer, file); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		return fmt.Errorf("failed to send song data: %w", err)
 	}
 
@@ -584,27 +629,25 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 func (n *NetworkManager) handleStream(stream network.Stream) {
 	peerID := stream.Conn().RemotePeer()
 	logger.Debugf("handleStream called peer_id=%s", peerID)
-
 	meta, err := readTransferMetadata(stream)
 	if err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Error reading metadata from peer peer_id=%s error=%v", peerID, err)
 		return
 	}
 	defer stream.Close()
 
 	if err := n.VerifyAuthToken(meta.AuthToken, peerID.String(), meta.SessionNonce); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Warnf("Auth verification failed for peer peer_id=%s error=%v", peerID, err)
 		return
 	}
-
 	if meta.SizeBytes == 0 {
 		logger.Debugf("Received empty file transfer from peer peer_id=%s", peerID)
 		return
 	}
 	if meta.SizeBytes > constants.TransferMaxFileSize {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Transfer rejected: file too large peer_id=%s size=%d", peerID, meta.SizeBytes)
 		return
 	}
@@ -621,7 +664,7 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	if saveDir == "" {
 		saveDir = "."
 	}
-	if err := os.MkdirAll(saveDir, 0o755); err != nil {
+	if err := os.MkdirAll(saveDir, 0o750); err != nil {
 		logger.Errorf("Error creating directory error=%v", err)
 		return
 	}
@@ -629,14 +672,14 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	filePath := filepath.Join(saveDir, fileName)
 	tmpFile, err := os.CreateTemp(saveDir, fileName+".*.part")
 	if err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Error creating temp file error=%v", err)
 		return
 	}
 
 	tmpPath := tmpFile.Name()
 	defer func() {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		if _, statErr := os.Stat(tmpPath); statErr == nil {
 			_ = os.Remove(tmpPath)
 		}
@@ -648,35 +691,35 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	reader := &idleTimeoutReader{stream: stream, timeout: constants.TransferIdleTimeout}
 	bytesWritten, err := io.CopyN(writer, reader, meta.SizeBytes)
 	if err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Error saving song error=%v", err)
 		return
 	}
 	if bytesWritten != meta.SizeBytes {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Incomplete transfer: wrote=%d expected=%d", bytesWritten, meta.SizeBytes)
 		return
 	}
 	if meta.SHA256 != "" {
 		digest := fmt.Sprintf("%x", hasher.Sum(nil))
 		if digest != meta.SHA256 {
-			stream.Reset()
+			_ = stream.Reset()
 			logger.Errorf("Hash mismatch for received song peer_id=%s expected=%s got=%s", peerID, meta.SHA256, digest)
 			return
 		}
 	}
 	if err := tmpFile.Sync(); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Error syncing temp file error=%v", err)
 		return
 	}
 	if err := tmpFile.Close(); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Error closing temp file error=%v", err)
 		return
 	}
 	if err := os.Rename(tmpPath, filePath); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		logger.Errorf("Error finalizing received song error=%v", err)
 		return
 	}
@@ -768,13 +811,13 @@ func (n *NetworkManager) handlePresence(stream network.Stream) {
 	buf := make([]byte, 64)
 	nRead, err := stream.Read(buf)
 	if err != nil || nRead == 0 {
-		stream.Close()
+		_ = stream.Close()
 		return
 	}
 
 	msg := string(buf[:nRead])
 	if len(msg) < 2 {
-		stream.Close()
+		_ = stream.Close()
 		return
 	}
 
@@ -786,7 +829,7 @@ func (n *NetworkManager) handlePresence(stream network.Stream) {
 	case "x":
 		logger.Infof("Peer went offline peer_id=%s", peerIDStr)
 	}
-	stream.Close()
+	_ = stream.Close()
 }
 
 func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {

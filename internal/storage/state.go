@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/p-society/raag/internal/config"
@@ -26,7 +27,13 @@ func LoadState() (*PlayerState, error) {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(filePath)
+	cleanPath := filepath.Clean(filePath)
+	dir, err := config.Dir()
+	if err != nil {
+		return nil, err
+	}
+
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &PlayerState{
@@ -36,6 +43,27 @@ func LoadState() (*PlayerState, error) {
 				LastPlayed: time.Time{},
 			}, nil
 		}
+		return nil, fmt.Errorf("error opening config root: %w", err)
+	}
+
+	stat, err := root.Stat(cleanPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &PlayerState{
+				Volume:     50,
+				Shuffle:    false,
+				Repeat:     false,
+				LastPlayed: time.Time{},
+			}, nil
+		}
+		return nil, fmt.Errorf("error checking file: %w", err)
+	}
+	if stat.IsDir() {
+		return nil, fmt.Errorf("path is a directory, not a file")
+	}
+
+	data, err := root.ReadFile(cleanPath)
+	if err != nil {
 		return nil, fmt.Errorf("error reading state file: %w", err)
 	}
 

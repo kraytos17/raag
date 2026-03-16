@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/dhowden/tag"
+	"github.com/p-society/raag/internal/config"
 )
 
 type Song struct {
@@ -19,7 +21,18 @@ type Song struct {
 }
 
 func ExtractMetadata(filePath string) (Song, error) {
-	file, err := os.Open(filePath)
+	cleanPath := filepath.Clean(filePath)
+	musicDir, err := config.MusicDir()
+	if err != nil {
+		return Song{}, fmt.Errorf("failed to get music dir: %w", err)
+	}
+
+	root, err := os.OpenRoot(musicDir)
+	if err != nil {
+		return Song{}, fmt.Errorf("error opening music root: %w", err)
+	}
+
+	file, err := root.Open(cleanPath)
 	if err != nil {
 		return Song{}, fmt.Errorf("failed to open song file: %w", err)
 	}
