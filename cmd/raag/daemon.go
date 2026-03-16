@@ -48,8 +48,9 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Errorf("failed to load config error=%v", err)
 		os.Exit(1)
 	}
-
-	logger.SetLevel(cfg.LogLevel)
+	if logLevel, _ := cmd.Flags().GetString("log-level"); logLevel == "" {
+		logger.SetLevel(cfg.LogLevel)
+	}
 	if daemonTrackerURL != "" {
 		cfg.TrackerURL = daemonTrackerURL
 		config.SaveConfig(v, cfg)
