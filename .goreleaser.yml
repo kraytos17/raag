@@ -1,9 +1,18 @@
 version: 2
 project_name: raag
+metadata:
+  description: A peer-to-peer music streaming application
+  homepage: https://github.com/p-society/raag
+  repository_url: https://github.com/p-society/raag
+  license: Apache-2.0
 before:
   hooks:
     - go mod tidy
     - go generate ./...
+variables:
+  version: "{{.Version}}"
+  build_time: "{{.Date}}"
+  commit: "{{.Commit}}"
 builds:
   - id: raag
     main: ./cmd/raag
@@ -12,8 +21,9 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.buildTime={{.Date}}
+      - -X main.version={{.Env.version}}
+      - -X main.buildTime={{.Env.build_time}}
+      - -X main.commit={{.Env.commit}}
     goos:
       - linux
       - darwin
@@ -24,6 +34,7 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    mod_timestamp: "{{.CommitTimestamp}}"
   - id: tracker
     main: ./tracker/cmd/tracker
     binary: tracker
@@ -31,8 +42,9 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.buildTime={{.Date}}
+      - -X main.version={{.Env.version}}
+      - -X main.buildTime={{.Env.build_time}}
+      - -X main.commit={{.Env.commit}}
     goos:
       - linux
       - darwin
@@ -43,6 +55,7 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    mod_timestamp: "{{.CommitTimestamp}}"
 archives:
   - id: raag
     builds:
@@ -55,6 +68,7 @@ archives:
     files:
       - LICENSE
       - README.md
+    wrap_in_directory: false
   - id: tracker
     builds:
       - tracker
@@ -66,13 +80,16 @@ archives:
     files:
       - LICENSE
       - README.md
+    wrap_in_directory: false
 checksum:
   name_template: checksums.txt
   algorithm: sha256
-snapshot:
-  version_template: "{{ incpatch .Version }}-SNAPSHOT-{{ .ShortCommit }}"
+  ids:
+    - raag
+    - tracker
 changelog:
   sort: asc
+  use: github
   filters:
     exclude:
       - "^docs:"
@@ -81,20 +98,27 @@ changelog:
       - "^test:"
       - Merge pull request
       - Merge branch
+      - Bump dependencies
   groups:
-    - title: "New Features"
+    - title: "🚀 New Features"
       regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
       order: 0
-    - title: "Bug Fixes"
+    - title: "🐛 Bug Fixes"
       regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
       order: 1
-    - title: "Performance"
+    - title: "⚡ Performance"
       regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
       order: 2
-    - title: "Refactoring"
+    - title: "🔧 Refactoring"
       regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
       order: 3
-    - title: "Other Changes"
+    - title: "📚 Documentation"
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 4
+    - title: "🔒 Security"
+      regexp: '^.*?security(\([[:word:]]+\))??!?:.+$'
+      order: 5
+    - title: "🛠️ Other Changes"
       order: 999
 release:
   github:
@@ -102,24 +126,36 @@ release:
     name: raag
   draft: false
   prerelease: auto
-  name_template: "v{{ .Version }}"
+  mode: append
+  name_template: "{{ .ProjectName }} v{{ .Version }}"
   header: |
-    ## Raag {{ .Tag }}
+    ## 🎵 {{ .ProjectName }} v{{ .Version }}
 
-    Released on {{ .Date }}.
+    **Released on {{ .Date }}**
 
-    ### Install
+    ### 📦 Downloads
 
-    ```bash
-    # Download the binary for your platform from the assets below
-    # Extract and add to PATH
-    ```
+    Download the binaries for your platform from the assets below.
 
-    ### Verify checksums
+    ### 🔐 Verify Checksums
 
     ```bash
     sha256sum -c checksums.txt
     ```
+
+    ### 📋 What's Changed
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/p-society/raag/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    ---
+
+    <p align="center">
+      <a href="https://github.com/p-society/raag">⭐ Star this project</a> |
+      <a href="https://github.com/p-society/raag/issues">🐛 Report a bug</a> |
+      <a href="https://github.com/p-society/raag/discussions">💬 Discussions</a>
+    </p>
 milestones:
   - close: true
 signs:
@@ -133,4 +169,7 @@ signs:
       - "${signature}"
       - "--detach-sign"
       - "${artifact}"
-    id: gpg
+    ids:
+      - raag
+      - tracker
+    signature: "${artifact}.sig"

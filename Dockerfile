@@ -15,6 +15,9 @@ RUN apk --no-cache add ca-certificates wget
 
 WORKDIR /app
 COPY --from=builder /app/tracker .
+COPY entrypoint.sh .
+
+RUN chmod +x entrypoint.sh
 
 EXPOSE 8080 45678
 
@@ -25,5 +28,4 @@ ENV TLS_ENABLED=
 ENV TLS_CERT_FILE=
 ENV TLS_KEY_FILE=
 
-ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["./tracker --http-port $PORT --libp2p-port $LIBP2P_PORT --relay $([ \"$TLS_ENABLED\" = \"true\" ] && echo \"--tls\") $([ -n \"$TLS_CERT_FILE\" ] && echo \"--tls-cert $TLS_CERT_FILE\") $([ -n \"$TLS_KEY_FILE\" ] && echo \"--tls-key $TLS_KEY_FILE\")"]
+ENTRYPOINT ["/app/entrypoint.sh"]
