@@ -21,6 +21,7 @@ import (
 	"github.com/p-society/raag/internal/auth"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
+	"golang.org/x/sync/errgroup"
 )
 
 type Manager struct {
@@ -288,20 +289,35 @@ func (m *Manager) Start(ctx context.Context) error {
 		}()
 	}
 
-	go m.runTrackerRegistrationLoop(ctx)
-	go m.runTrackerRefreshLoop(ctx)
 	if err := m.connectBootstrapPeers(ctx); err != nil {
 		logger.Warnf("Failed to connect configured bootstrap peers error=%v", err)
 	}
-	if m.listenHost == "127.0.0.1" || m.listenHost == "localhost" {
-		logger.Debugf("Skipping mDNS discovery (localhost mode)")
-	} else {
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		m.runTrackerRegistrationLoop(ctx)
+		return nil
+	})
+	g.Go(func() error {
+		m.runTrackerRefreshLoop(ctx)
+		return nil
+	})
+
+	if m.listenHost != "127.0.0.1" && m.listenHost != "localhost" {
 		logger.Debugf("Starting mDNS discovery in background...")
-		go m.discoverViaMDNS(ctx)
+		g.Go(func() error {
+			m.discoverViaMDNS(ctx)
+			return nil
+		})
+	} else {
+		logger.Debugf("Skipping mDNS discovery (localhost mode)")
 	}
 
 	if !m.dhtEnabled {
 		logger.Infof("DHT discovery disabled")
+		if err := g.Wait(); err != nil {
+			logger.Warnf("Background service error: %v", err)
+		}
 		return nil
 	}
 
@@ -311,9 +327,22 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.populateDHTFromConnectedPeers()
 
-	go m.logNetworkStatus(ctx)
-	go m.discoverViaDHT(ctx)
-	go m.advertisePeriodically(ctx)
+	g.Go(func() error {
+		m.logNetworkStatus(ctx)
+		return nil
+	})
+	g.Go(func() error {
+		m.discoverViaDHT(ctx)
+		return nil
+	})
+	g.Go(func() error {
+		m.advertisePeriodically(ctx)
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		logger.Warnf("Background service error: %v", err)
+	}
 	return nil
 }
 

@@ -161,7 +161,6 @@ func (t *Tracker) Start() error {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	logger.Infof("Tracker HTTP server starting on %s", addr)
 	serveErr := make(chan error, 1)
 	go func() {
 		var err error
