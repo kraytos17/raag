@@ -450,6 +450,8 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		Rendezvous:       cfg.Rendezvous,
 		DHTEnabled:       cfg.DHTEnabled,
 		BootstrapPeers:   cfg.BootstrapPeers,
+		MDNSEnabled:      cfg.MDNSEnabled,
+		MDNSServiceName:  cfg.MDNSServiceName,
 	})
 	nm := &NetworkManager{
 		host:          host,

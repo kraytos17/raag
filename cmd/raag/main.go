@@ -32,6 +32,8 @@ func main() {
 	rootCmd.PersistentFlags().String("tracker", constants.DefaultTrackerURL, "Centralized tracker URL for peer discovery")
 	rootCmd.PersistentFlags().Int("port", constants.DefaultPort, "Node listen port (use 0 for random)")
 	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery (default enabled)")
+	rootCmd.PersistentFlags().Bool("mdns", true, "Enable mDNS local network discovery (default enabled)")
+	rootCmd.PersistentFlags().String("mdns-service-name", "", "Custom mDNS service name for network isolation")
 	rootCmd.PersistentFlags().Int("max-peers", constants.DefaultMaxPeers, "Maximum number of peers to maintain")
 	rootCmd.PersistentFlags().StringSlice("bootstrap", []string{}, "DHT bootstrap peers (multiaddr)")
 	rootCmd.PersistentFlags().String("host", constants.DefaultHost, "The host address to listen on")

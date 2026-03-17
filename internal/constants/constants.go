@@ -82,6 +82,18 @@ const (
 	// MDNSLogInterval is how often to log mDNS peer count
 	MDNSLogInterval = 10 * time.Second
 
+	// MDNSRefreshInterval is how often to refresh mDNS discovery (5 minutes)
+	MDNSRefreshInterval = 5 * time.Minute
+
+	// MDNSRetryInitialDelay is the starting backoff delay for mDNS retries
+	MDNSRetryInitialDelay = 10 * time.Second
+
+	// MDNSRetryMaxDelay is the max backoff delay for mDNS retries
+	MDNSRetryMaxDelay = 60 * time.Second
+
+	// MDNSServiceNameDefault is the default mDNS service name
+	MDNSServiceNameDefault = "_p2p._udp"
+
 	// TrackerHeartbeatInterval is how often peers refresh tracker registration
 	TrackerHeartbeatInterval = 2 * time.Minute
 

@@ -21,11 +21,13 @@ type Config struct {
 	RelayAddress string `json:"network.relay_address"`
 
 	// Discovery - persistent discovery settings
-	TrackerURL     string   `json:"discovery.tracker_url"`
-	DHTEnabled     bool     `json:"discovery.dht_enabled"`
-	MaxPeers       int      `json:"discovery.max_peers"`
-	BootstrapPeers []string `json:"discovery.bootstrap_peers"`
-	AuthSecret     string   `mapstructure:"-" json:"-"`
+	TrackerURL      string   `json:"discovery.tracker_url"`
+	DHTEnabled      bool     `json:"discovery.dht_enabled"`
+	MaxPeers        int      `json:"discovery.max_peers"`
+	BootstrapPeers  []string `json:"discovery.bootstrap_peers"`
+	MDNSEnabled     bool     `json:"discovery.mdns_enabled"`
+	MDNSServiceName string   `json:"discovery.mdns_service_name"`
+	AuthSecret      string   `mapstructure:"-" json:"-"`
 
 	// Playback - persistent playback settings
 	MusicDir string `json:"playback.music_dir"`
@@ -43,19 +45,21 @@ func DefaultConfig() Config {
 		musicDir = defaultMusicDir
 	}
 	return Config{
-		Host:           constants.DefaultHost,
-		Port:           constants.DefaultPort,
-		Rendezvous:     constants.DefaultRendezvous,
-		RelayAddress:   "",
-		TrackerURL:     "",
-		DHTEnabled:     true,
-		MaxPeers:       constants.DefaultMaxPeers,
-		BootstrapPeers: []string{},
-		MusicDir:       musicDir,
-		Volume:         constants.DefaultVolume,
-		Network:        false,
-		ForceRelay:     false,
-		LogLevel:       "info",
+		Host:            constants.DefaultHost,
+		Port:            constants.DefaultPort,
+		Rendezvous:      constants.DefaultRendezvous,
+		RelayAddress:    "",
+		TrackerURL:      "",
+		DHTEnabled:      true,
+		MaxPeers:        constants.DefaultMaxPeers,
+		BootstrapPeers:  []string{},
+		MDNSEnabled:     true,
+		MDNSServiceName: "",
+		MusicDir:        musicDir,
+		Volume:          constants.DefaultVolume,
+		Network:         false,
+		ForceRelay:      false,
+		LogLevel:        "info",
 	}
 }
 
@@ -106,6 +110,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("discovery.dht_enabled", defaults.DHTEnabled)
 	v.SetDefault("discovery.max_peers", defaults.MaxPeers)
 	v.SetDefault("discovery.bootstrap_peers", defaults.BootstrapPeers)
+	v.SetDefault("discovery.mdns_enabled", defaults.MDNSEnabled)
+	v.SetDefault("discovery.mdns_service_name", defaults.MDNSServiceName)
 	v.SetDefault("discovery.auth_secret", os.Getenv("AUTH_SECRET"))
 	v.SetDefault("playback.music_dir", defaults.MusicDir)
 }
@@ -119,6 +125,8 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	_ = v.BindPFlag("network.force_relay", root.PersistentFlags().Lookup("force-relay"))
 	_ = v.BindPFlag("discovery.tracker_url", root.PersistentFlags().Lookup("tracker"))
 	_ = v.BindPFlag("discovery.dht_enabled", root.PersistentFlags().Lookup("dht"))
+	_ = v.BindPFlag("discovery.mdns_enabled", root.PersistentFlags().Lookup("mdns"))
+	_ = v.BindPFlag("discovery.mdns_service_name", root.PersistentFlags().Lookup("mdns-service-name"))
 	_ = v.BindPFlag("discovery.max_peers", root.PersistentFlags().Lookup("max-peers"))
 	_ = v.BindPFlag("discovery.bootstrap_peers", root.PersistentFlags().Lookup("bootstrap"))
 	_ = v.BindPFlag("discovery.auth_secret", root.PersistentFlags().Lookup("auth-secret"))
@@ -128,17 +136,19 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 // LoadConfig loads configuration from Viper instance.
 func LoadConfig(v *viper.Viper) (*Config, error) {
 	cfg := &Config{
-		Host:           v.GetString("network.host"),
-		Port:           v.GetInt("network.port"),
-		Rendezvous:     v.GetString("network.rendezvous"),
-		RelayAddress:   v.GetString("network.relay_address"),
-		TrackerURL:     v.GetString("discovery.tracker_url"),
-		DHTEnabled:     v.GetBool("discovery.dht_enabled"),
-		MaxPeers:       v.GetInt("discovery.max_peers"),
-		BootstrapPeers: v.GetStringSlice("discovery.bootstrap_peers"),
-		AuthSecret:     v.GetString("discovery.auth_secret"),
-		MusicDir:       v.GetString("playback.music_dir"),
-		ForceRelay:     v.GetBool("network.force_relay"),
+		Host:            v.GetString("network.host"),
+		Port:            v.GetInt("network.port"),
+		Rendezvous:      v.GetString("network.rendezvous"),
+		RelayAddress:    v.GetString("network.relay_address"),
+		TrackerURL:      v.GetString("discovery.tracker_url"),
+		DHTEnabled:      v.GetBool("discovery.dht_enabled"),
+		MaxPeers:        v.GetInt("discovery.max_peers"),
+		BootstrapPeers:  v.GetStringSlice("discovery.bootstrap_peers"),
+		MDNSEnabled:     v.GetBool("discovery.mdns_enabled"),
+		MDNSServiceName: v.GetString("discovery.mdns_service_name"),
+		AuthSecret:      v.GetString("discovery.auth_secret"),
+		MusicDir:        v.GetString("playback.music_dir"),
+		ForceRelay:      v.GetBool("network.force_relay"),
 	}
 	if cfg.TrackerURL == "" {
 		if url := os.Getenv(constants.EnvTrackerURL); url != "" {

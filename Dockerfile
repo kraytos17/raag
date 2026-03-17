@@ -39,9 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     wget \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 1000 raag 2>/dev/null || groupadd -f --gid 1000 raag \
-    && useradd -o -u 1000 --gid raag --shell /bin/false --create-home raag 2>/dev/null \
-    || usermod -o -u 1000 raag 2>/dev/null || true
+    && (getent group raag >/dev/null || groupadd --gid 1000 raag) \
+    && (getent passwd raag >/dev/null || useradd -o --uid 1000 --gid raag --shell /bin/false --create-home raag)
 
 WORKDIR /home/raag
 

@@ -25,29 +25,34 @@ import (
 )
 
 type Manager struct {
-	host           host.Host
-	ctx            context.Context
-	dht            *dht.IpfsDHT
-	discovery      *routing.RoutingDiscovery
-	persistence    *PeerPersistence
-	tracker        *TrackerClient
-	maxPeers       int
-	trackerURL     string
-	listenHost     string
-	rendezvous     string
-	dhtEnabled     bool
-	bootstrapPeers []string
-	authKeyPair    ed25519.PrivateKey
-	authToken      *auth.AuthToken
-	networkManager interface {
+	host            host.Host
+	ctx             context.Context
+	dht             *dht.IpfsDHT
+	discovery       *routing.RoutingDiscovery
+	persistence     *PeerPersistence
+	tracker         *TrackerClient
+	maxPeers        int
+	trackerURL      string
+	listenHost      string
+	rendezvous      string
+	dhtEnabled      bool
+	bootstrapPeers  []string
+	mdnsEnabled     bool
+	mdnsServiceName string
+	authKeyPair     ed25519.PrivateKey
+	authToken       *auth.AuthToken
+	networkManager  interface {
 		NotifyPeerConnected(peerID peer.ID, addr string)
 	}
 	onPeerSave              func(peers []peer.AddrInfo)
 	mdnsPeerCount           uint64
+	mdnsService             mdns.Service
+	mdnsNotifee             *mdnsNotifee
 	heartbeatEvery          time.Duration
 	refreshEvery            time.Duration
 	retryDelay              time.Duration
 	maxRetryDelay           time.Duration
+	mdnsRetryDelay          time.Duration
 	lastBootstrap           time.Time
 	bootstrapThrottle       time.Duration
 	peerCountSinceBootstrap int
@@ -64,6 +69,8 @@ type ManagerConfig struct {
 	Rendezvous       string
 	DHTEnabled       bool
 	BootstrapPeers   []string
+	MDNSEnabled      bool
+	MDNSServiceName  string
 }
 
 func NewManager(cfg ManagerConfig) *Manager {
@@ -110,11 +117,14 @@ func NewManager(cfg ManagerConfig) *Manager {
 		rendezvous:              cfg.Rendezvous,
 		dhtEnabled:              cfg.DHTEnabled,
 		bootstrapPeers:          slices.Clone(bootstrapPeers),
+		mdnsEnabled:             cfg.MDNSEnabled,
+		mdnsServiceName:         cfg.MDNSServiceName,
 		authKeyPair:             authKeyPair,
 		heartbeatEvery:          constants.TrackerHeartbeatInterval,
 		refreshEvery:            constants.TrackerRefreshInterval,
 		retryDelay:              constants.TrackerRetryInitialDelay,
 		maxRetryDelay:           constants.TrackerRetryMaxDelay,
+		mdnsRetryDelay:          constants.MDNSRetryInitialDelay,
 		lastBootstrap:           time.Now(),
 		bootstrapThrottle:       constants.DHTBootstrapThrottle,
 		peerCountSinceBootstrap: 0,
@@ -183,7 +193,7 @@ func (m *Manager) GetNetworkState() NetworkState {
 		TrackerStatus:  "unknown",
 		DHTEnabled:     m.dhtEnabled,
 		DHTPeers:       0,
-		MDNSEnabled:    m.listenHost != "127.0.0.1" && m.listenHost != "localhost",
+		MDNSEnabled:    m.mdnsEnabled && m.listenHost != "127.0.0.1" && m.listenHost != "localhost",
 		MDNSDiscovered: 0,
 		ConnectedPeers: []PeerInfo{},
 		KnownPeers:     []PeerInfo{},
@@ -319,14 +329,22 @@ func (m *Manager) Start(ctx context.Context) error {
 		return nil
 	})
 
-	if m.listenHost != "127.0.0.1" && m.listenHost != "localhost" {
-		logger.Debugf("Starting mDNS discovery in background...")
+	// mDNS is enabled if: explicitly enabled in config AND not in localhost mode
+	mdnsCanStart := m.mdnsEnabled && m.listenHost != "127.0.0.1" && m.listenHost != "localhost"
+	if m.mdnsEnabled && !mdnsCanStart {
+		if m.listenHost == "127.0.0.1" || m.listenHost == "localhost" {
+			logger.Debugf("Skipping mDNS discovery (localhost mode)")
+		}
+	}
+	if mdnsCanStart {
+		logger.Infof("Starting mDNS discovery (service=%s)", m.getMDNSServiceName())
+		logger.Infof("mDNS: ensure UDP port 5353 is open on firewall for local peer discovery")
 		g.Go(func() error {
 			m.discoverViaMDNS(ctx)
 			return nil
 		})
-	} else {
-		logger.Debugf("Skipping mDNS discovery (localhost mode)")
+	} else if !m.mdnsEnabled {
+		logger.Infof("mDNS discovery disabled via config")
 	}
 
 	if !m.dhtEnabled {
@@ -1165,17 +1183,72 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 	}
 }
 
+func (m *Manager) getMDNSServiceName() string {
+	if m.mdnsServiceName != "" {
+		return m.mdnsServiceName
+	}
+	return constants.MDNSServiceNameDefault
+}
+
 func (m *Manager) discoverViaMDNS(ctx context.Context) {
-	notifee := &mdnsNotifee{manager: m}
-	service := mdns.NewMdnsService(m.host, m.rendezvous, notifee)
+	logger.Infof("mDNS: service name=%s, refresh_interval=%v", m.getMDNSServiceName(), constants.MDNSRefreshInterval)
+	for {
+		select {
+		case <-ctx.Done():
+			if m.mdnsService != nil {
+				logger.Infof("mDNS: stopping service")
+				if err := m.mdnsService.Close(); err != nil {
+					logger.Debugf("mDNS: error closing service: %v", err)
+				}
+			}
+			logger.Infof("mDNS: discovery stopped")
+			return
+		default:
+		}
+
+		err := m.startMDNSService(ctx)
+		if err != nil {
+			logger.Warnf("mDNS: service error, retrying in %v: %v", m.mdnsRetryDelay, err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(m.mdnsRetryDelay):
+			}
+
+			if m.mdnsRetryDelay < constants.MDNSRetryMaxDelay {
+				m.mdnsRetryDelay *= 2
+			}
+		}
+	}
+}
+
+func (m *Manager) startMDNSService(ctx context.Context) error {
+	mdnsNotifee := &mdnsNotifee{manager: m}
+	service := mdns.NewMdnsService(m.host, m.getMDNSServiceName(), mdnsNotifee)
 	if err := service.Start(); err != nil {
-		logger.Errorf("mDNS discovery failed error=%v", err)
-		return
+		return fmt.Errorf("failed to start mDNS service: %w", err)
 	}
 
-	logger.Debugf("mDNS service started, running continuously...")
-	<-ctx.Done()
-	logger.Debugf("mDNS discovery stopped")
+	m.mdnsService = service
+	m.mdnsNotifee = mdnsNotifee
+	m.mdnsRetryDelay = constants.MDNSRetryInitialDelay
+
+	logger.Infof("mDNS: service started successfully")
+	refreshTicker := time.NewTicker(constants.MDNSRefreshInterval)
+	defer refreshTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-refreshTicker.C:
+			logger.Debugf("mDNS: refreshing discovery")
+			if err := service.Close(); err != nil {
+				logger.Debugf("mDNS: error closing service: %v", err)
+			}
+			return nil
+		}
+	}
 }
 
 type mdnsNotifee struct {
@@ -1198,12 +1271,10 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 		n.manager.stateMu.Lock()
 		n.manager.mdnsPeerCount++
 		n.manager.stateMu.Unlock()
-	}
-	if alreadyKnown {
-		logger.Debugf("mDNS found already known peer, skipping peer=%s", pi.ID)
+		logger.Infof("mDNS: discovered new peer %s", pi.ID)
+	} else {
+		logger.Debugf("mDNS: peer already known, skipping peer=%s", pi.ID)
 		return
 	}
-
-	logger.Debugf("mDNS discovered peer peer=%s", pi.ID)
 	n.manager.savePeer(pi, false)
 }
