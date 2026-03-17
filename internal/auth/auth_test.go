@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/ed25519"
 	"testing"
 	"time"
 
@@ -142,13 +143,20 @@ func TestGenerateTokenUniqueNonces(t *testing.T) {
 }
 
 func TestVerifyTokenValid(t *testing.T) {
-	_, priv, err := GenerateKeyPair()
+	t.Helper()
+	edPriv := mustGenerateEd25519Key(t)
+
+	privKey, err := crypto.UnmarshalEd25519PrivateKey(edPriv)
 	if err != nil {
-		t.Fatalf("GenerateKeyPair() error = %v", err)
+		t.Fatalf("UnmarshalEd25519PrivateKey() error = %v", err)
 	}
 
-	id := mustPeerID(t)
-	token, err := GenerateToken(id, priv)
+	id, err := peer.IDFromPrivateKey(privKey)
+	if err != nil {
+		t.Fatalf("IDFromPrivateKey() error = %v", err)
+	}
+
+	token, err := GenerateToken(id, edPriv)
 	if err != nil {
 		t.Fatalf("GenerateToken() error = %v", err)
 	}
@@ -160,6 +168,16 @@ func TestVerifyTokenValid(t *testing.T) {
 	if !valid {
 		t.Error("VerifyToken() should return true for valid token")
 	}
+}
+
+func mustGenerateEd25519Key(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey() error = %v", err)
+	}
+	_ = pub
+	return priv
 }
 
 func TestVerifyTokenEmptyPeerID(t *testing.T) {
@@ -358,17 +376,23 @@ func TestTrustedKeyManagerAddAndIsTrusted(t *testing.T) {
 }
 
 func TestTrustedKeyManagerVerifyAndCheckTrust(t *testing.T) {
-	_, priv, err := GenerateKeyPair()
+	t.Helper()
+	edPriv := mustGenerateEd25519Key(t)
+	privKey, err := crypto.UnmarshalEd25519PrivateKey(edPriv)
 	if err != nil {
-		t.Fatalf("GenerateKeyPair() error = %v", err)
+		t.Fatalf("UnmarshalEd25519PrivateKey() error = %v", err)
 	}
 
-	pubHex := GetPublicKeyHex(priv)
+	id, err := peer.IDFromPrivateKey(privKey)
+	if err != nil {
+		t.Fatalf("IDFromPrivateKey() error = %v", err)
+	}
+
+	pubHex := GetPublicKeyHex(edPriv)
 	mgr := NewTrustedKeyManager()
 	mgr.AddKey(pubHex)
 
-	id := mustPeerID(t)
-	token, err := GenerateToken(id, priv)
+	token, err := GenerateToken(id, edPriv)
 	if err != nil {
 		t.Fatalf("GenerateToken() error = %v", err)
 	}
@@ -402,25 +426,22 @@ func TestTrustedKeyManagerUntrustedKey(t *testing.T) {
 }
 
 func TestTrustedKeyManagerMultipleKeys(t *testing.T) {
-	_, priv1, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair() error = %v", err)
-	}
+	t.Helper()
+	edPriv1 := mustGenerateEd25519Key(t)
+	edPriv2 := mustGenerateEd25519Key(t)
 
-	_, priv2, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair() error = %v", err)
-	}
+	privKey1, _ := crypto.UnmarshalEd25519PrivateKey(edPriv1)
+	privKey2, _ := crypto.UnmarshalEd25519PrivateKey(edPriv2)
+
+	id1, _ := peer.IDFromPrivateKey(privKey1)
+	id2, _ := peer.IDFromPrivateKey(privKey2)
 
 	mgr := NewTrustedKeyManager()
-	mgr.AddKey(GetPublicKeyHex(priv1))
-	mgr.AddKey(GetPublicKeyHex(priv2))
+	mgr.AddKey(GetPublicKeyHex(edPriv1))
+	mgr.AddKey(GetPublicKeyHex(edPriv2))
 
-	id1 := mustPeerID(t)
-	id2 := mustPeerID(t)
-
-	token1, _ := GenerateToken(id1, priv1)
-	token2, _ := GenerateToken(id2, priv2)
+	token1, _ := GenerateToken(id1, edPriv1)
+	token2, _ := GenerateToken(id2, edPriv2)
 
 	valid1, _ := mgr.VerifyAndCheckTrust(token1)
 	valid2, _ := mgr.VerifyAndCheckTrust(token2)
@@ -430,17 +451,24 @@ func TestTrustedKeyManagerMultipleKeys(t *testing.T) {
 }
 
 func TestTokenAuthIntegration(t *testing.T) {
-	_, issuerPriv, err := GenerateKeyPair()
+	t.Helper()
+	edPriv := mustGenerateEd25519Key(t)
+
+	privKey, err := crypto.UnmarshalEd25519PrivateKey(edPriv)
 	if err != nil {
-		t.Fatalf("GenerateKeyPair() error = %v", err)
+		t.Fatalf("UnmarshalEd25519PrivateKey() error = %v", err)
 	}
 
-	peerID := mustPeerID(t)
-	trustedKeyHex := GetPublicKeyHex(issuerPriv)
+	peerID, err := peer.IDFromPrivateKey(privKey)
+	if err != nil {
+		t.Fatalf("IDFromPrivateKey() error = %v", err)
+	}
+
+	trustedKeyHex := GetPublicKeyHex(edPriv)
 	mgr := NewTrustedKeyManager()
 	mgr.AddKey(trustedKeyHex)
 
-	token, err := GenerateToken(peerID, issuerPriv)
+	token, err := GenerateToken(peerID, edPriv)
 	if err != nil {
 		t.Fatalf("GenerateToken() error = %v", err)
 	}

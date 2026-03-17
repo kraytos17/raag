@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/core/control"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -183,33 +182,28 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 }
 
 type NetworkManager struct {
-	host            host.Host
-	ctx             context.Context
-	cfg             *config.Config
-	viper           *viper.Viper
-	library         *library.Library
-	musicDir        string
-	Online          bool
-	OnPeerJoin      func(peer.ID)
-	OnPeerLeave     func(peer.ID)
-	OnStateChange   func(bool)
-	discovery       *discovery.Manager
-	pingService     *ping.PingService
-	authEnabled     bool
-	authorizedPeers map[string]struct{}
-	authorizedMu    sync.RWMutex
-	usedNonces      map[string]time.Time
-	nonceMu         sync.Mutex
-	peerStateMu     sync.RWMutex
-	connectedPeers  map[peer.ID]bool
-	peersMu         sync.RWMutex
-	peerConnectCh   chan struct{}
-	presenceCh      chan presenceMessage
-}
-
-type presenceMessage struct {
-	peerID peer.ID
-	status string
+	host              host.Host
+	ctx               context.Context
+	cfg               *config.Config
+	viper             *viper.Viper
+	library           *library.Library
+	musicDir          string
+	Online            bool
+	OnPeerJoin        func(peer.ID)
+	OnPeerLeave       func(peer.ID)
+	OnStateChange     func(bool)
+	discovery         *discovery.Manager
+	pingService       *ping.PingService
+	authEnabled       bool
+	authorizedPeers   map[string]struct{}
+	authorizedMu      sync.RWMutex
+	usedNonces        map[string]time.Time
+	nonceMu           sync.Mutex
+	connectedPeers    map[peer.ID]bool
+	peersMu           sync.RWMutex
+	peerConnectCh     chan struct{}
+	pendingHandshakes map[peer.ID]chan struct{}
+	handshakeMu       sync.Mutex
 }
 
 func (n *NetworkManager) getContext() context.Context {
@@ -379,7 +373,6 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 			logger.Debugf("Connection manager initialized with limits")
 		}
 
-		opts = append(opts, libp2p.ConnectionGater(&RaagConnectionGater{}))
 		opts = append(opts, libp2p.EnableRelay())
 		if cfg.ForceRelay {
 			logger.Infof("Force relay mode enabled - skipping hole punching, using relay for all connections")
@@ -467,7 +460,6 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		discovery:     discoveryMgr,
 		pingService:   pingService,
 		peerConnectCh: make(chan struct{}, 1),
-		presenceCh:    make(chan presenceMessage, 64),
 	}
 
 	discoveryMgr.SetNetworkManager(nm)
@@ -507,41 +499,16 @@ func newConnectionManager() (*connmgr.BasicConnMgr, error) {
 	return cm, nil
 }
 
-// RaagConnectionGater is a simple connection gater that allows all connections
-// Can be extended to add filtering, rate limiting, etc.
-type RaagConnectionGater struct{}
-
-func (g *RaagConnectionGater) InterceptPeerDial(p peer.ID) bool {
-	return true
-}
-
-func (g *RaagConnectionGater) InterceptAddrDial(p peer.ID, m multiaddr.Multiaddr) bool {
-	return true
-}
-
-func (g *RaagConnectionGater) InterceptAccept(addrs network.ConnMultiaddrs) bool {
-	return true
-}
-
-func (g *RaagConnectionGater) InterceptSecured(d network.Direction, p peer.ID, addrs network.ConnMultiaddrs) bool {
-	return true
-}
-
-func (g *RaagConnectionGater) InterceptUpgraded(c network.Conn) (bool, control.DisconnectReason) {
-	return true, 0
-}
-
 func (n *NetworkManager) Start(ctx context.Context) error {
 	n.ctx = ctx
 	n.connectedPeers = make(map[peer.ID]bool)
 	n.host.SetStreamHandler(protocol.ID(constants.ShareProtocolID), n.handleStream)
-	n.host.SetStreamHandler(protocol.ID(constants.PresenceProtocolID), n.handlePresence)
+	n.host.SetStreamHandler(protocol.ID(constants.HandshakeProtocolID), n.handleHandshake)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
 
 	go n.healthCheckLoop(ctx)
-	go n.presenceLoop(ctx)
 
 	addrs := n.host.Addrs()
 	if len(addrs) > 0 {
@@ -920,6 +887,9 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 
 func (n *NetworkManager) handlePeerConnect(peerID peer.ID, addr multiaddr.Multiaddr) {
 	n.notifyPeerConnected(peerID, addr.String())
+	if n.IsAuthEnabled() {
+		go n.initiateHandshake(peerID)
+	}
 }
 
 // NotifyPeerConnected is called when a peer connection is established externally
@@ -931,17 +901,23 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 	if peerID == n.host.ID() {
 		return
 	}
+	if n.IsAuthEnabled() {
+		done := n.waitForHandshake(peerID)
+		if !done {
+			logger.Debugf("Handshake failed, not adding peer peer_id=%s", peerID)
+			return
+		}
+	}
 
-	n.peerStateMu.Lock()
+	n.peersMu.Lock()
 	_, alreadyConnected := n.connectedPeers[peerID]
 	n.connectedPeers[peerID] = true
-	n.peerStateMu.Unlock()
+	n.peersMu.Unlock()
 
 	conns := n.host.Network().ConnsToPeer(peerID)
 	if len(conns) == 1 {
 		if !alreadyConnected {
-			logger.Debugf("Peer connected peer_id=%s address=%s", peerID, addr)
-			n.broadcastPresence(peerID, "online")
+			logger.Debugf("Peer connected and authenticated peer_id=%s address=%s", peerID, addr)
 			select {
 			case n.peerConnectCh <- struct{}{}:
 			default:
@@ -960,17 +936,50 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 	}
 }
 
+func (n *NetworkManager) waitForHandshake(peerID peer.ID) bool {
+	n.handshakeMu.Lock()
+	if n.pendingHandshakes == nil {
+		n.pendingHandshakes = make(map[peer.ID]chan struct{})
+	}
+
+	doneCh, exists := n.pendingHandshakes[peerID]
+	if exists {
+		n.handshakeMu.Unlock()
+		<-doneCh
+		n.handshakeMu.Lock()
+		delete(n.pendingHandshakes, peerID)
+		n.handshakeMu.Unlock()
+		return true
+	}
+
+	doneCh = make(chan struct{})
+	n.pendingHandshakes[peerID] = doneCh
+	n.handshakeMu.Unlock()
+
+	select {
+	case <-doneCh:
+	case <-time.After(constants.HandshakeTimeout):
+	}
+
+	n.handshakeMu.Lock()
+	delete(n.pendingHandshakes, peerID)
+	close(doneCh)
+	n.handshakeMu.Unlock()
+
+	_, stillConnected := n.connectedPeers[peerID]
+	return stillConnected
+}
+
 func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Multiaddr) {
 	conns := n.host.Network().ConnsToPeer(peerID)
 	logger.Debugf("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
 
-	n.peerStateMu.Lock()
+	n.peersMu.Lock()
 	if n.connectedPeers[peerID] {
 		delete(n.connectedPeers, peerID)
-		n.peerStateMu.Unlock()
-		n.broadcastPresence(peerID, "offline")
+		n.peersMu.Unlock()
 	} else {
-		n.peerStateMu.Unlock()
+		n.peersMu.Unlock()
 	}
 
 	if len(conns) == 0 {
@@ -986,106 +995,6 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 				n.OnStateChange(false)
 			}
 		}
-	}
-}
-
-func (n *NetworkManager) handlePresence(stream network.Stream) {
-	senderID := stream.Conn().RemotePeer()
-	buf := make([]byte, 256)
-	nRead, err := stream.Read(buf)
-	if err != nil || nRead == 0 {
-		_ = stream.Close()
-		return
-	}
-
-	msg := string(buf[:nRead])
-	if len(msg) < 2 {
-		_ = stream.Close()
-		return
-	}
-
-	action := msg[:1]
-	targetIDStr := msg[1:]
-	targetID, err := peer.Decode(targetIDStr)
-	if err != nil {
-		logger.Debugf("Invalid peer ID in presence message from=%s error=%v", senderID, err)
-		_ = stream.Close()
-		return
-	}
-
-	switch action {
-	case "o":
-		logger.Debugf("Received presence: peer online peer_id=%s reported_by=%s", targetID, senderID)
-	case "x":
-		logger.Debugf("Received presence: peer offline peer_id=%s reported_by=%s", targetID, senderID)
-		if targetID != senderID && targetID != n.host.ID() {
-			n.peersMu.Lock()
-			if n.connectedPeers[targetID] {
-				delete(n.connectedPeers, targetID)
-				n.peersMu.Unlock()
-				logger.Debugf("Removed peer based on presence report peer_id=%s", targetID)
-			} else {
-				n.peersMu.Unlock()
-			}
-		}
-	}
-	_ = stream.Close()
-}
-
-func (n *NetworkManager) presenceLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg := <-n.presenceCh:
-			n.doBroadcastPresence(msg.peerID, msg.status)
-		}
-	}
-}
-
-func (n *NetworkManager) doBroadcastPresence(peerID peer.ID, status string) {
-	n.peersMu.RLock()
-	peers := make([]peer.ID, 0, len(n.connectedPeers))
-	for p := range n.connectedPeers {
-		if p != n.host.ID() && p != peerID {
-			peers = append(peers, p)
-		}
-	}
-	n.peersMu.RUnlock()
-
-	if len(peers) == 0 {
-		return
-	}
-
-	msg := ""
-	if status == "online" {
-		msg = "o" + peerID.String()
-	} else {
-		msg = "x" + peerID.String()
-	}
-
-	logger.Debugf("Broadcasting presence: %s peer=%s to %d peers", status, peerID, len(peers))
-	for _, p := range peers {
-		go func(target peer.ID) {
-			ctx, cancel := context.WithTimeout(n.getContext(), constants.PresenceMessageTimeout)
-			defer cancel()
-
-			stream, err := n.host.NewStream(ctx, target, protocol.ID(constants.PresenceProtocolID))
-			if err != nil {
-				return
-			}
-			defer stream.Close()
-
-			_, _ = stream.Write([]byte(msg))
-		}(p)
-	}
-}
-
-func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
-	select {
-	case n.presenceCh <- presenceMessage{peerID: peerID, status: status}:
-	default:
-		logger.Debugf("Presence channel full, dropping message for peer=%s", peerID)
 	}
 }
 
@@ -1107,4 +1016,109 @@ func (n *NetworkManager) AddBootstrapPeer(ctx context.Context, multiaddrStr stri
 		return fmt.Errorf("invalid multiaddress: %w", err)
 	}
 	return n.discovery.AddBootstrapPeer(ctx, *peerAddr)
+}
+
+func (n *NetworkManager) handleHandshake(stream network.Stream) {
+	peerID := stream.Conn().RemotePeer()
+	logger.Debugf("Handshake request from peer_id=%s", peerID)
+	authData, err := n.GetAuthData()
+	if err != nil {
+		logger.Debugf("No auth data available for handshake")
+		n.signalHandshakeDone(peerID)
+		_ = stream.Reset()
+		return
+	}
+
+	buf := make([]byte, 4096)
+	nRead, err := stream.Read(buf)
+	if err != nil {
+		n.signalHandshakeDone(peerID)
+		_ = stream.Reset()
+		return
+	}
+
+	peerToken := string(buf[:nRead])
+	if err := n.VerifyAuthToken(peerToken, peerID.String(), ""); err != nil {
+		logger.Warnf("Handshake verification failed for peer_id=%s error=%v", peerID, err)
+		n.signalHandshakeDone(peerID)
+		_ = stream.Reset()
+		return
+	}
+
+	_, err = stream.Write([]byte(authData))
+	if err != nil {
+		logger.Debugf("Failed to send auth data to peer_id=%s error=%v", peerID, err)
+		n.signalHandshakeDone(peerID)
+		_ = stream.Reset()
+		return
+	}
+
+	_ = stream.Close()
+	n.signalHandshakeDone(peerID)
+	logger.Debugf("Handshake completed successfully with peer_id=%s", peerID)
+}
+
+func (n *NetworkManager) signalHandshakeDone(peerID peer.ID) {
+	n.handshakeMu.Lock()
+	defer n.handshakeMu.Unlock()
+	if n.pendingHandshakes == nil {
+		return
+	}
+
+	doneCh, exists := n.pendingHandshakes[peerID]
+	if !exists {
+		return
+	}
+	delete(n.pendingHandshakes, peerID)
+	close(doneCh)
+}
+
+func (n *NetworkManager) initiateHandshake(peerID peer.ID) {
+	if !n.IsAuthEnabled() {
+		return
+	}
+
+	authData, err := n.GetAuthData()
+	if err != nil {
+		logger.Debugf("No auth data to initiate handshake with peer_id=%s", peerID)
+		n.signalHandshakeDone(peerID)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(n.getContext(), constants.HandshakeTimeout)
+	defer cancel()
+
+	stream, err := n.host.NewStream(ctx, peerID, protocol.ID(constants.HandshakeProtocolID))
+	if err != nil {
+		logger.Debugf("Failed to open handshake stream to peer_id=%s error=%v", peerID, err)
+		n.signalHandshakeDone(peerID)
+		return
+	}
+	defer stream.Close()
+
+	_, err = stream.Write([]byte(authData))
+	if err != nil {
+		logger.Debugf("Failed to send auth data to peer_id=%s error=%v", peerID, err)
+		n.signalHandshakeDone(peerID)
+		return
+	}
+
+	buf := make([]byte, 4096)
+	nRead, err := stream.Read(buf)
+	if err != nil {
+		logger.Debugf("Handshake failed with peer_id=%s error=%v", peerID, err)
+		n.signalHandshakeDone(peerID)
+		return
+	}
+
+	peerToken := string(buf[:nRead])
+	if err := n.VerifyAuthToken(peerToken, peerID.String(), ""); err != nil {
+		logger.Warnf("Peer authentication failed for peer_id=%s error=%v", peerID, err)
+		_ = n.host.Network().ClosePeer(peerID)
+		n.signalHandshakeDone(peerID)
+		return
+	}
+
+	n.signalHandshakeDone(peerID)
+	logger.Debugf("Mutual auth successful with peer_id=%s", peerID)
 }

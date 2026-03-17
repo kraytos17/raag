@@ -155,11 +155,11 @@ const (
 	// ShareProtocolID is the framed transfer protocol identifier for Raag
 	ShareProtocolID = "/raag/share/1.0.0"
 
-	// PresenceProtocolID is for peer presence notifications
-	PresenceProtocolID = "/raag/presence/1.0.0"
+	// HandshakeProtocolID is for mutual authentication on connection
+	HandshakeProtocolID = "/raag/handshake/1.0.0"
 
-	// PresenceMessageTimeout is timeout for sending presence messages
-	PresenceMessageTimeout = 3 * time.Second
+	// HandshakeTimeout is timeout for auth handshake
+	HandshakeTimeout = 5 * time.Second
 
 	// ProtocolVersion indicates the protocol version
 	ProtocolVersion = "1.0.0"

@@ -102,6 +102,9 @@ func VerifyToken(token *AuthToken) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("invalid public key: %w", err)
 	}
+	if len(pubKeyBytes) != ed25519.PublicKeySize {
+		return false, fmt.Errorf("invalid public key length")
+	}
 
 	payload := fmt.Sprintf("%s:%s:%d:%d:%s",
 		token.PeerID,
@@ -114,9 +117,6 @@ func VerifyToken(token *AuthToken) (bool, error) {
 	signature, err := base64.StdEncoding.DecodeString(token.Signature)
 	if err != nil {
 		return false, fmt.Errorf("invalid signature format: %w", err)
-	}
-	if len(pubKeyBytes) != ed25519.PublicKeySize {
-		return false, fmt.Errorf("invalid public key length")
 	}
 	if !ed25519.Verify(ed25519.PublicKey(pubKeyBytes), []byte(payload), signature) {
 		return false, fmt.Errorf("signature verification failed")

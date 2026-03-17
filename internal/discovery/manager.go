@@ -76,14 +76,14 @@ func NewManager(cfg ManagerConfig) *Manager {
 		if err != nil {
 			logger.Warnf("Failed to derive auth key from secret: %v", err)
 		} else {
-			logger.Infof("Auth enabled via shared secret")
+			logger.Debugf("Auth enabled via shared secret")
 		}
 	} else if len(cfg.IdentityKeyBytes) > 0 {
 		authKeyPair, err = auth.DeriveKey(cfg.IdentityKeyBytes, "raag-identity-v1")
 		if err != nil {
 			logger.Warnf("Failed to derive auth key from identity: %v", err)
 		} else {
-			logger.Infof("Auth enabled via identity key")
+			logger.Debugf("Auth enabled via identity key")
 		}
 	}
 	if authKeyPair == nil {
@@ -91,7 +91,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		if err != nil {
 			logger.Warnf("Failed to generate auth key pair: %v", err)
 		} else {
-			logger.Warnf("No auth configured, generated random key")
+			logger.Debugf("No auth configured, generated random key")
 		}
 	}
 
