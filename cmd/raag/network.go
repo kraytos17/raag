@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/rpc"
 	"github.com/spf13/cobra"
@@ -15,7 +13,9 @@ func shareCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
 			requireDaemon()
-			logger.Infof("share sent to daemon peer=%s song=%s", args[0], args[1])
+			var result rpc.EmptyResult
+			invokeRPC("DaemonService.ShareSong", &rpc.ShareArgs{PeerID: args[0], SongTitle: args[1]}, &result)
+			logger.Infof("song '%s' shared with peer %s", args[1], args[0])
 		},
 	}
 }
@@ -28,12 +28,14 @@ func statusCommand() *cobra.Command {
 			var result rpc.StatusResult
 			invokeRPC("DaemonService.Status", &rpc.EmptyArgs{}, &result)
 
-			logger.Infof("daemon status")
-			logger.Infof("running value=%v", result.Running)
-			logger.Infof("peer count count=%d", result.PeerCount)
-			logger.Infof("network online status=%v", result.Connected)
-			logger.Infof("uptime value=%s", result.Uptime)
-			logger.Infof("version value=%s", result.Version)
+			logger.Infof("=== Raag Daemon ===")
+			logger.Infof("Running: %v", result.Running)
+			logger.Infof("Uptime: %s", result.Uptime)
+			logger.Infof("Version: %s", result.Version)
+			logger.Infof("")
+			logger.Infof("=== Network ===")
+			logger.Infof("Online: %v", result.Connected)
+			logger.Infof("Peers: %d", result.PeerCount)
 		},
 	}
 }
@@ -57,11 +59,24 @@ func networkStatusCommand() *cobra.Command {
 			var result rpc.NetworkStatusResult
 			invokeRPC("DaemonService.NetworkStatus", &rpc.EmptyArgs{}, &result)
 
-			logger.Infof("Network status:")
-			logger.Infof("Self: %s", result.State.SelfID)
-			logger.Infof("Tracker: %s", result.State.TrackerURL)
-			logger.Infof("DHT: enabled=%v", result.State.DHTEnabled)
-			logger.Infof("Connections: %d", len(result.State.ConnectedPeers))
+			logger.Infof("=== P2P Network Status ===")
+			logger.Infof("Peer ID: %s", result.State.SelfID)
+			logger.Infof("Listen Addr: %s", result.State.ListenAddr)
+			logger.Infof("Mode: %s", result.State.Mode)
+			logger.Infof("DHT: enabled=%v peers=%d", result.State.DHTEnabled, result.State.DHTPeers)
+			logger.Infof("mDNS: enabled=%v discovered=%d", result.State.MDNSEnabled, result.State.MDNSDiscovered)
+			logger.Infof("Tracker: %s (%s)", result.State.TrackerURL, result.State.TrackerStatus)
+			logger.Infof("")
+			logger.Infof("=== Connections ===")
+			logger.Infof("Connected: %d", len(result.State.ConnectedPeers))
+			logger.Infof("Known: %d", len(result.State.KnownPeers))
+			if len(result.State.ConnectedPeers) > 0 {
+				logger.Infof("")
+				logger.Infof("Connected Peers:")
+				for _, p := range result.State.ConnectedPeers {
+					logger.Infof("  %s", p.ID)
+				}
+			}
 		},
 	}
 }
@@ -77,7 +92,7 @@ func networkAuthKeyCommand() *cobra.Command {
 				logger.Errorf("No auth key available")
 				return
 			}
-			fmt.Println(result.AuthPublicKey)
+			logger.Infof("Auth key: %s", result.AuthPublicKey)
 		},
 	}
 }

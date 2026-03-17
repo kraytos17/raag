@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/rpc"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/app"
+	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/discovery"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
@@ -55,7 +57,11 @@ type LibrarySong struct {
 }
 
 func peerToInfo(p peer.AddrInfo) PeerInfo {
-	return PeerInfo{ID: p.ID.String()}
+	info := PeerInfo{ID: p.ID.String(), Connected: true}
+	if len(p.Addrs) > 0 {
+		info.Addr = p.Addrs[0].String()
+	}
+	return info
 }
 
 func songToInfo(s metadata.Song) LibrarySong {
@@ -509,4 +515,46 @@ func (s *DaemonService) GetFullState(_ *EmptyArgs, result *FullStateResult) erro
 		result.Library = &library
 	}
 	return nil
+}
+
+func (s *DaemonService) ConfigReset(_ *EmptyArgs, result *EmptyResult) error {
+	configFile, err := config.FilePath()
+	if err != nil {
+		return fmt.Errorf("failed to get config file path: %w", err)
+	}
+	if err := os.Remove(configFile); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to remove config file: %w", err)
+	}
+	return nil
+}
+
+type ShareArgs struct {
+	PeerID    string `json:"peer_id"`
+	SongTitle string `json:"song_title"`
+}
+
+func (s *DaemonService) ShareSong(args *ShareArgs, result *EmptyResult) error {
+	peerID, err := peer.Decode(args.PeerID)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	song, err := s.app.Lib.FindSong(args.SongTitle)
+	if err != nil {
+		return fmt.Errorf("song not found: %w", err)
+	}
+
+	addrs := s.app.NetMgr.Host().Peerstore().Addrs(peerID)
+	if len(addrs) == 0 {
+		return fmt.Errorf("peer not found or not reachable: %s", args.PeerID)
+	}
+
+	peerInfo := &peer.AddrInfo{
+		ID:    peerID,
+		Addrs: addrs,
+	}
+	return s.app.NetMgr.ShareSong(peerInfo, song)
 }

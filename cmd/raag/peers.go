@@ -40,10 +40,18 @@ func peersListCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			var result rpc.PeerListResult
 			invokeRPC("DaemonService.PeersList", &rpc.EmptyArgs{}, &result)
+			if len(result.Peers) == 0 {
+				logger.Info("No peers connected")
+				return
+			}
 
-			logger.Infof("connected peers count=%d", len(result.Peers))
+			logger.Infof("Connected peers (%d):", len(result.Peers))
 			for _, p := range result.Peers {
-				logger.Infof("peer id=%s", p.ID)
+				addr := p.Addr
+				if addr == "" {
+					addr = "unknown"
+				}
+				logger.Infof("  %s %s", p.ID, addr)
 			}
 		},
 	}
@@ -57,14 +65,34 @@ func peersInfoCommand() *cobra.Command {
 			var result rpc.PeersInfoResult
 			invokeRPC("DaemonService.PeersInfo", &rpc.EmptyArgs{}, &result)
 
-			logger.Infof("self info")
-			logger.Infof("peer id id=%v", result.Self["peer_id"])
-			logger.Infof("multiaddr addr=%v", result.Self["multiaddr"])
-			logger.Infof("connected peers count=%d", result.ConnectedCount)
-			for _, p := range result.ConnectedPeers {
-				logger.Infof("peer id=%s", p.ID)
+			logger.Infof("=== Self ===")
+			logger.Infof("Peer ID: %s", result.Self["peer_id"])
+			logger.Infof("Multiaddr: %s", result.Self["multiaddr"])
+			logger.Infof("\n=== Connected Peers (%d) ===", result.ConnectedCount)
+			if result.ConnectedCount == 0 {
+				logger.Info("  No peers connected")
 			}
-			logger.Infof("known peers count=%d", result.KnownCount)
+			for _, p := range result.ConnectedPeers {
+				addr := p.Addr
+				if addr == "" {
+					addr = "unknown"
+				}
+				logger.Infof("  %s", p.ID)
+				logger.Infof("    Address: %s", addr)
+			}
+
+			logger.Infof("\n=== Known Peers (DHT) ===")
+			logger.Infof("Total known: %d", result.KnownCount)
+			if result.KnownCount > 0 && result.KnownCount <= 20 {
+				for _, p := range result.KnownPeers {
+					logger.Infof("  %s", p.ID)
+				}
+			} else if result.KnownCount > 20 {
+				logger.Infof("  (showing first 20 of %d)", result.KnownCount)
+				for _, p := range result.KnownPeers[:20] {
+					logger.Infof("  %s", p.ID)
+				}
+			}
 		},
 	}
 }

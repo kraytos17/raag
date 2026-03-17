@@ -10,6 +10,7 @@ import (
 func newTestLibrary() *Library {
 	lib := &Library{}
 	lib.Songs.Store(&sync.Map{})
+	lib.titleIndex.Store(&sync.Map{})
 	return lib
 }
 
@@ -45,6 +46,9 @@ func TestFindSong(t *testing.T) {
 		Album:  "Test Album",
 	})
 
+	titleIndex := lib.titleIndex.Load()
+	titleIndex.Store("test song", "test song")
+
 	song, err := lib.FindSong("test song")
 	if err != nil {
 		t.Errorf("FindSong() error = %v", err)
@@ -71,6 +75,9 @@ func TestRemoveSong(t *testing.T) {
 	lib := newTestLibrary()
 	songsMap := lib.Songs.Load()
 	songsMap.Store("abc123", metadata.Song{Title: "Test Song", Hash: "abc123"})
+
+	titleIndex := lib.titleIndex.Load()
+	titleIndex.Store("test song", "abc123")
 
 	err := lib.RemoveSong("Test Song")
 	if err != nil {

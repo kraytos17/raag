@@ -550,7 +550,9 @@ func (n *NetworkManager) healthCheckLoop(ctx context.Context) {
 
 func (n *NetworkManager) logMetrics() {
 	connectedCount := len(n.host.Network().Peers())
-	logger.Debugf("Connection metrics: connected_peers=%d", connectedCount)
+	if connectedCount > 0 {
+		logger.Infof("Network status: %d peers connected", connectedCount)
+	}
 }
 
 func (n *NetworkManager) runHealthCheck(ctx context.Context) {
@@ -581,9 +583,9 @@ func (n *NetworkManager) runHealthCheck(ctx context.Context) {
 			return
 		case result := <-resultChan:
 			if result.Error != nil {
-				logger.Debugf("Health check failed for peer=%s error=%v", p, result.Error)
+				logger.Warnf("Health check failed for peer=%s error=%v", p, result.Error)
 				if n.host.Network().Connectedness(p) != network.Connected {
-					logger.Debugf("Peer no longer connected, removing peer=%s", p)
+					logger.Warnf("Peer no longer reachable, removing peer=%s", p)
 					n.peersMu.Lock()
 					delete(n.connectedPeers, p)
 					n.peersMu.Unlock()
@@ -900,14 +902,14 @@ func (n *NetworkManager) NotifyPeerConnected(peerID peer.ID, addr string) {
 	n.notifyPeerConnected(peerID, addr)
 }
 
-func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
+func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, _ string) {
 	if peerID == n.host.ID() {
 		return
 	}
 	if n.IsAuthEnabled() {
 		done := n.waitForHandshake(peerID)
 		if !done {
-			logger.Debugf("Handshake failed, not adding peer peer_id=%s", peerID)
+			logger.Warnf("Handshake failed - rejecting peer peer_id=%s", peerID)
 			return
 		}
 	}
@@ -915,12 +917,14 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 	n.peersMu.Lock()
 	_, alreadyConnected := n.connectedPeers[peerID]
 	n.connectedPeers[peerID] = true
+	peerCount := len(n.connectedPeers)
 	n.peersMu.Unlock()
 
 	conns := n.host.Network().ConnsToPeer(peerID)
-	if len(conns) == 1 {
+	if len(conns) > 0 {
 		if !alreadyConnected {
-			logger.Debugf("Peer connected and authenticated peer_id=%s address=%s", peerID, addr)
+			addr := conns[0].RemoteMultiaddr().String()
+			logger.Infof("Peer connected peer_id=%s addr=%s total_peers=%d", peerID, addr, peerCount)
 			select {
 			case n.peerConnectCh <- struct{}{}:
 			default:
@@ -931,7 +935,7 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, addr string) {
 		}
 		if !n.Online {
 			n.Online = true
-			logger.Infof("Network: Online - peers connected")
+			logger.Infof("Network: Online - %d peers connected", peerCount)
 			if n.OnStateChange != nil {
 				n.OnStateChange(true)
 			}
@@ -973,14 +977,14 @@ func (n *NetworkManager) waitForHandshake(peerID peer.ID) bool {
 	return stillConnected
 }
 
-func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Multiaddr) {
+func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, _ multiaddr.Multiaddr) {
 	conns := n.host.Network().ConnsToPeer(peerID)
-	logger.Debugf("Peer has disconnected peer_id=%s address=%s", peerID, addr.String())
-
 	n.peersMu.Lock()
 	if n.connectedPeers[peerID] {
 		delete(n.connectedPeers, peerID)
+		peerCount := len(n.connectedPeers)
 		n.peersMu.Unlock()
+		logger.Infof("Peer disconnected peer_id=%s remaining_peers=%d", peerID, peerCount)
 	} else {
 		n.peersMu.Unlock()
 	}
@@ -1023,10 +1027,10 @@ func (n *NetworkManager) AddBootstrapPeer(ctx context.Context, multiaddrStr stri
 
 func (n *NetworkManager) handleHandshake(stream network.Stream) {
 	peerID := stream.Conn().RemotePeer()
-	logger.Debugf("Handshake request from peer_id=%s", peerID)
+	logger.Debugf("Processing handshake from peer_id=%s", peerID)
 	authData, err := n.GetAuthData()
 	if err != nil {
-		logger.Debugf("No auth data available for handshake")
+		logger.Warnf("Auth not configured - rejecting peer peer_id=%s", peerID)
 		n.signalHandshakeDone(peerID)
 		_ = stream.Reset()
 		return
@@ -1035,6 +1039,7 @@ func (n *NetworkManager) handleHandshake(stream network.Stream) {
 	buf := make([]byte, 4096)
 	nRead, err := stream.Read(buf)
 	if err != nil {
+		logger.Warnf("Handshake read failed for peer_id=%s error=%v", peerID, err)
 		n.signalHandshakeDone(peerID)
 		_ = stream.Reset()
 		return
@@ -1042,7 +1047,7 @@ func (n *NetworkManager) handleHandshake(stream network.Stream) {
 
 	peerToken := string(buf[:nRead])
 	if err := n.VerifyAuthToken(peerToken, peerID.String(), ""); err != nil {
-		logger.Warnf("Handshake verification failed for peer_id=%s error=%v", peerID, err)
+		logger.Warnf("Handshake auth failed for peer_id=%s error=%v", peerID, err)
 		n.signalHandshakeDone(peerID)
 		_ = stream.Reset()
 		return
@@ -1050,7 +1055,7 @@ func (n *NetworkManager) handleHandshake(stream network.Stream) {
 
 	_, err = stream.Write([]byte(authData))
 	if err != nil {
-		logger.Debugf("Failed to send auth data to peer_id=%s error=%v", peerID, err)
+		logger.Warnf("Handshake response failed for peer_id=%s error=%v", peerID, err)
 		n.signalHandshakeDone(peerID)
 		_ = stream.Reset()
 		return
@@ -1058,7 +1063,7 @@ func (n *NetworkManager) handleHandshake(stream network.Stream) {
 
 	_ = stream.Close()
 	n.signalHandshakeDone(peerID)
-	logger.Debugf("Handshake completed successfully with peer_id=%s", peerID)
+	logger.Infof("Handshake successful - authenticated peer_id=%s", peerID)
 }
 
 func (n *NetworkManager) signalHandshakeDone(peerID peer.ID) {
@@ -1083,17 +1088,19 @@ func (n *NetworkManager) initiateHandshake(peerID peer.ID) {
 
 	authData, err := n.GetAuthData()
 	if err != nil {
-		logger.Debugf("No auth data to initiate handshake with peer_id=%s", peerID)
+		logger.Warnf("Auth not configured - cannot initiate handshake with peer_id=%s", peerID)
 		n.signalHandshakeDone(peerID)
 		return
 	}
+
+	logger.Debugf("Initiating handshake with peer_id=%s", peerID)
 
 	ctx, cancel := context.WithTimeout(n.getContext(), constants.HandshakeTimeout)
 	defer cancel()
 
 	stream, err := n.host.NewStream(ctx, peerID, protocol.ID(constants.HandshakeProtocolID))
 	if err != nil {
-		logger.Debugf("Failed to open handshake stream to peer_id=%s error=%v", peerID, err)
+		logger.Warnf("Failed to connect to peer for handshake peer_id=%s error=%v", peerID, err)
 		n.signalHandshakeDone(peerID)
 		return
 	}
@@ -1101,7 +1108,7 @@ func (n *NetworkManager) initiateHandshake(peerID peer.ID) {
 
 	_, err = stream.Write([]byte(authData))
 	if err != nil {
-		logger.Debugf("Failed to send auth data to peer_id=%s error=%v", peerID, err)
+		logger.Warnf("Failed to send auth token to peer_id=%s error=%v", peerID, err)
 		n.signalHandshakeDone(peerID)
 		return
 	}
@@ -1109,19 +1116,19 @@ func (n *NetworkManager) initiateHandshake(peerID peer.ID) {
 	buf := make([]byte, 4096)
 	nRead, err := stream.Read(buf)
 	if err != nil {
-		logger.Debugf("Handshake failed with peer_id=%s error=%v", peerID, err)
+		logger.Warnf("Handshake timed out or failed for peer_id=%s error=%v", peerID, err)
 		n.signalHandshakeDone(peerID)
 		return
 	}
 
 	peerToken := string(buf[:nRead])
 	if err := n.VerifyAuthToken(peerToken, peerID.String(), ""); err != nil {
-		logger.Warnf("Peer authentication failed for peer_id=%s error=%v", peerID, err)
+		logger.Warnf("Peer failed auth verification peer_id=%s error=%v", peerID, err)
 		_ = n.host.Network().ClosePeer(peerID)
 		n.signalHandshakeDone(peerID)
 		return
 	}
 
 	n.signalHandshakeDone(peerID)
-	logger.Debugf("Mutual auth successful with peer_id=%s", peerID)
+	logger.Infof("Mutual auth successful with peer_id=%s", peerID)
 }

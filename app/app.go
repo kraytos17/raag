@@ -92,10 +92,15 @@ func (a *App) SaveState() {
 		state.LastSong = song.Title
 		state.Position = a.Player.GetPosition()
 	}
-
-	_ = storage.SaveState(state)
-	_ = storage.SavePlaylists(a.PM)
-	_ = config.SaveConfig(a.V, a.Cfg)
+	if err := storage.SaveState(state); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save player state: %v\n", err)
+	}
+	if err := storage.SavePlaylists(a.PM); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save playlists: %v\n", err)
+	}
+	if err := config.SaveConfig(a.V, a.Cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
+	}
 }
 
 // Close shuts down the application cleanly.

@@ -199,12 +199,18 @@ func (m *Manager) GetNetworkState() NetworkState {
 	}
 
 	connectedPeers := m.host.Network().Peers()
+	connectedPeersMap := make(map[peer.ID]bool, len(connectedPeers))
+	for _, pid := range connectedPeers {
+		connectedPeersMap[pid] = true
+	}
+
 	const maxInt32 = int64(1<<31 - 1)
 	if m.mdnsPeerCount > uint64(maxInt32) {
 		state.MDNSDiscovered = int(maxInt32)
 	} else {
 		state.MDNSDiscovered = int(m.mdnsPeerCount)
 	}
+
 	knownPeerIDs := m.host.Peerstore().Peers()
 	for _, pid := range knownPeerIDs {
 		if pid == m.host.ID() {
@@ -217,7 +223,7 @@ func (m *Manager) GetNetworkState() NetworkState {
 			addrStr = addrs[0].String()
 		}
 
-		connected := slices.Contains(connectedPeers, pid)
+		connected := connectedPeersMap[pid]
 		state.KnownPeers = append(state.KnownPeers, PeerInfo{
 			ID:            pid.String(),
 			Addr:          addrStr,
@@ -714,9 +720,20 @@ func (m *Manager) throttledBootstrap(ctx context.Context) {
 }
 
 func (m *Manager) savePeer(p peer.AddrInfo, skipAutoConnect bool) {
-	alreadyConnected := slices.Contains(m.host.Network().Peers(), p.ID)
+	connectedPeers := m.host.Network().Peers()
+	connectedPeersMap := make(map[peer.ID]bool, len(connectedPeers))
+	for _, pid := range connectedPeers {
+		connectedPeersMap[pid] = true
+	}
+
 	knownPeers := m.host.Peerstore().Peers()
-	alreadyKnown := slices.Contains(knownPeers, p.ID)
+	knownPeersMap := make(map[peer.ID]bool, len(knownPeers))
+	for _, pid := range knownPeers {
+		knownPeersMap[pid] = true
+	}
+
+	alreadyConnected := connectedPeersMap[p.ID]
+	alreadyKnown := knownPeersMap[p.ID]
 	if !alreadyKnown {
 		if len(knownPeers) >= m.maxPeers {
 			return
@@ -1101,6 +1118,11 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 		discovered := make(map[peer.ID]bool)
 		count := 0
 		roundDone := false
+		knownPeersList := m.host.Peerstore().Peers()
+		knownPeersMap := make(map[peer.ID]bool, len(knownPeersList))
+		for _, pid := range knownPeersList {
+			knownPeersMap[pid] = true
+		}
 		for {
 			select {
 			case <-ctx.Done():
@@ -1116,8 +1138,7 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 					continue
 				}
 
-				knownPeers := m.host.Peerstore().Peers()
-				alreadyKnown := slices.Contains(knownPeers, p.ID)
+				alreadyKnown := knownPeersMap[p.ID]
 				if alreadyKnown {
 					continue
 				}
@@ -1166,15 +1187,18 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 		return
 	}
 
-	knownPeers := n.manager.host.Peerstore().Peers()
-	alreadyKnown := slices.Contains(knownPeers, pi.ID)
+	knownPeersList := n.manager.host.Peerstore().Peers()
+	knownPeersMap := make(map[peer.ID]bool, len(knownPeersList))
+	for _, pid := range knownPeersList {
+		knownPeersMap[pid] = true
+	}
 
+	alreadyKnown := knownPeersMap[pi.ID]
 	if !alreadyKnown {
 		n.manager.stateMu.Lock()
 		n.manager.mdnsPeerCount++
 		n.manager.stateMu.Unlock()
 	}
-
 	if alreadyKnown {
 		logger.Debugf("mDNS found already known peer, skipping peer=%s", pi.ID)
 		return

@@ -932,5 +932,4 @@ Raag is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) f
 ---
 
 **Version:** 0.1.0  
-**Last Updated:** March 2026  
 **Maintainers:** [@p-society](https://github.com/p-society)

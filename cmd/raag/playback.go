@@ -89,17 +89,21 @@ func queueCommand() *cobra.Command {
 			var result rpc.QueueResult
 			invokeRPC("DaemonService.GetQueue", &rpc.EmptyArgs{}, &result)
 			if len(result.Songs) == 0 {
-				logger.Infof("queue is empty")
+				logger.Info("Queue is empty")
 				return
 			}
 
-			logger.Infof("current queue count=%d", len(result.Songs))
+			logger.Infof("=== Queue (%d songs) ===", len(result.Songs))
+			if result.Current >= 0 && result.Current < len(result.Songs) {
+				logger.Infof("Now Playing: %s - %s", result.Songs[result.Current].Title, result.Songs[result.Current].Artist)
+				logger.Infof("")
+			}
 			for i, song := range result.Songs {
 				marker := "  "
 				if i == result.Current {
 					marker = "> "
 				}
-				logger.Infof("song index=%d marker=%s title=%s artist=%s", i+1, marker, song.Title, song.Artist)
+				logger.Infof("%s%d. %s - %s", marker, i+1, song.Title, song.Artist)
 			}
 		},
 	}

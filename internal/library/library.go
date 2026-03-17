@@ -17,11 +17,12 @@ import (
 
 // Library uses atomic.Pointer<sync.Map> for lockless concurrent access to songs.
 type Library struct {
-	Songs    atomic.Pointer[sync.Map]
-	musicDir string
-	musicMu  sync.RWMutex // protects musicDir only
-	watcher  *fsnotify.Watcher
-	closed   chan struct{}
+	Songs      atomic.Pointer[sync.Map]
+	titleIndex atomic.Pointer[sync.Map]
+	musicDir   string
+	musicMu    sync.RWMutex
+	watcher    *fsnotify.Watcher
+	closed     chan struct{}
 }
 
 func NewLibrary(musicDir string) (*Library, error) {
@@ -31,6 +32,7 @@ func NewLibrary(musicDir string) (*Library, error) {
 	}
 
 	lib.Songs.Store(&sync.Map{})
+	lib.titleIndex.Store(&sync.Map{})
 	if err := os.MkdirAll(musicDir, 0o750); err != nil {
 		return nil, fmt.Errorf("error creating music directory: %w", err)
 	}
@@ -122,6 +124,7 @@ func (l *Library) ScanMusicLibrary(musicDir string) error {
 	}
 
 	newSongs := &sync.Map{}
+	newIndex := &sync.Map{}
 	err = filepath.WalkDir(musicDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -133,6 +136,7 @@ func (l *Library) ScanMusicLibrary(musicDir string) error {
 				return nil
 			}
 			newSongs.Store(song.Hash, song)
+			newIndex.Store(strings.ToLower(song.Title), song.Hash)
 		}
 		return nil
 	})
@@ -141,6 +145,7 @@ func (l *Library) ScanMusicLibrary(musicDir string) error {
 	}
 
 	l.Songs.Store(newSongs)
+	l.titleIndex.Store(newIndex)
 	return nil
 }
 
@@ -174,30 +179,36 @@ func (l *Library) AllSongs() iter.Seq[metadata.Song] {
 
 func (l *Library) FindSong(title string) (metadata.Song, error) {
 	target := strings.ToLower(title)
+	index := l.titleIndex.Load()
+	if index == nil {
+		return metadata.Song{}, fmt.Errorf("song not found: %s", title)
+	}
+
+	hash, ok := index.Load(target)
+	if !ok {
+		return metadata.Song{}, fmt.Errorf("song not found: %s", title)
+	}
+
+	hashStr, ok := hash.(string)
+	if !ok {
+		return metadata.Song{}, fmt.Errorf("song not found: %s", title)
+	}
+
 	songsMap := l.Songs.Load()
 	if songsMap == nil {
 		return metadata.Song{}, fmt.Errorf("song not found: %s", title)
 	}
 
-	var found metadata.Song
-	foundOk := false
-	songsMap.Range(func(key, value any) bool {
-		song, ok := value.(metadata.Song)
-		if !ok {
-			return true
-		}
-		if strings.ToLower(song.Title) == target {
-			found = song
-			foundOk = true
-			return false
-		}
-		return true
-	})
-
-	if !foundOk {
+	songIface, ok := songsMap.Load(hashStr)
+	if !ok {
 		return metadata.Song{}, fmt.Errorf("song not found: %s", title)
 	}
-	return found, nil
+
+	song, ok := songIface.(metadata.Song)
+	if !ok {
+		return metadata.Song{}, fmt.Errorf("song not found: %s", title)
+	}
+	return song, nil
 }
 
 func (l *Library) AddSong(path string) error {
@@ -214,33 +225,36 @@ func (l *Library) AddSong(path string) error {
 	if songsMap != nil {
 		songsMap.Store(song.Hash, song)
 	}
+
+	index := l.titleIndex.Load()
+	if index != nil {
+		index.Store(strings.ToLower(song.Title), song.Hash)
+	}
 	return nil
 }
 
 func (l *Library) RemoveSong(title string) error {
 	target := strings.ToLower(title)
+	index := l.titleIndex.Load()
+	if index == nil {
+		return fmt.Errorf("song not found: %s", title)
+	}
+
+	hash, ok := index.Load(target)
+	if !ok {
+		return fmt.Errorf("song not found: %s", title)
+	}
+
+	hashStr, ok := hash.(string)
+	if !ok {
+		return fmt.Errorf("song not found: %s", title)
+	}
+
+	index.Delete(target)
 	songsMap := l.Songs.Load()
-	if songsMap == nil {
-		return fmt.Errorf("song not found: %s", title)
+	if songsMap != nil {
+		songsMap.Delete(hashStr)
 	}
-
-	var hashToDelete string
-	found := false
-	songsMap.Range(func(key, value any) bool {
-		song := value.(metadata.Song)
-		if strings.ToLower(song.Title) == target {
-			hashToDelete = song.Hash
-			found = true
-			return false
-		}
-		return true
-	})
-
-	if !found {
-		return fmt.Errorf("song not found: %s", title)
-	}
-
-	songsMap.Delete(hashToDelete)
 	return nil
 }
 

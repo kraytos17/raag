@@ -497,7 +497,7 @@ func isValidRegistrationAddr(maddr, remoteIP string) bool {
 	if ip.IsPrivate() && !remoteIPParsed.IsPrivate() {
 		return true
 	}
-	return false
+	return true
 }
 
 func (t *Tracker) cleanupOldPeers() {

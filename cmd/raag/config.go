@@ -60,7 +60,13 @@ func configResetCommand() *cobra.Command {
 		Use:   "reset",
 		Short: "Reset configuration to defaults",
 		Run: func(cmd *cobra.Command, args []string) {
-			logger.Infof("config reset requires daemon restart")
+			client := requireDaemon()
+			var result rpc.EmptyResult
+			if err := client.Call("DaemonService.ConfigReset", &rpc.EmptyArgs{}, &result); err != nil {
+				logger.Errorf("failed to reset config error=%v", err)
+				return
+			}
+			logger.Infof("configuration reset to defaults (restart daemon to apply)")
 		},
 	}
 }
