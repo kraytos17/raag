@@ -35,9 +35,15 @@ A production-ready, terminal-first P2P music streaming application with local pl
 | | Controls | Play, pause, stop, seek, volume, shuffle, repeat |
 | **Playlists** | CRUD Operations | Create, modify, and delete playlists |
 | | Management | Add, remove, and reorder songs via CLI or TUI |
-| **Sharing** | P2P Protocol | Encrypted libp2p connections for music sharing |
-| | Discovery | mDNS (LAN), DHT (decentralized), tracker (cross-network) |
-| | NAT Traversal | Hole punching, UPnP, and AutoNAT for direct connections |
+| **P2P Networking** | Decentralized | No tracker required - uses IPFS bootstrap nodes + DHT |
+| | Mutual Auth | Ed25519 handshake ensures only authorized peers connect |
+| | NAT Traversal | Hole punching, UPnP, AutoNAT, and relay fallback |
+| | Connection Manager | Automatic peer management with limits |
+| | Health Checks | Periodic ping to detect disconnected peers |
+| | Presence | Real-time peer online/offline tracking |
+| **Discovery** | DHT | Kademlia DHT for internet-wide peer discovery |
+| | mDNS | Local network peer discovery |
+| | Tracker | Optional centralized tracker for easier discovery |
 | **Operation** | Daemon Mode | Persistent peer connections for continuous availability |
 | | TUI | Terminal user interface for interactive use |
 | | RPC API | Unix socket RPC for programmatic access |
@@ -62,10 +68,13 @@ make build
 ### First Run
 
 ```bash
-# Start the daemon with networking
+# Start the daemon with networking (P2P enabled by default)
+./bin/raag daemon --tui
+
+# Or use CLI mode
 ./bin/raag daemon --network
 
-# In another terminal, use the CLI
+# Add music and play
 ./bin/raag library add /path/to/your/music
 ./bin/raag library list
 ./bin/raag play "Song Title"
@@ -113,8 +122,25 @@ Windows is not officially supported for the daemon, but the tracker can run via 
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 45678 | TCP/QUIC | Libp2p peer connections |
+| 45678 | TCP/QUIC | Libp2p peer connections (default) |
+| 0 | Random | Use port 0 for random port |
 | 8080 | TCP | Tracker HTTP API (tracker only) |
+
+### NAT Traversal
+
+Raag supports multiple NAT traversal methods:
+
+1. **Hole Punching** - Direct peer-to-peer connections through NAT
+2. **UPnP** - Automatic port forwarding
+3. **AutoNAT** - Detects if peer is publicly reachable
+4. **Circuit Relay** - Fallback when direct connection fails
+
+**For users behind strict NAT/firewall:**
+
+```bash
+# Force all connections through relay servers
+./bin/raag daemon --force-relay --tui
+```
 
 ## Getting Started
 
@@ -136,8 +162,11 @@ Or configure via command line:
 ### Step 2: Start the Daemon
 
 ```bash
-# Start in daemon mode with networking enabled
-./bin/raag daemon --network
+# Start in daemon mode with P2P networking (enabled by default)
+./bin/raag daemon --tui
+
+# Or for CLI-only mode
+./bin/raag daemon
 
 # Check the status
 ./bin/raag status
@@ -145,9 +174,10 @@ Or configure via command line:
 
 The daemon will:
 1. Initialize the music library
-2. Start peer discovery (mDNS for LAN, DHT for internet)
-3. Register with the tracker (if configured)
+2. Start peer discovery (DHT enabled by default)
+3. Connect to IPFS bootstrap nodes for DHT
 4. Listen for incoming peer connections
+5. Run health checks to detect disconnected peers
 
 ### Step 3: Add Music to Your Library
 
@@ -250,19 +280,25 @@ The daemon will:
    - Audio decoded and played via ALSA/speaker
 
 2. **Peer Discovery**
-   - mDNS: Broadcasts on local network
-   - DHT: Decentralized Kademlia DHT
-   - Tracker: Central registration server
+   - DHT: Decentralized Kademlia DHT (default, no tracker required)
+   - mDNS: Local network discovery
+   - Tracker: Optional centralized discovery
 
-3. **Peer Connection**
+3. **Peer Connection & Authentication**
    - Connection established via libp2p
-   - Noise protocol for encryption
-   - Auth token verification
+   - TLS 1.3 verifies peer identity
+   - Handshake protocol performs mutual auth
+   - Unauthorized peers are disconnected
 
 4. **File Transfer**
    - Framed protocol with metadata header
    - SHA-256 hash verification
    - Atomic file writes with temp files
+
+5. **Peer Health Monitoring**
+   - Periodic ping every 2 minutes
+   - Disconnected peers removed automatically
+   - Connection metrics logged every 30 seconds
 
 ### Directory Structure
 
@@ -283,87 +319,66 @@ The daemon will:
 
 ## Authentication
 
-Raag supports two authentication mechanisms for peer-to-peer connections.
+Raag implements **mutual authentication** using a custom handshake protocol. All peer connections are verified before being accepted.
 
-### Option 1: Shared Secret (Recommended)
+### Authentication Modes
 
-Uses a password to derive cryptographic keys for all peers.
+| Mode | How | Use Case |
+|------|-----|----------|
+| **Open** | No auth required | Open networks, testing |
+| **Shared Secret** | Same password on all peers | Friends, closed networks |
+| **Identity Key** | Share identity.key file | Trusted circle |
 
-**Tracker Configuration:**
+### Option 1: Open Network (Default)
 
-```bash
-export AUTH_SECRET=your-secure-password
-./bin/tracker --http-port 8080 --relay
-```
-
-**Client Configuration:**
-
-```bash
-./bin/raag daemon --network --auth-secret your-secure-password
-```
-
-### Option 2: Per-Peer Keys (More Secure)
-
-Each peer has a unique identity key.
-
-**Get Your Auth Key:**
+No authentication required. Anyone can connect:
 
 ```bash
-./bin/raag network auth-key
-# Output: 23eb477a60833ed094e456110928584093d349b35f6f793f5057cc781aee586d
+./bin/raag daemon --tui
 ```
 
-**Tracker Configuration:**
+### Option 2: Shared Secret (Recommended for Friends)
+
+All peers use the same password. Provides mutual authentication:
 
 ```bash
-./bin/tracker --http-port 8080 --relay \
-  --auth-key 23eb477a60833ed094e456110928584093d349b35f6f793f5057cc781aee586d \
-  --auth-key another-key-here
+# Both friends run with the same secret
+./bin/raag daemon --auth-secret "your-shared-password" --tui
 ```
 
-**Client Configuration:**
+### Option 3: Identity Key
+
+Share your identity key file with trusted peers:
 
 ```bash
-# No extra flag needed - uses identity.key automatically
-./bin/raag daemon --network
+# Copy ~/.config/raag/identity.key to friend
+./bin/raag daemon --tui
+# Uses identity.key automatically for auth
 ```
 
-### How Authentication Works
+### How Mutual Authentication Works
 
 ```
-┌────────────────────┐     ┌────────────────────┐     ┌────────────────────┐
-│      Peer A        │     │      Tracker       │     │      Peer B        │
-└────────────────────┘     └────────────────────┘     └────────────────────┘
-         │                         │                          │
-         │  1. Register with       │                          │
-         │     derived key         │                          │
-         │────────────────────────▶│                          │
-         │                         │                          │
-         │                         │  2. Store peer info      │
-         │                         │                          │
-         │  3. Get auth token      │                          │
-         │◀────────────────────────│                          │
-         │                         │                          │
-         │  4. Connect to peer B   │                          │
-         │     + auth token        │                          │
-         │─────────────────────────┼─────────────────────────▶
-         │                         │                          │
-         │                         │     5. Verify token      │
-         │                         │◀─────────────────────────
-         │                         │                          │
-         │  6. Connection established (encrypted)              │
-         │◀────────────────────────────────────────────────────
+Peer A connects to Peer B
+
+1. TCP connection established (libp2p TLS verifies peer IDs)
+2. A opens handshake stream to B, sends auth token
+3. B verifies A's token using shared secret/identity
+4. B responds with its auth token
+5. A verifies B's token
+6. If both valid: peer added to connected list
+   If invalid: connection closed
 ```
 
-### Security Properties
+**Security Properties:**
 
 | Property | Implementation |
 |----------|----------------|
-| Password Security | PBKDF2 key derivation (50,000 iterations) |
-| Token Expiry | 24 hours with automatic refresh at 1 hour |
+| Algorithm | Ed25519 signatures |
+| Key Derivation | PBKDF2 (50,000 iterations) |
+| Token Expiry | 24 hours |
 | Replay Protection | Nonce tracking with 5-minute window |
-| Tampering Prevention | Ed25519 signature verification |
-| Rate Limiting | 10 requests per minute per IP |
+| Clock Skew | 60 seconds tolerance |
 
 ## File Transfer
 
@@ -375,12 +390,15 @@ Raag uses a custom framed protocol over libp2p streams for file transfers.
 
 ```
 1. Handshake
-   Peer A → Peer B: [version, song metadata, file size, SHA-256]
+   Peer A → Peer B: [version, song metadata, file size, SHA-256, auth token]
 
-2. Data Transfer
+2. Auth Verification
+   Peer B verifies Peer's auth token (if auth enabled)
+
+3. Data Transfer
    Peer A → Peer B: [length prefix (4 bytes)][data chunk]
 
-3. Verification
+4. Verification
    Peer B: Verify SHA-256 hash matches
 ```
 
@@ -388,8 +406,9 @@ Raag uses a custom framed protocol over libp2p streams for file transfers.
 
 | Guarantee | Implementation |
 |-----------|----------------|
+| Authentication | Ed25519 handshake with token verification |
 | Integrity | SHA-256 hash verification |
-| Confidentiality | Libp2p Noise protocol encryption |
+| Confidentiality | Libp2p TLS 1.3 encryption |
 | Atomicity | Write to temp file, then rename |
 | Size Limits | Maximum 256 MB per file |
 
@@ -452,8 +471,7 @@ For security vulnerabilities, please report them through GitHub's security advis
 | `MUSIC_DIR` | `~/.config/raag/music` | Music library directory |
 | `CONFIG_DIR` | `~/.config/raag` | Configuration directory |
 | `AUTH_SECRET` | (none) | Shared authentication secret |
-| `AUTH_KEY` | (none) | Comma-separated trusted auth keys |
-| `TRACKER_URL` | (none) | Tracker server URL |
+| `TRACKER_URL` | (none) | Tracker server URL (optional) |
 | `LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
 | `XDG_CONFIG_HOME` | `~/.config` | Base config directory |
 
@@ -463,18 +481,36 @@ For security vulnerabilities, please report them through GitHub's security advis
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--network` | `false` | Enable peer discovery |
+| `--network` | `true` | Enable P2P networking (default: enabled) |
 | `--host` | `0.0.0.0` | Bind address |
 | `--port` | `45678` | Peer listen port |
-| `--tracker` | (none) | Tracker URL |
-| `--auth-secret` | (none) | Shared secret for auth |
+| `--tracker` | (none) | Tracker URL (optional, DHT works without it) |
+| `--auth-secret` | (none) | Shared secret for mutual auth |
 | `--dht` | `true` | Enable DHT discovery |
-| `--bootstrap` | (none) | Bootstrap peers (comma-separated) |
-| `--max-peers` | `100` | Maximum peers |
+| `--bootstrap` | IPFS nodes | Bootstrap peers for DHT |
+| `--max-peers` | `100` | Maximum concurrent peers |
+| `--force-relay` | `false` | Force all connections through relay (for NAT) |
+| `--relay` | (none) | Custom relay server address |
 | `--music-dir` | `~/.config/raag/music` | Music directory |
-| `--tui` | `false` | Start TUI |
+| `--tui` | `false` | Start terminal UI |
 | `--json` | `false` | JSON logging |
-| `--log-level` | `info` | Log level |
+| `--log-level` | `info` | Log level (debug, info, warn, error) |
+
+#### Recommended Usage
+
+```bash
+# Open network (anyone can join)
+./bin/raag daemon --tui
+
+# Closed network (requires shared secret)
+./bin/raag daemon --auth-secret "your-secret" --tui
+
+# Behind NAT/firewall
+./bin/raag daemon --force-relay --tui
+
+# Combine options
+./bin/raag daemon --auth-secret "secret" --force-relay --tui
+```
 
 #### Tracker Flags
 
@@ -677,12 +713,14 @@ Example deployment manifests are available in `deployments/kubernetes/`.
 ### Daemon Commands
 
 ```bash
-./bin/raag daemon                   # Start daemon
-./bin/raag daemon --network         # Start with networking
+./bin/raag daemon                   # Start daemon (P2P enabled by default)
+./bin/raag daemon --tui           # Start with terminal UI
+./bin/raag daemon --auth-secret "secret"  # Start with mutual auth
+./bin/raag daemon --force-relay   # Start with relay fallback
 ./bin/raag status                   # Daemon status
 ./bin/raag stop                     # Stop daemon
 ./bin/raag config show              # Show config
-./bin/raag config set <key> <val>   # Set config value
+./bin/raag config set <key> <val>  # Set config value
 ./bin/raag logs                     # Show daemon logs
 ```
 
@@ -782,11 +820,34 @@ ls -la /path/to/music/
 # Verify port is open
 nc -zv localhost 45678
 
-# Check NAT configuration
+# Check network status
 ./bin/raag network status
 
-# Enable relay mode
-./bin/raag daemon --network --relay
+# Use relay mode for NAT traversal
+./bin/raag daemon --force-relay --tui
+```
+
+#### Authentication Fails
+
+```bash
+# Ensure all peers use the same --auth-secret
+./bin/raag daemon --auth-secret "same-password" --tui
+
+# Check peer authentication status
+./bin/raag peers info <peer-id>
+```
+
+#### Peer Not Appearing as Connected
+
+```bash
+# Check peer count
+./bin/raag peers list
+
+# Check DHT status
+./bin/raag network status
+
+# Verify health checks are running (debug logs)
+./bin/raag --log-level debug daemon --tui
 ```
 
 ### Exit Codes
