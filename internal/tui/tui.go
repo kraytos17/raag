@@ -12,7 +12,16 @@ import (
 	"github.com/p-society/raag/rpc"
 )
 
-// Start launches the TUI as an RPC client to the daemon.
+var (
+	header          = "══════════════ RAAG ══════════════"
+	helpFooter      = "\n[q]uit [tab]view [space]play/pause [n]ext [p]rev [+/-]vol"
+	helpFooterLib   = helpFooter + " [/]search"
+	maxLibraryItems = 20
+	tickInterval    = 2 * time.Second
+	fetchTimeout    = 1 * time.Second
+	actionTimeout   = 2 * time.Second
+)
+
 func Start(client *rpc.Client) error {
 	m := NewRPCModel(client)
 	program := tea.NewProgram(m, tea.WithAltScreen())
@@ -20,22 +29,18 @@ func Start(client *rpc.Client) error {
 	return err
 }
 
-// RPCModel is the TUI model that communicates exclusively via RPC.
 type RPCModel struct {
-	client      *rpc.Client
-	keys        KeyMap
-	searchInput textinput.Model
-	state       *DaemonState
-	currentView View
-	selectedIdx int
-	width       int
-	height      int
+	client       *rpc.Client
+	keys         KeyMap
+	searchInput  textinput.Model
+	state        *DaemonState
+	currentView  View
+	selectedIdx  int
+	needsRefresh bool
 }
 
-// DaemonState holds the cached state from the daemon.
 type DaemonState struct {
 	NowPlaying *rpc.NowPlayingResult
-	Queue      *rpc.QueueResult
 	Library    *rpc.LibraryListResult
 	Network    *rpc.NetworkStatusResult
 	Status     *rpc.StatusResult
@@ -65,7 +70,7 @@ func (m *RPCModel) Init() tea.Cmd {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -73,7 +78,7 @@ func tickCmd() tea.Cmd {
 func (m *RPCModel) fetchState() tea.Cmd {
 	return func() tea.Msg {
 		var fs rpc.FullStateResult
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 		defer cancel()
 
 		if err := m.client.CallWithContext(ctx, "DaemonService.GetFullState", &rpc.EmptyArgs{}, &fs); err != nil {
@@ -81,7 +86,6 @@ func (m *RPCModel) fetchState() tea.Cmd {
 		}
 		state := &DaemonState{
 			NowPlaying: fs.NowPlaying,
-			Queue:      fs.Queue,
 			Network:    fs.Network,
 			Status:     fs.Status,
 			Library:    fs.Library,
@@ -90,16 +94,40 @@ func (m *RPCModel) fetchState() tea.Cmd {
 	}
 }
 
+func (m *RPCModel) fetchPlayerState() tea.Cmd {
+	return func() tea.Msg {
+		var fs rpc.FullStateResult
+		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+		defer cancel()
+
+		if err := m.client.CallWithContext(ctx, "DaemonService.GetFullState", &rpc.EmptyArgs{}, &fs); err != nil {
+			return nil
+		}
+		state := &DaemonState{
+			NowPlaying: fs.NowPlaying,
+			Network:    fs.Network,
+			Status:     fs.Status,
+		}
+		return stateUpdateMsg(state)
+	}
+}
+
 func (m *RPCModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		return m, nil
 	case tea.KeyMsg:
+		m.needsRefresh = true
 		return m.handleKey(msg)
 	case tickMsg:
-		return m, tea.Batch(m.fetchState(), tickCmd())
+		if m.needsRefresh {
+			m.needsRefresh = false
+			switch m.currentView {
+			case ViewLibrary:
+				return m, tea.Batch(m.fetchState(), tickCmd())
+			default:
+				return m, tea.Batch(m.fetchPlayerState(), tickCmd())
+			}
+		}
+		return m, tickCmd()
 	case stateUpdateMsg:
 		if msg == nil {
 			return m, nil
@@ -167,14 +195,14 @@ func (m *RPCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Enter) && m.currentView == ViewLibrary:
 		if m.state.Library != nil && m.selectedIdx < len(m.state.Library.Songs) {
 			song := m.state.Library.Songs[m.selectedIdx]
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 			defer cancel()
 
 			err := m.client.CallWithContext(ctx, "DaemonService.Play", &rpc.PlayArgs{Song: song.Title}, &rpc.EmptyResult{})
 			if err != nil {
 				m.state.Status = nil
 			}
-			return m, m.fetchState()
+			return m, m.fetchPlayerState()
 		}
 		return m, nil
 	}
@@ -203,14 +231,14 @@ func (m *RPCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *RPCModel) executeAction(method string, args any) (tea.Model, tea.Cmd) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 	defer cancel()
 
 	var result rpc.EmptyResult
 	if err := m.client.CallWithContext(ctx, method, args, &result); err != nil {
 		m.state.Status = nil
 	}
-	return m, m.fetchState()
+	return m, m.fetchPlayerState()
 }
 
 func (m *RPCModel) nextView() {
@@ -231,14 +259,15 @@ func (m *RPCModel) nextView() {
 
 func (m *RPCModel) View() string {
 	if m.state == nil {
-		return "Connecting to daemon..."
+		return TitleStyle.Render("Connecting to daemon...")
 	}
 	if m.state.Status == nil {
-		return "Daemon not responding. Start it with: raag daemon"
+		return ErrorStyle.Render("Daemon not responding. Start it with: raag daemon")
 	}
 
 	var b strings.Builder
-	b.WriteString("══════════════ RAAG ══════════════\n\n")
+	b.WriteString(TitleStyle.Render(header))
+	b.WriteString("\n\n")
 
 	switch m.currentView {
 	case ViewPlayer:
@@ -253,9 +282,10 @@ func (m *RPCModel) View() string {
 		m.renderHelpView(&b)
 	}
 
-	b.WriteString("\n[q]uit [tab]view [space]play/pause [n]ext [p]rev [+/-]vol")
 	if m.currentView == ViewLibrary {
-		b.WriteString(" [/]search")
+		b.WriteString(HelpStyle.Render(helpFooterLib))
+	} else {
+		b.WriteString(HelpStyle.Render(helpFooter))
 	}
 	return b.String()
 }
@@ -270,86 +300,120 @@ func (m *RPCModel) renderPlayerView(b *strings.Builder) {
 			status = "Stopped"
 		}
 
-		fmt.Fprintf(b, "Now Playing: %s\n", status)
-		fmt.Fprintf(b, "Title:  %s\n", np.Title)
-		fmt.Fprintf(b, "Artist: %s\n", np.Artist)
-		fmt.Fprintf(b, "Album:  %s\n", np.Album)
+		b.WriteString(LabelStyle.Render("Now Playing: "))
+		b.WriteString(StatusOnlineStyle.Render(status))
+		b.WriteString("\n")
+		b.WriteString(LabelStyle.Render("Title:  "))
+		b.WriteString(ValueStyle.Render(np.Title))
+		b.WriteString("\n")
+		b.WriteString(LabelStyle.Render("Artist: "))
+		b.WriteString(ValueStyle.Render(np.Artist))
+		b.WriteString("\n")
+		b.WriteString(LabelStyle.Render("Album:  "))
+		b.WriteString(ValueStyle.Render(np.Album))
+		b.WriteString("\n")
 
 		if np.Duration > 0 {
 			progress := float64(np.Position) / float64(np.Duration)
 			barWidth := 30
 			filled := int(progress * float64(barWidth))
-			bar := strings.Repeat("█", filled) + strings.Repeat("─", barWidth-filled)
-			fmt.Fprintf(b, "\n%s %s/%s\n", bar, formatTime(np.Position), formatTime(np.Duration))
+			bar := ProgressBarStyle.Render(strings.Repeat("█", filled)) + ProgressEmptyStyle.Render(strings.Repeat("─", barWidth-filled))
+			b.WriteString("\n")
+			b.WriteString(bar)
+			fmt.Fprintf(b, " %s/%s", formatTime(np.Position), formatTime(np.Duration))
+			b.WriteString("\n")
 		}
 
-		var volBar strings.Builder
-		for i := range 10 {
-			if float64(i)*10 < np.Volume {
-				volBar.WriteString("█")
-			} else {
-				volBar.WriteString("░")
-			}
-		}
-		fmt.Fprintf(b, "Volume: %s %.0f%%\n", volBar.String(), np.Volume)
+		volLevel := int(np.Volume) / 10
+		volBar := HighlightStyle.Render(strings.Repeat("█", volLevel)) + SubtitleStyle.Render(strings.Repeat("░", 10-volLevel))
+		b.WriteString(LabelStyle.Render("Volume: "))
+		b.WriteString(volBar)
+		fmt.Fprintf(b, " %.0f%%\n", np.Volume)
 	} else {
-		fmt.Fprintln(b, "No song playing")
+		b.WriteString(SubtitleStyle.Render("No song playing"))
 	}
 }
 
 func (m *RPCModel) renderLibraryView(b *strings.Builder) {
-	fmt.Fprintf(b, "Search: %s\n\n", m.searchInput.View())
+	b.WriteString(LabelStyle.Render("Search: "))
+	b.WriteString(m.searchInput.View())
+	b.WriteString("\n\n")
 	if m.state.Library == nil {
-		b.WriteString("Loading library...\n")
+		b.WriteString(SubtitleStyle.Render("Loading library...\n"))
 		return
 	}
 	if len(m.state.Library.Songs) == 0 {
-		b.WriteString("Library is empty\n")
+		b.WriteString(SubtitleStyle.Render("Library is empty\n"))
 		return
 	}
-	fmt.Fprintf(b, "Library: %d songs\n\n", len(m.state.Library.Songs))
+
+	b.WriteString(LabelStyle.Render(fmt.Sprintf("Library: %d songs\n\n", len(m.state.Library.Songs))))
+	filter := m.searchInput.Value()
 	for i, song := range m.state.Library.Songs {
-		if i >= 20 {
-			fmt.Fprintf(b, "... and %d more\n", len(m.state.Library.Songs)-20)
+		if i >= maxLibraryItems {
+			b.WriteString(SubtitleStyle.Render(fmt.Sprintf("... and %d more\n", len(m.state.Library.Songs)-maxLibraryItems)))
 			break
 		}
-		prefix := "  "
-		if i == m.selectedIdx {
-			prefix = "> "
+		if filter != "" && !strings.Contains(strings.ToLower(song.Title), strings.ToLower(filter)) &&
+			!strings.Contains(strings.ToLower(song.Artist), strings.ToLower(filter)) {
+			continue
 		}
-		fmt.Fprintf(b, "%s%s - %s\n", prefix, song.Title, song.Artist)
+		if i == m.selectedIdx {
+			b.WriteString(ListSelectedStyle.Render(fmt.Sprintf("  %s - %s", song.Title, song.Artist)))
+		} else {
+			b.WriteString(ListItemStyle.Render(fmt.Sprintf("  %s - %s", song.Title, song.Artist)))
+		}
+		b.WriteString("\n")
 	}
 }
 
 func (m *RPCModel) renderPeersView(b *strings.Builder) {
 	if m.state.Network == nil {
-		b.WriteString("Network status loading...\n")
+		b.WriteString(SubtitleStyle.Render("Network status loading...\n"))
 		return
 	}
 
 	ns := m.state.Network.State
-	fmt.Fprintf(b, "Self: %s\n", ns.SelfID)
-	fmt.Fprintf(b, "Tracker: %s\n", ns.TrackerURL)
-	fmt.Fprintf(b, "DHT: %v (peers: %d)\n", ns.DHTEnabled, ns.DHTPeers)
-	fmt.Fprintf(b, "Connected Peers: %d\n", len(ns.ConnectedPeers))
-	fmt.Fprintf(b, "Known Peers: %d\n", len(ns.KnownPeers))
+	b.WriteString(LabelStyle.Render("Self: "))
+	b.WriteString(ValueStyle.Render(ns.SelfID))
+	b.WriteString("\n")
+	b.WriteString(LabelStyle.Render("Tracker: "))
+	b.WriteString(ValueStyle.Render(ns.TrackerURL))
+	b.WriteString("\n")
+	b.WriteString(LabelStyle.Render("DHT: "))
+	b.WriteString(ValueStyle.Render(fmt.Sprintf("%v (peers: %d)", ns.DHTEnabled, ns.DHTPeers)))
+	b.WriteString("\n")
+	b.WriteString(LabelStyle.Render("Connected Peers: "))
+	b.WriteString(ValueStyle.Render(fmt.Sprintf("%d", len(ns.ConnectedPeers))))
+	b.WriteString("\n")
+	b.WriteString(LabelStyle.Render("Known Peers: "))
+	b.WriteString(ValueStyle.Render(fmt.Sprintf("%d", len(ns.KnownPeers))))
+	b.WriteString("\n")
 }
 
 func (m *RPCModel) renderPlaylistView(b *strings.Builder) {
-	b.WriteString("Playlists:\n")
-	b.WriteString("(manage via CLI commands: raag playlist list/add/remove)\n")
+	b.WriteString(TitleStyle.Render("Playlists:\n"))
+	b.WriteString(SubtitleStyle.Render("(manage via CLI commands: raag playlist list/add/remove)\n"))
 }
 
 func (m *RPCModel) renderHelpView(b *strings.Builder) {
-	b.WriteString("Keyboard Shortcuts:\n\n")
-	b.WriteString("  q / Ctrl+C: quit\n")
-	b.WriteString("  Tab:        next view\n")
-	b.WriteString("  Space:      play/pause\n")
-	b.WriteString("  n:          next song\n")
-	b.WriteString("  p:          previous song\n")
-	b.WriteString("  +/-:        volume up/down\n")
-	b.WriteString("  /:          search library\n")
-	b.WriteString("  1-4:        switch views\n")
+	b.WriteString(TitleStyle.Render("Keyboard Shortcuts:\n\n"))
+	b.WriteString(LabelStyle.Render("  q / Ctrl+C: "))
+	b.WriteString(ValueStyle.Render("quit\n"))
+	b.WriteString(LabelStyle.Render("  Tab:        "))
+	b.WriteString(ValueStyle.Render("next view\n"))
+	b.WriteString(LabelStyle.Render("  Space:      "))
+	b.WriteString(ValueStyle.Render("play/pause\n"))
+	b.WriteString(LabelStyle.Render("  n:          "))
+	b.WriteString(ValueStyle.Render("next song\n"))
+	b.WriteString(LabelStyle.Render("  p:          "))
+	b.WriteString(ValueStyle.Render("previous song\n"))
+	b.WriteString(LabelStyle.Render("  +/-:        "))
+	b.WriteString(ValueStyle.Render("volume up/down\n"))
+	b.WriteString(LabelStyle.Render("  /:          "))
+	b.WriteString(ValueStyle.Render("search library\n"))
+	b.WriteString(LabelStyle.Render("  1-4:        "))
+	b.WriteString(ValueStyle.Render("switch views\n"))
 }
 
 func formatTime(seconds int) string {
