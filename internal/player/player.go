@@ -2,6 +2,7 @@ package player
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -405,4 +406,97 @@ func (p *Player) IsPaused() bool {
 
 func (p *Player) SetNextCallback(fn func() error) {
 	p.playerNext = fn
+}
+
+// decodeAudioFromReader decodes an audio stream from an io.ReadSeeker.
+// The ext parameter (e.g. ".mp3", ".flac") determines the decoder.
+func (p *Player) decodeAudioFromReader(r io.ReadSeeker, ext string) (beep.StreamSeekCloser, beep.Format, error) {
+	// mp3 and vorbis decoders require io.ReadCloser; wrap with a no-op closer.
+	rc := io.NopCloser(r).(interface {
+		io.ReadCloser
+		io.Seeker
+	})
+	_ = rc // keep compiler happy — we use rc only for mp3/vorbis below
+
+	switch strings.ToLower(ext) {
+	case ".mp3":
+		return mp3.Decode(struct {
+			io.ReadCloser
+			io.Seeker
+		}{io.NopCloser(r), r})
+	case ".flac":
+		return flac.Decode(r)
+	case ".wav":
+		return wav.Decode(r)
+	case ".ogg", ".ogv":
+		return vorbis.Decode(struct {
+			io.ReadCloser
+			io.Seeker
+		}{io.NopCloser(r), r})
+	default:
+		return nil, beep.Format{}, fmt.Errorf("unsupported audio format: %s", ext)
+	}
+}
+
+// PlayFromReader plays a song whose audio bytes are provided by an io.ReadSeeker
+// (e.g. a transfer.P2PReader for streaming from peers).
+// song.Path is used only to determine the audio format via its extension.
+func (p *Player) PlayFromReader(r io.ReadSeeker, song metadata.Song) error {
+	ext := strings.ToLower(filepath.Ext(song.Path))
+	if ext == "" {
+		return fmt.Errorf("cannot determine audio format: no extension in path %s", song.Path)
+	}
+
+	streamer, format, err := p.decodeAudioFromReader(r, ext)
+	if err != nil {
+		return fmt.Errorf("error decoding audio stream: %w", err)
+	}
+
+	volume := p.currentVolume()
+	duration := 0
+	if streamer.Len() > 0 {
+		duration = streamer.Len() / int(format.SampleRate)
+	}
+
+	p.mutex.Lock()
+	p.stopPlaybackLocked()
+
+	p.trackEnded = make(chan struct{}, 1)
+	trackEnded := p.trackEnded
+
+	// No backing *os.File for a reader-based stream
+	p.file = nil
+	p.streamer = streamer
+	p.streamCloser = streamer
+	p.format = format
+	p.Position = 0
+	p.Duration = duration
+
+	seq := beep.Seq(streamer, beep.Callback(func() {
+		select {
+		case trackEnded <- struct{}{}:
+		default:
+		}
+	}))
+
+	p.ctrl = &beep.Ctrl{Streamer: seq}
+	p.VolumeCtrl = &effects.Volume{Streamer: p.ctrl, Base: 2, Volume: volume}
+	p.mutex.Unlock()
+
+	speaker.Play(p.VolumeCtrl)
+	currentTrackEnded := trackEnded
+	go func() {
+		_, ok := <-currentTrackEnded
+		if !ok {
+			return
+		}
+		if p.playerNext != nil {
+			if err := p.playerNext(); err != nil {
+				logger.Debugf("Queue finished or error playing next: %v", err)
+			}
+		}
+	}()
+
+	fmt.Printf("Now playing (stream): %s - %s\n", song.Title, song.Artist)
+	return nil
 }

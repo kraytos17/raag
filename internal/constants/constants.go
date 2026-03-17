@@ -159,6 +159,17 @@ const (
 	TransferMaxFileSize = 256 * 1024 * 1024
 )
 
+// Resource Manager Limits
+const (
+	// Transfer limits
+	TransferMaxConcurrentStreams       = 20
+	TransferMaxInboundStreams          = 10
+	TransferMaxOutboundStreams         = 10
+	TransferMemoryLimit          int64 = 128 * 1024 * 1024
+	// Default service limits
+	DefaultServiceMemoryLimit int64 = 256 * 1024 * 1024
+)
+
 // Protocol
 const (
 	// ProtocolID is the libp2p protocol identifier for raag
@@ -170,6 +181,9 @@ const (
 	// HandshakeProtocolID is for mutual authentication on connection
 	HandshakeProtocolID = "/raag/handshake/1.0.0"
 
+	// BlockProtocolID is the libp2p protocol for chunked block exchange
+	BlockProtocolID = "/raag/blocks/1.0.0"
+
 	// HandshakeTimeout is timeout for auth handshake
 	HandshakeTimeout = 5 * time.Second
 
@@ -180,6 +194,21 @@ const (
 	ShareProtocolVersion = "1.0.0"
 )
 
+// Transfer
+const (
+	// TransferConcurrency is the number of parallel block fetches per song transfer
+	TransferConcurrency = 4
+
+	// ProviderAnnounceTTL is how long a provider record stays valid in the DHT
+	ProviderAnnounceTTL = 24 * time.Hour
+
+	// BlockFindProvidersTimeout is the per-block DHT provider lookup timeout
+	BlockFindProvidersTimeout = 15 * time.Second
+
+	// BlockFetchTimeout is the per-block fetch timeout from a single peer
+	BlockFetchTimeout = 30 * time.Second
+)
+
 // Playback
 const (
 	// DefaultVolume is the default playback volume (0-100)
@@ -187,4 +216,16 @@ const (
 
 	// BufferSize is the audio buffer size in bytes
 	BufferSize = 8192
+)
+
+// GossipSub / PubSub
+const (
+	// PresenceTopic is for peer presence announcements
+	PresenceTopic = "/raag/presence/1.0.0"
+
+	// LibraryAnnounceTopic is for library change announcements
+	LibraryAnnounceTopic = "/raag/library/1.0.0"
+
+	// PubSubHeartbeatInterval is how often to send presence updates
+	PubSubHeartbeatInterval = 30 * time.Second
 )

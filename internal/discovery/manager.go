@@ -41,6 +41,7 @@ type Manager struct {
 	mdnsServiceName string
 	authKeyPair     ed25519.PrivateKey
 	authToken       *auth.AuthToken
+	pubsub          *PubSubManager
 	networkManager  interface {
 		NotifyPeerConnected(peerID peer.ID, addr string)
 	}
@@ -56,6 +57,7 @@ type Manager struct {
 	lastBootstrap           time.Time
 	bootstrapThrottle       time.Duration
 	peerCountSinceBootstrap int
+	pendingSongCallback     func(peer.ID, LibraryAnnounceMessage)
 	stateMu                 sync.RWMutex
 }
 
@@ -359,7 +361,13 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.initDHT(ctx); err != nil {
 		logger.Errorf("Failed to initialize DHT error=%v", err)
 	}
+
 	m.populateDHTFromConnectedPeers()
+	if err := m.initPubSub(ctx); err != nil {
+		logger.Warnf("Failed to initialize PubSub: %v", err)
+	} else {
+		logger.Infof("GossipSub peer discovery active")
+	}
 
 	g.Go(func() error {
 		m.logNetworkStatus(ctx)
@@ -928,6 +936,7 @@ func (m *Manager) initDHT(ctx context.Context) error {
 	}
 
 	var opts []dht.Option
+	opts = append(opts, dht.Mode(dht.ModeAuto))
 	if len(bootstrapPeers) > 0 {
 		opts = append(opts, dht.BootstrapPeers(bootstrapPeers...))
 		logger.Debugf("DHT initialized with bootstrap peers count=%d", len(bootstrapPeers))
@@ -939,6 +948,7 @@ func (m *Manager) initDHT(ctx context.Context) error {
 	}
 
 	m.dht = kademliaDHT
+	logger.Infof("DHT initialized in mode: %v", kademliaDHT.Mode())
 	if err := kademliaDHT.Bootstrap(ctx); err != nil {
 		logger.Warnf("DHT bootstrap warning error=%v", err)
 	}
@@ -1277,4 +1287,50 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 		return
 	}
 	n.manager.savePeer(pi, false)
+}
+
+func (m *Manager) initPubSub(ctx context.Context) error {
+	if m.host == nil {
+		return fmt.Errorf("host not initialized")
+	}
+
+	psm, err := NewPubSubManager(m.host)
+	if err != nil {
+		return err
+	}
+
+	psm.OnPeerDiscover = func(peerInfo peer.AddrInfo) {
+		if peerInfo.ID == m.host.ID() {
+			return
+		}
+		m.savePeer(peerInfo, false)
+	}
+
+	m.pubsub = psm
+	if m.pendingSongCallback != nil {
+		psm.OnSongAnnounce = m.pendingSongCallback
+	}
+	return psm.Start(ctx)
+}
+
+// SetSongAnnounceCallback sets the callback for when a peer announces a new song
+func (m *Manager) SetSongAnnounceCallback(cb func(peer.ID, LibraryAnnounceMessage)) {
+	m.pendingSongCallback = cb
+	if m.pubsub != nil {
+		m.pubsub.OnSongAnnounce = cb
+	}
+}
+
+// PublishSongAnnounce broadcasts a song addition/removal to the network
+func (m *Manager) PublishSongAnnounce(action string, song SongInfo) {
+	if m.pubsub == nil || m.ctx == nil {
+		return
+	}
+	m.pubsub.PublishLibraryAnnounce(m.ctx, action, song)
+}
+
+// DHT returns the underlying *dht.IpfsDHT, which implements routing.Routing.
+// Returns nil if DHT has not been initialized yet.
+func (m *Manager) DHT() *dht.IpfsDHT {
+	return m.dht
 }

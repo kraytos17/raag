@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -32,6 +33,7 @@ import (
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
+	"github.com/p-society/raag/internal/transfer"
 	"github.com/spf13/viper"
 )
 
@@ -204,6 +206,8 @@ type NetworkManager struct {
 	peerConnectCh     chan struct{}
 	pendingHandshakes map[peer.ID]chan struct{}
 	handshakeMu       sync.Mutex
+	connectionGater   *RaagConnectionGater
+	transferMgr       *transfer.Manager
 }
 
 func (n *NetworkManager) getContext() context.Context {
@@ -243,6 +247,9 @@ func (n *NetworkManager) AuthorizePeer(peerID peer.ID) {
 	if n.authorizedPeers != nil {
 		n.authorizedPeers[peerID.String()] = struct{}{}
 		logger.Debugf("Peer authorized: %s", peerID)
+	}
+	if n.connectionGater != nil {
+		n.connectionGater.AllowPeer(peerID)
 	}
 }
 
@@ -424,11 +431,14 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		opts = append(opts, libp2p.DefaultTransports)
 	}
 
+	connectionGater := NewRaagConnectionGater(nil)
+	opts = append(opts, libp2p.ConnectionGater(connectionGater))
 	host, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
+	logger.Debugf("Connection gater initialized")
 	pingService := ping.NewPingService(host)
 	maxPeers := cfg.MaxPeers
 	if maxPeers == 0 {
@@ -454,14 +464,16 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		MDNSServiceName:  cfg.MDNSServiceName,
 	})
 	nm := &NetworkManager{
-		host:          host,
-		cfg:           cfg,
-		viper:         v,
-		library:       lib,
-		musicDir:      musicDir,
-		discovery:     discoveryMgr,
-		pingService:   pingService,
-		peerConnectCh: make(chan struct{}, 1),
+		host:            host,
+		cfg:             cfg,
+		viper:           v,
+		library:         lib,
+		musicDir:        musicDir,
+		discovery:       discoveryMgr,
+		pingService:     pingService,
+		peerConnectCh:   make(chan struct{}, 1),
+		connectionGater: connectionGater,
+		transferMgr:     transfer.NewManager(host, nil, musicDir),
 	}
 
 	discoveryMgr.SetNetworkManager(nm)
@@ -473,18 +485,56 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 			nm.handlePeerDisconnect(conn.RemotePeer(), conn.RemoteMultiaddr())
 		},
 	})
-
 	return nm, nil
 }
 
 func newResourceManager() (network.ResourceManager, error) {
-	limiter := rcmgr.DefaultLimits.AutoScale()
-	rm, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limiter))
+	scalingLimits := rcmgr.DefaultLimits
+	libp2p.SetDefaultServiceLimits(&scalingLimits)
+	scalingLimits.AddProtocolLimit(
+		protocol.ID(constants.ShareProtocolID),
+		rcmgr.BaseLimit{
+			Streams:         constants.TransferMaxConcurrentStreams,
+			StreamsInbound:  constants.TransferMaxInboundStreams,
+			StreamsOutbound: constants.TransferMaxOutboundStreams,
+			Memory:          constants.TransferMemoryLimit,
+			FD:              0,
+		},
+		rcmgr.BaseLimitIncrease{
+			Streams:         0,
+			StreamsInbound:  0,
+			StreamsOutbound: 0,
+			Memory:          0,
+		},
+	)
+	scalingLimits.AddProtocolLimit(
+		protocol.ID(constants.BlockProtocolID),
+		rcmgr.BaseLimit{
+			Streams:         constants.TransferMaxConcurrentStreams,
+			StreamsInbound:  constants.TransferMaxInboundStreams,
+			StreamsOutbound: constants.TransferMaxOutboundStreams,
+			Memory:          constants.TransferMemoryLimit,
+			FD:              0,
+		},
+		rcmgr.BaseLimitIncrease{
+			Streams:         0,
+			StreamsInbound:  0,
+			StreamsOutbound: 0,
+			Memory:          0,
+		},
+	)
+
+	limitConfig := scalingLimits.AutoScale()
+	rm, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limitConfig))
 	if err != nil {
 		return nil, err
 	}
 
-	logger.Debugf("Resource manager initialized with auto-scaled limits")
+	logger.Infof("Resource manager initialized: transfer_streams=%d/%d inbound/outbound memory=%dMB",
+		constants.TransferMaxConcurrentStreams,
+		constants.TransferMaxInboundStreams,
+		constants.TransferMemoryLimit/(1024*1024))
+
 	return rm, nil
 }
 
@@ -506,9 +556,28 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 	n.connectedPeers = make(map[peer.ID]bool)
 	n.host.SetStreamHandler(protocol.ID(constants.ShareProtocolID), n.handleStream)
 	n.host.SetStreamHandler(protocol.ID(constants.HandshakeProtocolID), n.handleHandshake)
+	n.host.SetStreamHandler(protocol.ID(constants.BlockProtocolID), n.handleBlockStream)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
+
+	// Wire DHT routing into the transfer manager once DHT is initialised.
+	// DHT init is async inside discovery.Start, so we poll briefly.
+	go func() {
+		for range 20 {
+			if dht := n.discovery.DHT(); dht != nil {
+				n.transferMgr.SetRouting(dht)
+				logger.Debugf("TransferManager: DHT routing wired")
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+		logger.Warnf("TransferManager: DHT not available after 10s, block DHT lookups disabled")
+	}()
 
 	go n.healthCheckLoop(ctx)
 
@@ -728,6 +797,54 @@ func (n *NetworkManager) GetAuthPublicKey() string {
 	return n.discovery.GetAuthPublicKey()
 }
 
+// BroadcastSongAdded announces a new song to the network via GossipSub
+func (n *NetworkManager) BroadcastSongAdded(song metadata.Song) {
+	if n.discovery == nil {
+		return
+	}
+	info := discovery.SongInfo{
+		Title:  song.Title,
+		Artist: song.Artist,
+		Album:  song.Album,
+		Hash:   song.Hash,
+		Size:   song.Size,
+	}
+	n.discovery.PublishSongAnnounce("add", info)
+}
+
+// BroadcastSongRemoved announces a song removal to the network via GossipSub
+func (n *NetworkManager) BroadcastSongRemoved(song metadata.Song) {
+	if n.discovery == nil {
+		return
+	}
+	info := discovery.SongInfo{
+		Title:  song.Title,
+		Artist: song.Artist,
+		Album:  song.Album,
+		Hash:   song.Hash,
+		Size:   song.Size,
+	}
+	n.discovery.PublishSongAnnounce("remove", info)
+}
+
+// SetSongAnnounceHandler sets the callback for receiving song announcements from peers
+func (n *NetworkManager) SetSongAnnounceHandler(handler func(peer.ID, discovery.LibraryAnnounceMessage)) {
+	if n.discovery != nil {
+		n.discovery.SetSongAnnounceCallback(handler)
+	}
+}
+
+// ShareSong pushes a song to a specific peer using the legacy
+// /raag/share/1.0.0 stream protocol (length-prefixed JSON metadata + raw
+// bytes).  It is the push counterpart to RequestSong.
+//
+// Use this when you have a direct peer reference and want to send a file
+// immediately.  Use ProvideSong + RequestSong (the Phase-4 pull model) when
+// the remote peer should fetch on demand via DHT provider records.
+//
+// Both mechanisms coexist: incoming files received via handleStream are
+// automatically announced to the DHT via ProvideSong so they become
+// available to other peers via the pull model as well.
 func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) error {
 	logger.Debugf("ShareSong function called peer_info=%v song=%v", peerInfo, song)
 	if song.Size > constants.TransferMaxFileSize {
@@ -883,6 +1000,16 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 		if err := n.library.ScanMusicLibrary(n.musicDir); err != nil {
 			logger.Warnf("Failed to rescan library after receiving song error=%v", err)
 		}
+	}
+
+	// Auto-announce the received song to the DHT so it is available for the
+	// chunked pull model (/raag/blocks/1.0.0).  We extract metadata
+	// from the saved file rather than relying on the wire metadata to ensure
+	// the Song struct (hash, size, path) is fully populated.
+	if song, err := metadata.ExtractMetadata(filePath); err == nil {
+		go n.ProvideSong(song)
+	} else {
+		logger.Warnf("handleStream: could not extract metadata for DHT announce file_path=%s error=%v", filePath, err)
 	}
 
 	logger.Debugf("Song data saved bytes_written=%d", bytesWritten)
@@ -1133,4 +1260,82 @@ func (n *NetworkManager) initiateHandshake(peerID peer.ID) {
 
 	n.signalHandshakeDone(peerID)
 	logger.Infof("Mutual auth successful with peer_id=%s", peerID)
+}
+
+// handleBlockStream serves a single block over the /raag/blocks/1.0.0 protocol.
+// The remote peer sends the raw CID bytes; we look up the block locally and
+// write the data back, then close the stream.
+func (n *NetworkManager) handleBlockStream(stream network.Stream) {
+	defer stream.Close()
+	peerID := stream.Conn().RemotePeer()
+
+	cidBytes, err := io.ReadAll(stream)
+	if err != nil {
+		logger.Warnf("handleBlockStream: read CID from peer=%s: %v", peerID, err)
+		_ = stream.Reset()
+		return
+	}
+	if len(cidBytes) == 0 {
+		logger.Warnf("handleBlockStream: empty CID from peer=%s", peerID)
+		_ = stream.Reset()
+		return
+	}
+
+	data, ok := n.transferMgr.ServeBlock(cidBytes)
+	if !ok {
+		logger.Debugf("handleBlockStream: block not found for peer=%s", peerID)
+		_ = stream.Reset()
+		return
+	}
+
+	if _, err := stream.Write(data); err != nil {
+		logger.Warnf("handleBlockStream: write block to peer=%s: %v", peerID, err)
+	}
+}
+
+// ProvideSong chunks a local song and announces all blocks to the DHT.
+// Call this when a new song is added to the local library so remote peers
+// can fetch it via RequestSong.  Songs received via the legacy ShareSong /
+// handleStream path are also announced automatically.
+func (n *NetworkManager) ProvideSong(song metadata.Song) {
+	if n.transferMgr == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(n.getContext(), 2*time.Minute)
+	defer cancel()
+	if err := n.transferMgr.Provide(ctx, song); err != nil {
+		logger.Warnf("ProvideSong: failed to announce blocks for song=%s: %v", song.Title, err)
+	}
+}
+
+// RequestSong initiates a chunked download of a remote song identified by its
+// ordered block CIDs using the Phase-4 pull model (/raag/blocks/1.0.0).
+// blockCIDBytes is a slice where each element is the raw CID bytes
+// (cid.Cid.Bytes()) for that block, in order.
+//
+// This is the pull counterpart to ShareSong.  The remote node must have
+// called ProvideSong (or received the file via the legacy push protocol,
+// which triggers ProvideSong automatically) before this call succeeds.
+//
+// Returns the transfer handle; callers can poll t.Status for progress.
+func (n *NetworkManager) RequestSong(song metadata.Song, blockCIDBytes [][]byte) (*transfer.Transfer, error) {
+	if n.transferMgr == nil {
+		return nil, fmt.Errorf("transfer manager not initialized")
+	}
+
+	cids := make([]cid.Cid, 0, len(blockCIDBytes))
+	for i, b := range blockCIDBytes {
+		c, err := cid.Cast(b)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CID at index %d: %w", i, err)
+		}
+		cids = append(cids, c)
+	}
+
+	return n.transferMgr.Download(n.getContext(), song, cids)
+}
+
+// TransferManager returns the underlying transfer.Manager for advanced usage.
+func (n *NetworkManager) TransferManager() *transfer.Manager {
+	return n.transferMgr
 }
