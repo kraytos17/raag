@@ -889,7 +889,6 @@ func (n *NetworkManager) handlePeerConnect(peerID peer.ID, addr multiaddr.Multia
 	if peerID == n.host.ID() {
 		return
 	}
-
 	if n.IsAuthEnabled() {
 		go n.initiateHandshake(peerID)
 	}
