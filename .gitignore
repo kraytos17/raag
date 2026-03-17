@@ -24,5 +24,4 @@ go.work
 
 #o/p binary
 bin/
-#Currently musicDir flag is hardcoded, hence this needs to be ignored
-music/
+coverage.html

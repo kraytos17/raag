@@ -15,7 +15,7 @@ const (
 
 	// DefaultTrackerURL is the default tracker URL for peer discovery (fallback)
 	// Can be overridden via TRACKER_URL environment variable or --tracker flag
-	DefaultTrackerURL = "https://raag-production.up.railway.app"
+	DefaultTrackerURL = ""
 
 	// EnvTrackerURL is the environment variable name for tracker URL
 	EnvTrackerURL = "TRACKER_URL"
