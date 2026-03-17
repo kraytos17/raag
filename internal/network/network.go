@@ -886,10 +886,14 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 }
 
 func (n *NetworkManager) handlePeerConnect(peerID peer.ID, addr multiaddr.Multiaddr) {
-	n.notifyPeerConnected(peerID, addr.String())
+	if peerID == n.host.ID() {
+		return
+	}
+
 	if n.IsAuthEnabled() {
 		go n.initiateHandshake(peerID)
 	}
+	n.notifyPeerConnected(peerID, addr.String())
 }
 
 // NotifyPeerConnected is called when a peer connection is established externally
