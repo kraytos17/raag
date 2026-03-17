@@ -20,6 +20,13 @@ func main() {
 			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
+			if tuiEnabled, _ := cmd.Flags().GetBool("tui"); tuiEnabled {
+				client := requireDaemon()
+				if err := tui.Start(client); err != nil {
+					logger.Errorf("TUI error error=%v", err)
+				}
+				return
+			}
 			_ = cmd.Help()
 		},
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/p-society/raag/app"
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
+	"github.com/p-society/raag/internal/tui"
 	"github.com/p-society/raag/rpc"
 	"github.com/spf13/cobra"
 )
@@ -37,6 +38,18 @@ Examples:
 
 func runDaemon(cmd *cobra.Command) {
 	logger.Infof("starting Raag daemon")
+	if tuiEnabled, _ := cmd.Flags().GetBool("tui"); tuiEnabled {
+		client := newRPCClient()
+		if !client.IsAvailable() {
+			logger.Errorf("Daemon not running. Start daemon first without --tui")
+			os.Exit(1)
+		}
+		if err := tui.Start(client); err != nil {
+			logger.Errorf("TUI error error=%v", err)
+		}
+		return
+	}
+
 	v, err := config.InitViper(cmd)
 	if err != nil {
 		logger.Errorf("failed to initialize config error=%v", err)
