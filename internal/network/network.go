@@ -16,12 +16,15 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/control"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
+	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/auth"
 	"github.com/p-society/raag/internal/config"
@@ -191,6 +194,7 @@ type NetworkManager struct {
 	OnPeerLeave     func(peer.ID)
 	OnStateChange   func(bool)
 	discovery       *discovery.Manager
+	pingService     *ping.PingService
 	authEnabled     bool
 	authorizedPeers map[string]struct{}
 	authorizedMu    sync.RWMutex
@@ -198,7 +202,14 @@ type NetworkManager struct {
 	nonceMu         sync.Mutex
 	peerStateMu     sync.RWMutex
 	connectedPeers  map[peer.ID]bool
+	peersMu         sync.RWMutex
 	peerConnectCh   chan struct{}
+	presenceCh      chan presenceMessage
+}
+
+type presenceMessage struct {
+	peerID peer.ID
+	status string
 }
 
 func (n *NetworkManager) getContext() context.Context {
@@ -360,6 +371,15 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 			opts = append(opts, libp2p.ResourceManager(resourceManager))
 		}
 
+		cm, err := newConnectionManager()
+		if err != nil {
+			logger.Warnf("Failed to initialize connection manager error=%v", err)
+		} else {
+			opts = append(opts, libp2p.ConnectionManager(cm))
+			logger.Debugf("Connection manager initialized with limits")
+		}
+
+		opts = append(opts, libp2p.ConnectionGater(&RaagConnectionGater{}))
 		opts = append(opts, libp2p.EnableRelay())
 		if cfg.ForceRelay {
 			logger.Infof("Force relay mode enabled - skipping hole punching, using relay for all connections")
@@ -416,6 +436,7 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
+	pingService := ping.NewPingService(host)
 	maxPeers := cfg.MaxPeers
 	if maxPeers == 0 {
 		maxPeers = constants.DefaultMaxPeers
@@ -444,7 +465,9 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		library:       lib,
 		musicDir:      musicDir,
 		discovery:     discoveryMgr,
+		pingService:   pingService,
 		peerConnectCh: make(chan struct{}, 1),
+		presenceCh:    make(chan presenceMessage, 64),
 	}
 
 	discoveryMgr.SetNetworkManager(nm)
@@ -462,7 +485,50 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 
 func newResourceManager() (network.ResourceManager, error) {
 	limiter := rcmgr.DefaultLimits.AutoScale()
-	return rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limiter))
+	rm, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limiter))
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Debugf("Resource manager initialized with auto-scaled limits")
+	return rm, nil
+}
+
+func newConnectionManager() (*connmgr.BasicConnMgr, error) {
+	lowWater := 50
+	highWater := 100
+	gracePeriod := 30 * time.Second
+	cm, err := connmgr.NewConnManager(lowWater, highWater, connmgr.WithGracePeriod(gracePeriod))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection manager: %w", err)
+	}
+
+	logger.Debugf("Connection manager initialized: low=%d high=%d grace=%v", lowWater, highWater, gracePeriod)
+	return cm, nil
+}
+
+// RaagConnectionGater is a simple connection gater that allows all connections
+// Can be extended to add filtering, rate limiting, etc.
+type RaagConnectionGater struct{}
+
+func (g *RaagConnectionGater) InterceptPeerDial(p peer.ID) bool {
+	return true
+}
+
+func (g *RaagConnectionGater) InterceptAddrDial(p peer.ID, m multiaddr.Multiaddr) bool {
+	return true
+}
+
+func (g *RaagConnectionGater) InterceptAccept(addrs network.ConnMultiaddrs) bool {
+	return true
+}
+
+func (g *RaagConnectionGater) InterceptSecured(d network.Direction, p peer.ID, addrs network.ConnMultiaddrs) bool {
+	return true
+}
+
+func (g *RaagConnectionGater) InterceptUpgraded(c network.Conn) (bool, control.DisconnectReason) {
+	return true, 0
 }
 
 func (n *NetworkManager) Start(ctx context.Context) error {
@@ -473,6 +539,9 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
+
+	go n.healthCheckLoop(ctx)
+	go n.presenceLoop(ctx)
 
 	addrs := n.host.Addrs()
 	if len(addrs) > 0 {
@@ -492,6 +561,69 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+func (n *NetworkManager) healthCheckLoop(ctx context.Context) {
+	healthTicker := time.NewTicker(constants.PeerHealthCheckInterval)
+	metricsTicker := time.NewTicker(constants.PeerMetricsLogInterval)
+	defer healthTicker.Stop()
+	defer metricsTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-healthTicker.C:
+			n.runHealthCheck(ctx)
+		case <-metricsTicker.C:
+			n.logMetrics()
+		}
+	}
+}
+
+func (n *NetworkManager) logMetrics() {
+	connectedCount := len(n.host.Network().Peers())
+	logger.Debugf("Connection metrics: connected_peers=%d", connectedCount)
+}
+
+func (n *NetworkManager) runHealthCheck(ctx context.Context) {
+	if n.pingService == nil {
+		return
+	}
+
+	n.peersMu.RLock()
+	peers := make([]peer.ID, 0, len(n.connectedPeers))
+	for p := range n.connectedPeers {
+		peers = append(peers, p)
+	}
+	n.peersMu.RUnlock()
+
+	for _, p := range peers {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		ctx, cancel := context.WithTimeout(ctx, constants.PeerPingTimeout)
+		resultChan := n.pingService.Ping(ctx, p)
+		cancel()
+
+		select {
+		case <-ctx.Done():
+			return
+		case result := <-resultChan:
+			if result.Error != nil {
+				logger.Debugf("Health check failed for peer=%s error=%v", p, result.Error)
+				if n.host.Network().Connectedness(p) != network.Connected {
+					logger.Debugf("Peer no longer connected, removing peer=%s", p)
+					n.peersMu.Lock()
+					delete(n.connectedPeers, p)
+					n.peersMu.Unlock()
+				}
+			}
+		}
+	}
 }
 
 // GetPeers returns information about currently connected peers
@@ -858,10 +990,8 @@ func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, addr multiaddr.Mul
 }
 
 func (n *NetworkManager) handlePresence(stream network.Stream) {
-	peerID := stream.Conn().RemotePeer()
-	logger.Debugf("Received presence message from peer_id=%s", peerID)
-
-	buf := make([]byte, 64)
+	senderID := stream.Conn().RemotePeer()
+	buf := make([]byte, 256)
 	nRead, err := stream.Read(buf)
 	if err != nil || nRead == 0 {
 		_ = stream.Close()
@@ -874,29 +1004,56 @@ func (n *NetworkManager) handlePresence(stream network.Stream) {
 		return
 	}
 
-	peerIDStr := msg[1:]
 	action := msg[:1]
+	targetIDStr := msg[1:]
+	targetID, err := peer.Decode(targetIDStr)
+	if err != nil {
+		logger.Debugf("Invalid peer ID in presence message from=%s error=%v", senderID, err)
+		_ = stream.Close()
+		return
+	}
+
 	switch action {
 	case "o":
-		logger.Infof("Peer is online peer_id=%s", peerIDStr)
+		logger.Debugf("Received presence: peer online peer_id=%s reported_by=%s", targetID, senderID)
 	case "x":
-		logger.Infof("Peer went offline peer_id=%s", peerIDStr)
+		logger.Debugf("Received presence: peer offline peer_id=%s reported_by=%s", targetID, senderID)
+		if targetID != senderID && targetID != n.host.ID() {
+			n.peersMu.Lock()
+			if n.connectedPeers[targetID] {
+				delete(n.connectedPeers, targetID)
+				n.peersMu.Unlock()
+				logger.Debugf("Removed peer based on presence report peer_id=%s", targetID)
+			} else {
+				n.peersMu.Unlock()
+			}
+		}
 	}
 	_ = stream.Close()
 }
 
-func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
-	n.peerStateMu.RLock()
+func (n *NetworkManager) presenceLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-n.presenceCh:
+			n.doBroadcastPresence(msg.peerID, msg.status)
+		}
+	}
+}
+
+func (n *NetworkManager) doBroadcastPresence(peerID peer.ID, status string) {
+	n.peersMu.RLock()
 	peers := make([]peer.ID, 0, len(n.connectedPeers))
 	for p := range n.connectedPeers {
-		if p != n.host.ID() {
+		if p != n.host.ID() && p != peerID {
 			peers = append(peers, p)
 		}
 	}
-	n.peerStateMu.RUnlock()
+	n.peersMu.RUnlock()
 
 	if len(peers) == 0 {
-		logger.Debugf("No peers to broadcast presence to")
 		return
 	}
 
@@ -907,24 +1064,28 @@ func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
 		msg = "x" + peerID.String()
 	}
 
-	logger.Debugf("Broadcasting presence: %s to %d peers", status, len(peers))
+	logger.Debugf("Broadcasting presence: %s peer=%s to %d peers", status, peerID, len(peers))
 	for _, p := range peers {
 		go func(target peer.ID) {
-			ctx, cancel := context.WithTimeout(n.getContext(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(n.getContext(), constants.PresenceMessageTimeout)
 			defer cancel()
 
 			stream, err := n.host.NewStream(ctx, target, protocol.ID(constants.PresenceProtocolID))
 			if err != nil {
-				logger.Debugf("Failed to send presence to peer_id=%s error=%v", target, err)
 				return
 			}
 			defer stream.Close()
 
-			_, err = stream.Write([]byte(msg))
-			if err != nil {
-				logger.Debugf("Failed to write presence to peer_id=%s error=%v", target, err)
-			}
+			_, _ = stream.Write([]byte(msg))
 		}(p)
+	}
+}
+
+func (n *NetworkManager) broadcastPresence(peerID peer.ID, status string) {
+	select {
+	case n.presenceCh <- presenceMessage{peerID: peerID, status: status}:
+	default:
+		logger.Debugf("Presence channel full, dropping message for peer=%s", peerID)
 	}
 }
 

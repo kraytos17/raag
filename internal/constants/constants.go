@@ -55,6 +55,15 @@ const (
 	// PeerTimeout is how long before a peer is considered stale
 	PeerTimeout = 10 * time.Minute
 
+	// PeerHealthCheckInterval is how often to check peer connectivity
+	PeerHealthCheckInterval = 2 * time.Minute
+
+	// PeerPingTimeout is the timeout for ping requests
+	PeerPingTimeout = 10 * time.Second
+
+	// PeerMetricsLogInterval is how often to log connection metrics
+	PeerMetricsLogInterval = 30 * time.Second
+
 	// NonceExpiry is how long used nonces are kept (prevents reuse within token validity)
 	NonceExpiry = 24 * time.Hour
 )
@@ -65,7 +74,7 @@ const (
 	DHTAdvertisementInterval = 30 * time.Minute
 
 	// DHTDiscoveryInterval is how often to run DHT discovery
-	DHTDiscoveryInterval = 1 * time.Minute
+	DHTDiscoveryInterval = 30 * time.Second
 
 	// DHTLogInterval is how often to log DHT routing table size
 	DHTLogInterval = 10 * time.Second
@@ -148,6 +157,9 @@ const (
 
 	// PresenceProtocolID is for peer presence notifications
 	PresenceProtocolID = "/raag/presence/1.0.0"
+
+	// PresenceMessageTimeout is timeout for sending presence messages
+	PresenceMessageTimeout = 3 * time.Second
 
 	// ProtocolVersion indicates the protocol version
 	ProtocolVersion = "1.0.0"

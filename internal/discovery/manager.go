@@ -97,7 +97,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 
 	bootstrapPeers := cfg.BootstrapPeers
 	if len(bootstrapPeers) == 0 {
-		logger.Infof("Using default IPFS bootstrap peers for DHT")
+		logger.Debugf("Using default IPFS bootstrap peers for DHT")
 		bootstrapPeers = constants.DefaultBootstrapPeers
 	}
 	return &Manager{
@@ -893,7 +893,6 @@ func (m *Manager) initDHT(ctx context.Context) error {
 	}
 
 	var opts []dht.Option
-	opts = append(opts, dht.Mode(dht.ModeServer))
 	if len(bootstrapPeers) > 0 {
 		opts = append(opts, dht.BootstrapPeers(bootstrapPeers...))
 		logger.Debugf("DHT initialized with bootstrap peers count=%d", len(bootstrapPeers))
