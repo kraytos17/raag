@@ -25,5 +25,5 @@ if [ -n "$AUTH_KEY" ]; then
 fi
 
 # Note: AUTH_SECRET is handled internally by the tracker application
-echo "Starting tracker with arguments: $@"
+echo "Starting tracker with arguments: $*"
 exec ./tracker "$@"
