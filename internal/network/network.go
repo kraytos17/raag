@@ -274,8 +274,8 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 			logger.Debugf("Connection manager initialized with limits")
 		}
 
-		opts = append(opts, libp2p.EnableAutoRelay(
-			autorelay.WithPeerSource(func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
+		opts = append(opts, libp2p.EnableAutoRelayWithPeerSource(
+			func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
 				out := make(chan peer.AddrInfo, numPeers)
 				go func() {
 					defer close(out)
@@ -289,11 +289,12 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 					}
 				}()
 				return out
-			}),
+			},
 			autorelay.WithMinCandidates(1),
 			autorelay.WithMaxCandidates(5),
 			autorelay.WithBackoff(30*time.Second),
 		))
+
 		opts = append(opts, libp2p.EnableHolePunching())
 		opts = append(opts, libp2p.NATPortMap())
 		opts = append(opts, libp2p.EnableNATService())
@@ -396,6 +397,22 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 func newResourceManager() (network.ResourceManager, error) {
 	scalingLimits := rcmgr.DefaultLimits
 	libp2p.SetDefaultServiceLimits(&scalingLimits)
+	scalingLimits.AddProtocolLimit(
+		"/ipfs/bitswap/1.2.0",
+		rcmgr.BaseLimit{
+			Streams:         512,
+			StreamsInbound:  256,
+			StreamsOutbound: 256,
+			Memory:          64 << 20,
+			FD:              0,
+		},
+		rcmgr.BaseLimitIncrease{
+			Streams:         64,
+			StreamsInbound:  32,
+			StreamsOutbound: 32,
+			Memory:          8 << 20,
+		},
+	)
 
 	limitConfig := scalingLimits.AutoScale()
 	rm, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limitConfig))
@@ -403,7 +420,7 @@ func newResourceManager() (network.ResourceManager, error) {
 		return nil, err
 	}
 
-	logger.Infof("Resource manager initialized with default limits")
+	logger.Infof("Resource manager initialized with Bitswap limits (512 streams, 64 MB)")
 	return rm, nil
 }
 
