@@ -1,8 +1,6 @@
 package config
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -154,22 +152,21 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 
 // SaveConfig saves persistent configuration values to file.
 func SaveConfig(v *viper.Viper, cfg *Config) error {
-	jsonBytes, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	var configMap map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(jsonBytes))
-	decoder.UseNumber()
-	if err := decoder.Decode(&configMap); err != nil {
-		return fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-	for key, value := range configMap {
-		if value == nil {
-			continue
-		}
-		v.Set(key, value)
+	// Use Viper's built-in unmarshaling - simpler and more efficient
+	if err := v.MergeConfigMap(map[string]any{
+		"network.host":                cfg.Host,
+		"network.port":                cfg.Port,
+		"network.rendezvous":          cfg.Rendezvous,
+		"discovery.dht_enabled":       cfg.DHTEnabled,
+		"discovery.max_peers":         cfg.MaxPeers,
+		"discovery.bootstrap_peers":   cfg.BootstrapPeers,
+		"discovery.mdns_enabled":      cfg.MDNSEnabled,
+		"discovery.mdns_service_name": cfg.MDNSServiceName,
+		"discovery.auth_secret":       cfg.AuthSecret,
+		"playback.music_dir":          cfg.MusicDir,
+		"storage.data_dir":            cfg.DataDir,
+	}); err != nil {
+		return fmt.Errorf("failed to merge config: %w", err)
 	}
 	return v.WriteConfig()
 }
