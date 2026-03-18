@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -184,11 +183,8 @@ type NetworkManager struct {
 	Online          bool
 	OnPeerJoin      func(peer.ID)
 	OnPeerLeave     func(peer.ID)
-	OnStateChange   func(bool)
 	discovery       *discovery.Manager
 	pingService     *ping.PingService
-	connectedPeers  map[peer.ID]bool
-	peersMu         sync.RWMutex
 	peerConnectCh   chan struct{}
 	connectionGater *RaagConnectionGater
 	transferMgr     *transfer.Manager
@@ -336,7 +332,7 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		opts = append(opts, libp2p.DefaultTransports)
 	}
 
-	connectionGater := NewRaagConnectionGater(nil)
+	connectionGater := NewRaagConnectionGater()
 	opts = append(opts, libp2p.ConnectionGater(connectionGater))
 	host, err := libp2p.New(opts...)
 	if err != nil {
@@ -381,13 +377,37 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		transferMgr:     transfer.NewManager(host, nil, musicDir),
 	}
 
-	discoveryMgr.SetNetworkManager(nm)
 	host.Network().Notify(&network.NotifyBundle{
-		ConnectedF: func(n network.Network, conn network.Conn) {
-			nm.handlePeerConnect(conn.RemotePeer(), conn.RemoteMultiaddr())
+		ConnectedF: func(_ network.Network, conn network.Conn) {
+			pid := conn.RemotePeer()
+			if pid == host.ID() {
+				return
+			}
+
+			logger.Infof("Peer connected peer=%s addr=%s", pid, conn.RemoteMultiaddr())
+			select {
+			case nm.peerConnectCh <- struct{}{}:
+			default:
+			}
+
+			if !nm.Online {
+				nm.Online = true
+				logger.Infof("Network: Online")
+			}
+			if nm.OnPeerJoin != nil {
+				go nm.OnPeerJoin(pid)
+			}
 		},
-		DisconnectedF: func(n network.Network, conn network.Conn) {
-			nm.handlePeerDisconnect(conn.RemotePeer(), conn.RemoteMultiaddr())
+		DisconnectedF: func(_ network.Network, conn network.Conn) {
+			pid := conn.RemotePeer()
+			logger.Infof("Peer disconnected peer=%s", pid)
+			if nm.OnPeerLeave != nil {
+				go nm.OnPeerLeave(pid)
+			}
+			if len(host.Network().Peers()) == 0 {
+				nm.Online = false
+				logger.Infof("Network: Offline")
+			}
 		},
 	})
 	return nm, nil
@@ -458,32 +478,11 @@ func newConnectionManager() (*connmgr.BasicConnMgr, error) {
 
 func (n *NetworkManager) Start(ctx context.Context) error {
 	n.ctx = ctx
-	n.connectedPeers = make(map[peer.ID]bool)
 	n.host.SetStreamHandler(protocol.ID(constants.ShareProtocolID), n.handleStream)
 	n.host.SetStreamHandler(protocol.ID(constants.BlockProtocolID), n.handleBlockStream)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
-
-	// Wire DHT routing into the transfer manager once DHT is initialised.
-	// DHT init is async inside discovery.Start, so we poll briefly.
-	go func() {
-		for range 20 {
-			if dht := n.discovery.DHT(); dht != nil {
-				n.transferMgr.SetRouting(dht)
-				logger.Debugf("TransferManager: DHT routing wired")
-				return
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(500 * time.Millisecond):
-			}
-		}
-		logger.Warnf("TransferManager: DHT not available after 10s, block DHT lookups disabled")
-	}()
-
-	go n.healthCheckLoop(ctx)
 
 	addrs := n.host.Addrs()
 	if len(addrs) > 0 {
@@ -503,71 +502,6 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 
 	<-ctx.Done()
 	return ctx.Err()
-}
-
-func (n *NetworkManager) healthCheckLoop(ctx context.Context) {
-	healthTicker := time.NewTicker(constants.PeerHealthCheckInterval)
-	metricsTicker := time.NewTicker(constants.PeerMetricsLogInterval)
-	defer healthTicker.Stop()
-	defer metricsTicker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-healthTicker.C:
-			n.runHealthCheck(ctx)
-		case <-metricsTicker.C:
-			n.logMetrics()
-		}
-	}
-}
-
-func (n *NetworkManager) logMetrics() {
-	connectedCount := len(n.host.Network().Peers())
-	if connectedCount > 0 {
-		logger.Infof("Network status: %d peers connected", connectedCount)
-	}
-}
-
-func (n *NetworkManager) runHealthCheck(ctx context.Context) {
-	if n.pingService == nil {
-		return
-	}
-
-	n.peersMu.RLock()
-	peers := make([]peer.ID, 0, len(n.connectedPeers))
-	for p := range n.connectedPeers {
-		peers = append(peers, p)
-	}
-	n.peersMu.RUnlock()
-
-	for _, p := range peers {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		ctx, cancel := context.WithTimeout(ctx, constants.PeerPingTimeout)
-		resultChan := n.pingService.Ping(ctx, p)
-		cancel()
-
-		select {
-		case <-ctx.Done():
-			return
-		case result := <-resultChan:
-			if result.Error != nil {
-				logger.Warnf("Health check failed for peer=%s error=%v", p, result.Error)
-				if n.host.Network().Connectedness(p) != network.Connected {
-					logger.Warnf("Peer no longer reachable, removing peer=%s", p)
-					n.peersMu.Lock()
-					delete(n.connectedPeers, p)
-					n.peersMu.Unlock()
-				}
-			}
-		}
-	}
 }
 
 // GetPeers returns information about currently connected peers
@@ -904,80 +838,6 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 
 	logger.Debugf("Song data saved bytes_written=%d", bytesWritten)
 	logger.Infof("Successfully received and saved song title=%s peer_id=%s file_path=%s", meta.Title, peerID, filePath)
-}
-
-func (n *NetworkManager) handlePeerConnect(peerID peer.ID, addr multiaddr.Multiaddr) {
-	if peerID == n.host.ID() {
-		return
-	}
-	n.notifyPeerConnected(peerID, addr.String())
-}
-
-// NotifyPeerConnected is called when a peer connection is established externally
-func (n *NetworkManager) NotifyPeerConnected(peerID peer.ID, addr string) {
-	n.notifyPeerConnected(peerID, addr)
-}
-
-func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, _ string) {
-	if peerID == n.host.ID() {
-		return
-	}
-
-	n.peersMu.Lock()
-	_, alreadyConnected := n.connectedPeers[peerID]
-	n.connectedPeers[peerID] = true
-	peerCount := len(n.connectedPeers)
-	n.peersMu.Unlock()
-
-	conns := n.host.Network().ConnsToPeer(peerID)
-	if len(conns) > 0 {
-		if !alreadyConnected {
-			addr := conns[0].RemoteMultiaddr().String()
-			logger.Infof("Peer connected peer_id=%s addr=%s total_peers=%d", peerID, addr, peerCount)
-			select {
-			case n.peerConnectCh <- struct{}{}:
-			default:
-			}
-		}
-		if n.OnPeerJoin != nil {
-			n.OnPeerJoin(peerID)
-		}
-		if !n.Online {
-			n.Online = true
-			logger.Infof("Network: Online - %d peers connected", peerCount)
-			if n.OnStateChange != nil {
-				n.OnStateChange(true)
-			}
-		}
-	}
-}
-
-func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, _ multiaddr.Multiaddr) {
-	conns := n.host.Network().ConnsToPeer(peerID)
-	n.peersMu.Lock()
-	if n.connectedPeers[peerID] {
-		delete(n.connectedPeers, peerID)
-		peerCount := len(n.connectedPeers)
-		n.peersMu.Unlock()
-		logger.Infof("Peer disconnected peer_id=%s remaining_peers=%d", peerID, peerCount)
-	} else {
-		n.peersMu.Unlock()
-	}
-
-	if len(conns) == 0 {
-		if n.OnPeerLeave != nil {
-			n.OnPeerLeave(peerID)
-		}
-
-		peerCount := len(n.host.Network().Peers())
-		if peerCount == 0 && n.Online {
-			n.Online = false
-			logger.Infof("Network: Offline - no peers connected")
-			if n.OnStateChange != nil {
-				n.OnStateChange(false)
-			}
-		}
-	}
 }
 
 // UpdateTrackerURL updates the tracker URL for discovery

@@ -13,32 +13,26 @@ import (
 type RaagConnectionGater struct {
 	mu           sync.RWMutex
 	blockedPeers map[peer.ID]struct{}
-	allowedPeers map[peer.ID]struct{}
-	validateAuth func(token string, peerID string) error
 }
 
-func NewRaagConnectionGater(validateAuth func(token string, peerID string) error) *RaagConnectionGater {
+func NewRaagConnectionGater() *RaagConnectionGater {
 	return &RaagConnectionGater{
 		blockedPeers: make(map[peer.ID]struct{}),
-		allowedPeers: make(map[peer.ID]struct{}),
-		validateAuth: validateAuth,
 	}
 }
 
 func (g *RaagConnectionGater) BlockPeer(p peer.ID) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.allowedPeers, p)
 	g.blockedPeers[p] = struct{}{}
 	logger.Debugf("Gater: blocked peer %s", p)
 }
 
-func (g *RaagConnectionGater) AllowPeer(p peer.ID) {
+func (g *RaagConnectionGater) UnblockPeer(p peer.ID) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.blockedPeers, p)
-	g.allowedPeers[p] = struct{}{}
-	logger.Debugf("Gater: allowed peer %s", p)
+	logger.Debugf("Gater: unblocked peer %s", p)
 }
 
 func (g *RaagConnectionGater) IsBlocked(p peer.ID) bool {
@@ -46,13 +40,6 @@ func (g *RaagConnectionGater) IsBlocked(p peer.ID) bool {
 	defer g.mu.RUnlock()
 	_, blocked := g.blockedPeers[p]
 	return blocked
-}
-
-func (g *RaagConnectionGater) IsAllowed(p peer.ID) bool {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	_, allowed := g.allowedPeers[p]
-	return allowed
 }
 
 func (g *RaagConnectionGater) InterceptPeerDial(p peer.ID) (allow bool) {
@@ -74,20 +61,13 @@ func (g *RaagConnectionGater) InterceptAccept(_ network.ConnMultiaddrs) (allow b
 	return true
 }
 
-func (g *RaagConnectionGater) InterceptSecured(dir network.Direction, p peer.ID, _ network.ConnMultiaddrs) (allow bool) {
+func (g *RaagConnectionGater) InterceptSecured(_ network.Direction, p peer.ID, _ network.ConnMultiaddrs) (allow bool) {
 	g.mu.RLock()
+	defer g.mu.RUnlock()
+
 	if _, blocked := g.blockedPeers[p]; blocked {
-		g.mu.RUnlock()
 		logger.Warnf("Gater: rejected secured connection from blocked peer %s", p)
 		return false
-	}
-	g.mu.RUnlock()
-
-	if g.validateAuth == nil {
-		return true
-	}
-	if dir == network.DirOutbound {
-		return true
 	}
 	return true
 }
