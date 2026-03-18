@@ -704,7 +704,7 @@ func (m *Manager) initPubSub(ctx context.Context) error {
 		return fmt.Errorf("host not initialized")
 	}
 
-	psm, err := NewPubSubManager(m.host)
+	psm, err := NewPubSubManager(ctx, m.host)
 	if err != nil {
 		return err
 	}

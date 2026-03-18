@@ -6,7 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-libp2p-pubsub"
+	"github.com/ipfs/go-cid"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/constants"
@@ -42,9 +43,9 @@ type PubSubManager struct {
 	mu sync.RWMutex
 }
 
-func NewPubSubManager(h host.Host) (*PubSubManager, error) {
+func NewPubSubManager(ctx context.Context, h host.Host) (*PubSubManager, error) {
 	ps, err := pubsub.NewGossipSub(
-		context.Background(),
+		ctx,
 		h,
 		pubsub.WithPeerExchange(true),
 		pubsub.WithFloodPublish(true),
@@ -67,7 +68,7 @@ func (p *PubSubManager) Start(ctx context.Context) error {
 	err := p.pubsub.RegisterTopicValidator(
 		constants.LibraryAnnounceTopic,
 		p.topicValidator,
-		pubsub.WithValidatorTimeout(500),
+		pubsub.WithValidatorTimeout(500*time.Millisecond),
 	)
 	if err != nil {
 		logger.Warnf("Failed to register topic validator: %v", err)
@@ -79,7 +80,6 @@ func (p *PubSubManager) Start(ctx context.Context) error {
 	}
 
 	p.libraryTopic = libraryTopic
-
 	subLibrary, err := libraryTopic.Subscribe()
 	if err != nil {
 		return err
@@ -99,6 +99,15 @@ func (p *PubSubManager) topicValidator(ctx context.Context, pid peer.ID, msg *pu
 		return pubsub.ValidationReject
 	}
 	if announce.PeerID == "" {
+		return pubsub.ValidationReject
+	}
+	if announce.CID != "" {
+		if _, err := cid.Decode(announce.CID); err != nil {
+			logger.Debugf("topicValidator: rejected invalid CID %q: %v", announce.CID, err)
+			return pubsub.ValidationReject
+		}
+	}
+	if announce.Action == "add" && announce.Song.Title == "" {
 		return pubsub.ValidationReject
 	}
 	return pubsub.ValidationAccept
