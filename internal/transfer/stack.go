@@ -26,6 +26,7 @@ import (
 
 type Stack struct {
 	bs       blockstore.Blockstore
+	ds       ds.Batching
 	exchange *bitswap.Bitswap
 	bsvc     blockservice.BlockService
 	dag      format.DAGService
@@ -39,12 +40,13 @@ func NewStack(ctx context.Context, h host.Host, dht routing.ContentRouting, bsDS
 
 	bs := blockstore.NewBlockstore(bsDS)
 	bs = blockstore.NewIdStore(bs)
-	bsNet := bsnet.NewFromIpfsHost(h, nil)
+	bsNet := bsnet.NewFromIpfsHost(h)
 	exchange := bitswap.New(ctx, bsNet, dht, bs)
 	bsvc := blockservice.New(bs, exchange)
 	dag := merkledag.NewDAGService(bsvc)
 	return &Stack{
 		bs:       bs,
+		ds:       bsDS,
 		exchange: exchange,
 		bsvc:     bsvc,
 		dag:      dag,
@@ -55,7 +57,7 @@ func NewStack(ctx context.Context, h host.Host, dht routing.ContentRouting, bsDS
 func (s *Stack) AddFile(ctx context.Context, path string) (cid.Cid, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return cid.MustParse(""), fmt.Errorf("AddFile open %q: %w", path, err)
+		return cid.Undef, fmt.Errorf("AddFile open %q: %w", path, err)
 	}
 	defer f.Close()
 
@@ -69,12 +71,12 @@ func (s *Stack) AddFile(ctx context.Context, path string) (cid.Cid, error) {
 
 	db, err := dbp.New(spl)
 	if err != nil {
-		return cid.MustParse(""), fmt.Errorf("AddFile dag builder %q: %w", path, err)
+		return cid.Undef, fmt.Errorf("AddFile dag builder %q: %w", path, err)
 	}
 
 	nd, err := balanced.Layout(db)
 	if err != nil {
-		return cid.MustParse(""), fmt.Errorf("AddFile layout %q: %w", path, err)
+		return cid.Undef, fmt.Errorf("AddFile layout %q: %w", path, err)
 	}
 
 	rootCID := nd.Cid()
@@ -125,7 +127,9 @@ func (s *Stack) FetchFile(ctx context.Context, c cid.Cid, destPath string) error
 }
 
 func (s *Stack) OpenStream(ctx context.Context, c cid.Cid) (ufsio.DagReader, error) {
-	sessionDag := merkledag.NewDAGService(s.bsvc)
+	sessionBs := blockservice.NewSession(ctx, s.bsvc)
+	sessionNg := merkledag.WrapSession(sessionBs)
+	sessionDag := merkledag.NewReadOnlyDagService(sessionNg)
 
 	nd, err := sessionDag.Get(ctx, c)
 	if err != nil {
@@ -145,6 +149,10 @@ func (s *Stack) HasBlock(ctx context.Context, c cid.Cid) (bool, error) {
 
 func (s *Stack) Blockstore() blockstore.Blockstore {
 	return s.bs
+}
+
+func (s *Stack) Datastore() ds.Batching {
+	return s.ds
 }
 
 func (s *Stack) Close() error {

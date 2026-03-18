@@ -3,18 +3,12 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"time"
 )
 
 type PlayerState struct {
-	LastSong   string    `json:"last_song"`
-	Position   int       `json:"position"`
-	Volume     int       `json:"volume"`
-	Queue      []string  `json:"queue"`
-	CurrentIdx int       `json:"current_idx"`
-	Shuffle    bool      `json:"shuffle"`
-	Repeat     bool      `json:"repeat"`
-	LastPlayed time.Time `json:"last_played"`
+	LastSong string `json:"last_song"`
+	Position int    `json:"position"`
+	Volume   int    `json:"volume"`
 }
 
 const stateKey = "/state/player"
@@ -42,9 +36,6 @@ func SaveState(ctx context.Context, store *Store, state *PlayerState) error {
 
 func defaultPlayerState() *PlayerState {
 	return &PlayerState{
-		Volume:     50,
-		Shuffle:    false,
-		Repeat:     false,
-		LastPlayed: time.Time{},
+		Volume: 50,
 	}
 }

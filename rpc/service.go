@@ -6,6 +6,7 @@ import (
 	"net/rpc"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,7 +194,7 @@ func (s *DaemonService) Status(_ *EmptyArgs, result *Status) error {
 	return nil
 }
 
-func (s *DaemonService) Shutdown() error {
+func (s *DaemonService) Shutdown(_ *EmptyArgs, _ *EmptyResult) error {
 	go s.shutdownFn()
 	return nil
 }
@@ -459,7 +460,22 @@ type ConfigSetArgs struct {
 }
 
 func (s *DaemonService) ConfigSet(args *ConfigSetArgs, result *EmptyResult) error {
-	return fmt.Errorf("config set not yet fully implemented via RPC")
+	key := args.Key
+	value := args.Value
+
+	switch key {
+	case "volume":
+		s.app.Cfg.Volume, _ = strconv.Atoi(value)
+	default:
+		if err := s.app.V.MergeConfigMap(map[string]any{key: value}); err != nil {
+			return fmt.Errorf("failed to merge config: %w", err)
+		}
+	}
+
+	if err := config.SaveConfig(s.app.V, s.app.Cfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+	return nil
 }
 
 type FullStateResult struct {
@@ -515,22 +531,4 @@ func (s *DaemonService) ConfigReset(_ *EmptyArgs, result *EmptyResult) error {
 type ShareArgs struct {
 	PeerID    string `json:"peer_id"`
 	SongTitle string `json:"song_title"`
-}
-
-// GetPeers returns information about all known peers
-func (s *DaemonService) GetPeers(args *EmptyArgs, result *PeerListResult) error {
-	peers := s.app.NetMgr.GetPeers()
-	peerList := make([]PeerInfo, 0, len(peers))
-	for _, p := range peers {
-		peerList = append(peerList, PeerInfo{
-			ID:   p.ID.String(),
-			Addr: p.Addrs[0].String(),
-		})
-	}
-	result.Peers = peerList
-	return nil
-}
-
-func (s *DaemonService) ShareSong(args *ShareArgs, result *EmptyResult) error {
-	return fmt.Errorf("ShareSong is no longer supported - use BroadcastSongAdded instead")
 }

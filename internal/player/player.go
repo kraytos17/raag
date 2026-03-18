@@ -27,12 +27,12 @@ type Player struct {
 	streamer     beep.StreamSeeker
 	streamCloser beep.StreamSeekCloser
 	file         *os.File
-	Queue        []metadata.Song
-	CurrentIndex int
-	Volume       float64
-	Position     int
-	Duration     int
-	VolumeCtrl   *effects.Volume
+	queue        []metadata.Song
+	currentIndex int
+	volume       float64
+	position     int
+	duration     int
+	volumeCtrl   *effects.Volume
 	mutex        sync.RWMutex
 	playerNext   func() error
 	trackEnded   chan struct{}
@@ -44,9 +44,9 @@ func NewPlayer() (*Player, error) {
 		return nil, fmt.Errorf("error initializing speaker: %w", err)
 	}
 	return &Player{
-		Volume:       0.5,
-		CurrentIndex: -1,
-		Queue:        []metadata.Song{},
+		volume:       0.5,
+		currentIndex: -1,
+		queue:        []metadata.Song{},
 	}, nil
 }
 
@@ -94,8 +94,8 @@ func (p *Player) Play(song metadata.Song) error {
 	p.streamer = streamer
 	p.streamCloser = streamer
 	p.format = format
-	p.Position = 0
-	p.Duration = duration
+	p.position = 0
+	p.duration = duration
 
 	seq := beep.Seq(streamer, beep.Callback(func() {
 		select {
@@ -105,10 +105,10 @@ func (p *Player) Play(song metadata.Song) error {
 	}))
 
 	p.ctrl = &beep.Ctrl{Streamer: seq}
-	p.VolumeCtrl = &effects.Volume{Streamer: p.ctrl, Base: 2, Volume: volume}
+	p.volumeCtrl = &effects.Volume{Streamer: p.ctrl, Base: 2, Volume: volume}
 	p.mutex.Unlock()
 
-	speaker.Play(p.VolumeCtrl)
+	speaker.Play(p.volumeCtrl)
 	currentTrackEnded := trackEnded
 	go func() {
 		_, ok := <-currentTrackEnded
@@ -129,23 +129,11 @@ func (p *Player) Play(song metadata.Song) error {
 func (p *Player) currentVolume() float64 {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	return p.Volume
+	return p.volume
 }
 
 func (p *Player) decodeAudio(f *os.File) (beep.StreamSeekCloser, beep.Format, error) {
-	ext := strings.ToLower(filepath.Ext(f.Name()))
-	switch ext {
-	case ".mp3":
-		return mp3.Decode(f)
-	case ".flac":
-		return flac.Decode(f)
-	case ".wav":
-		return wav.Decode(f)
-	case ".ogg", ".ogv":
-		return vorbis.Decode(f)
-	default:
-		return nil, beep.Format{}, fmt.Errorf("unsupported audio format: %s", ext)
-	}
+	return p.decodeAudioFromReader(f, filepath.Ext(f.Name()))
 }
 
 func (p *Player) PlayQueue() error {
@@ -160,15 +148,15 @@ func (p *Player) selectSongAtIndex(index int) (metadata.Song, error) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	if len(p.Queue) == 0 {
+	if len(p.queue) == 0 {
 		return metadata.Song{}, fmt.Errorf("queue is empty")
 	}
-	if index < 0 || index >= len(p.Queue) {
+	if index < 0 || index >= len(p.queue) {
 		return metadata.Song{}, fmt.Errorf("invalid index")
 	}
 
-	p.CurrentIndex = index
-	return p.Queue[index], nil
+	p.currentIndex = index
+	return p.queue[index], nil
 }
 
 func (p *Player) Pause() {
@@ -202,10 +190,10 @@ func (p *Player) Stop() {
 	defer p.mutex.Unlock()
 
 	p.stopPlaybackLocked()
-	p.Queue = []metadata.Song{}
-	p.CurrentIndex = -1
-	p.Position = 0
-	p.Duration = 0
+	p.queue = []metadata.Song{}
+	p.currentIndex = -1
+	p.position = 0
+	p.duration = 0
 	fmt.Println("Playback stopped and queue cleared")
 }
 
@@ -220,7 +208,7 @@ func (p *Player) stopPlaybackLocked() {
 
 	p.ctrl = nil
 	p.streamer = nil
-	p.VolumeCtrl = nil
+	p.volumeCtrl = nil
 	p.format = beep.Format{}
 	if p.streamCloser != nil {
 		_ = p.streamCloser.Close()
@@ -235,31 +223,31 @@ func (p *Player) stopPlaybackLocked() {
 func (p *Player) AddToQueue(song metadata.Song) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	p.Queue = append(p.Queue, song)
+	p.queue = append(p.queue, song)
 }
 
 func (p *Player) GetQueue() []metadata.Song {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 
-	result := make([]metadata.Song, len(p.Queue))
-	copy(result, p.Queue)
+	result := make([]metadata.Song, len(p.queue))
+	copy(result, p.queue)
 	return result
 }
 
 func (p *Player) Next() error {
 	p.mutex.Lock()
-	if len(p.Queue) == 0 {
+	if len(p.queue) == 0 {
 		p.mutex.Unlock()
 		return fmt.Errorf("queue is empty")
 	}
-	if p.CurrentIndex >= len(p.Queue)-1 {
+	if p.currentIndex >= len(p.queue)-1 {
 		p.mutex.Unlock()
 		return fmt.Errorf("end of queue")
 	}
 
-	p.CurrentIndex++
-	song := p.Queue[p.CurrentIndex]
+	p.currentIndex++
+	song := p.queue[p.currentIndex]
 	p.mutex.Unlock()
 
 	return p.Play(song)
@@ -267,17 +255,17 @@ func (p *Player) Next() error {
 
 func (p *Player) Previous() error {
 	p.mutex.Lock()
-	if len(p.Queue) == 0 {
+	if len(p.queue) == 0 {
 		p.mutex.Unlock()
 		return fmt.Errorf("queue is empty")
 	}
-	if p.CurrentIndex <= 0 {
+	if p.currentIndex <= 0 {
 		p.mutex.Unlock()
 		return fmt.Errorf("beginning of queue")
 	}
 
-	p.CurrentIndex--
-	song := p.Queue[p.CurrentIndex]
+	p.currentIndex--
+	song := p.queue[p.currentIndex]
 	p.mutex.Unlock()
 
 	return p.Play(song)
@@ -287,11 +275,11 @@ func (p *Player) GetCurrentSong() *metadata.Song {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 
-	if p.CurrentIndex < 0 || p.CurrentIndex >= len(p.Queue) {
+	if p.currentIndex < 0 || p.currentIndex >= len(p.queue) {
 		return nil
 	}
 
-	song := p.Queue[p.CurrentIndex]
+	song := p.queue[p.currentIndex]
 	return &song
 }
 
@@ -303,10 +291,10 @@ func (p *Player) SetVolume(level float64) error {
 		return fmt.Errorf("volume must be between 0 and 100")
 	}
 
-	p.Volume = (level/100 - 1) * 10
-	if p.VolumeCtrl != nil {
+	p.volume = (level/100 - 1) * 10
+	if p.volumeCtrl != nil {
 		speaker.Lock()
-		p.VolumeCtrl.Volume = p.Volume
+		p.volumeCtrl.Volume = p.volume
 		speaker.Unlock()
 	}
 	fmt.Printf("Volume set to %.0f%%\n", level)
@@ -317,24 +305,24 @@ func (p *Player) GetVolume() float64 {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 
-	return (p.Volume/10 + 1) * 100
+	return (p.volume/10 + 1) * 100
 }
 
 func (p *Player) adjustVolume(delta float64) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	newVol := p.Volume + (delta / 10)
+	newVol := p.volume + (delta / 10)
 	if newVol > 10 {
 		newVol = 10
 	} else if newVol < -10 {
 		newVol = -10
 	}
 
-	p.Volume = newVol
-	if p.VolumeCtrl != nil {
+	p.volume = newVol
+	if p.volumeCtrl != nil {
 		speaker.Lock()
-		p.VolumeCtrl.Volume = p.Volume
+		p.volumeCtrl.Volume = p.volume
 		speaker.Unlock()
 	}
 	fmt.Printf("Volume: %.0f%%\n", (newVol/10+1)*100)
@@ -369,7 +357,7 @@ func (p *Player) Seek(seconds int) error {
 		return fmt.Errorf("seek error: %w", err)
 	}
 
-	p.Position = pos / int(p.format.SampleRate)
+	p.position = pos / int(p.format.SampleRate)
 	fmt.Printf("Seeked to %d seconds\n", seconds)
 	return nil
 }
@@ -383,13 +371,13 @@ func (p *Player) GetPosition() int {
 		speaker.Unlock()
 		return pos / int(p.format.SampleRate)
 	}
-	return p.Position
+	return p.position
 }
 
 func (p *Player) GetDuration() int {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	return p.Duration
+	return p.duration
 }
 
 func (p *Player) IsPlaying() bool {
@@ -439,7 +427,6 @@ func (p *Player) decodeAudioFromReader(r io.ReadSeeker, ext string) (beep.Stream
 }
 
 // PlayFromReader plays a song whose audio bytes are provided by an io.ReadSeeker
-// (e.g. a transfer.P2PReader for streaming from peers).
 // song.Path is used only to determine the audio format via its extension.
 func (p *Player) PlayFromReader(r io.ReadSeeker, song metadata.Song) error {
 	ext := strings.ToLower(filepath.Ext(song.Path))
@@ -469,8 +456,8 @@ func (p *Player) PlayFromReader(r io.ReadSeeker, song metadata.Song) error {
 	p.streamer = streamer
 	p.streamCloser = streamer
 	p.format = format
-	p.Position = 0
-	p.Duration = duration
+	p.position = 0
+	p.duration = duration
 
 	seq := beep.Seq(streamer, beep.Callback(func() {
 		select {
@@ -480,10 +467,10 @@ func (p *Player) PlayFromReader(r io.ReadSeeker, song metadata.Song) error {
 	}))
 
 	p.ctrl = &beep.Ctrl{Streamer: seq}
-	p.VolumeCtrl = &effects.Volume{Streamer: p.ctrl, Base: 2, Volume: volume}
+	p.volumeCtrl = &effects.Volume{Streamer: p.ctrl, Base: 2, Volume: volume}
 	p.mutex.Unlock()
 
-	speaker.Play(p.VolumeCtrl)
+	speaker.Play(p.volumeCtrl)
 	currentTrackEnded := trackEnded
 	go func() {
 		_, ok := <-currentTrackEnded

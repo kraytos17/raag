@@ -6,20 +6,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func shareCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "share <peerID> <song>",
-		Short: "Share a song with a peer (requires daemon)",
-		Args:  cobra.ExactArgs(2),
-		Run: func(cmd *cobra.Command, args []string) {
-			requireDaemon()
-			var result rpc.EmptyResult
-			invokeRPC("DaemonService.ShareSong", &rpc.ShareArgs{PeerID: args[0], SongTitle: args[1]}, &result)
-			logger.Infof("song '%s' shared with peer %s", args[1], args[0])
-		},
-	}
-}
-
 func statusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",

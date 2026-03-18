@@ -62,7 +62,6 @@ func main() {
 	rootCmd.AddCommand(peersCommand())
 	rootCmd.AddCommand(libraryCommand())
 	rootCmd.AddCommand(playlistCommand())
-	rootCmd.AddCommand(shareCommand())
 	rootCmd.AddCommand(configCommand())
 	rootCmd.AddCommand(daemonCommand())
 	rootCmd.AddCommand(statusCommand())

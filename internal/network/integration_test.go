@@ -17,7 +17,7 @@ import (
 )
 
 func TestNetworkManagerCreation(t *testing.T) {
-	manager, cleanup := newTestNetworkManager(t, "")
+	manager, cleanup := newTestNetworkManager(t)
 	defer cleanup()
 
 	if manager.Host() == nil {
@@ -26,10 +26,10 @@ func TestNetworkManagerCreation(t *testing.T) {
 }
 
 func TestPeerConnection(t *testing.T) {
-	managerA, cleanupA := newTestNetworkManager(t, "")
+	managerA, cleanupA := newTestNetworkManager(t)
 	defer cleanupA()
 
-	managerB, cleanupB := newTestNetworkManager(t, "")
+	managerB, cleanupB := newTestNetworkManager(t)
 	defer cleanupB()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -52,7 +52,7 @@ func TestPeerConnection(t *testing.T) {
 func TestNetworkHostExposesTCPAndQUICAddresses(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	manager, cleanup := newTestNetworkManager(t, "")
+	manager, cleanup := newTestNetworkManager(t)
 	defer cleanup()
 
 	addrs := manager.Host().Addrs()
@@ -79,7 +79,7 @@ func TestNetworkHostExposesTCPAndQUICAddresses(t *testing.T) {
 	}
 }
 
-func newTestNetworkManager(t *testing.T, trackerURL string) (*NetworkManager, func()) {
+func newTestNetworkManager(t *testing.T) (*NetworkManager, func()) {
 	t.Helper()
 	identity, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {

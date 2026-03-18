@@ -15,6 +15,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -28,6 +29,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"golang.org/x/crypto/hkdf"
 
+	"github.com/ipfs/boxo/provider"
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/discovery"
@@ -275,23 +277,9 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 			logger.Debugf("Connection manager initialized with limits")
 		}
 
-		opts = append(opts, libp2p.EnableAutoRelayWithPeerSource(
-			func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
-				out := make(chan peer.AddrInfo, numPeers)
-				go func() {
-					defer close(out)
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						default:
-							return
-						}
-					}
-				}()
-				return out
-			},
-			autorelay.WithMinCandidates(1),
+		opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays(
+			dht.GetDefaultBootstrapPeerAddrInfos(),
+			autorelay.WithMinCandidates(3),
 			autorelay.WithMaxCandidates(5),
 			autorelay.WithBackoff(30*time.Second),
 		))
@@ -684,32 +672,27 @@ func (n *NetworkManager) AddBootstrapPeer(ctx context.Context, multiaddrStr stri
 }
 
 func (n *NetworkManager) runReprovider(ctx context.Context) {
-	dht := n.discovery.DHT()
-	if dht == nil || n.transferStack == nil {
+	if n.transferStack == nil {
 		return
 	}
 
-	logger.Infof("Reprovider started: re-announces all local CIDs every 22 hours")
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(22 * time.Hour):
-			if n.transferStack == nil {
-				return
-			}
+	dht := n.discovery.DHT()
+	if dht == nil {
+		return
+	}
 
-			keys, err := n.transferStack.Blockstore().AllKeysChan(ctx)
-			if err != nil {
-				logger.Warnf("reprovide failed to get keys: %v", err)
-				continue
-			}
-			for c := range keys {
-				if err := dht.Provide(ctx, c, true); err != nil {
-					logger.Warnf("reprovide failed for %s: %v", c, err)
-				}
-			}
-		}
+	system, err := provider.New(n.transferStack.Datastore(),
+		provider.Online(dht),
+		provider.ReproviderInterval(constants.ProvideInterval),
+	)
+	if err != nil {
+		logger.Warnf("failed to create reprovider system: %v", err)
+		return
+	}
+
+	logger.Infof("Reprovider started using provider.New from boxo")
+	if err := system.Reprovide(ctx); err != nil {
+		logger.Warnf("reprovider failed: %v", err)
 	}
 }
 
@@ -795,7 +778,6 @@ func sanitizeTransferName(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, "/", "_")
 	name = strings.ReplaceAll(name, "\\", "_")
-	name = strings.ReplaceAll(name, string(filepath.Separator), "_")
 	if name == "" {
 		return "received"
 	}

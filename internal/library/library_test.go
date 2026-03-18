@@ -9,7 +9,7 @@ import (
 
 func newTestLibrary() *Library {
 	lib := &Library{}
-	lib.Songs.Store(&sync.Map{})
+	lib.songs.Store(&sync.Map{})
 	lib.titleIndex.Store(&sync.Map{})
 	return lib
 }
@@ -23,7 +23,7 @@ func TestNewLibrary(t *testing.T) {
 
 func TestListSongs(t *testing.T) {
 	lib := newTestLibrary()
-	songsMap := lib.Songs.Load()
+	songsMap := lib.songs.Load()
 	songsMap.Store("song1", metadata.Song{Title: "Song 1"})
 	songsMap.Store("song2", metadata.Song{Title: "Song 2"})
 
@@ -39,7 +39,7 @@ func TestListSongs(t *testing.T) {
 
 func TestFindSong(t *testing.T) {
 	lib := newTestLibrary()
-	songsMap := lib.Songs.Load()
+	songsMap := lib.songs.Load()
 	songsMap.Store("test song", metadata.Song{
 		Title:  "Test Song",
 		Artist: "Test Artist",
@@ -73,7 +73,7 @@ func TestAddSong(t *testing.T) {
 
 func TestRemoveSong(t *testing.T) {
 	lib := newTestLibrary()
-	songsMap := lib.Songs.Load()
+	songsMap := lib.songs.Load()
 	songsMap.Store("abc123", metadata.Song{Title: "Test Song", Hash: "abc123"})
 
 	titleIndex := lib.titleIndex.Load()
@@ -84,7 +84,7 @@ func TestRemoveSong(t *testing.T) {
 		t.Errorf("RemoveSong() error = %v", err)
 	}
 
-	songsMap = lib.Songs.Load()
+	songsMap = lib.songs.Load()
 	var exists bool
 	songsMap.Range(func(key, value any) bool {
 		if key == "abc123" {
@@ -105,7 +105,7 @@ func TestRemoveSong(t *testing.T) {
 
 func TestGetByArtist(t *testing.T) {
 	lib := newTestLibrary()
-	songsMap := lib.Songs.Load()
+	songsMap := lib.songs.Load()
 	songsMap.Store("song1", metadata.Song{Title: "Song 1", Artist: "Artist A"})
 	songsMap.Store("song2", metadata.Song{Title: "Song 2", Artist: "Artist B"})
 	songsMap.Store("song3", metadata.Song{Title: "Song 3", Artist: "Artist A"})
@@ -118,7 +118,7 @@ func TestGetByArtist(t *testing.T) {
 
 func TestGetByAlbum(t *testing.T) {
 	lib := newTestLibrary()
-	songsMap := lib.Songs.Load()
+	songsMap := lib.songs.Load()
 	songsMap.Store("song1", metadata.Song{Title: "Song 1", Album: "Album A"})
 	songsMap.Store("song2", metadata.Song{Title: "Song 2", Album: "Album B"})
 	songsMap.Store("song3", metadata.Song{Title: "Song 3", Album: "Album A"})

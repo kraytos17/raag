@@ -12,7 +12,7 @@ import (
 	"github.com/p-society/raag/rpc"
 )
 
-var (
+const (
 	header          = "══════════════ RAAG ══════════════"
 	helpFooter      = "\n[q]uit [tab]view [space]play/pause [n]ext [p]rev [+/-]vol"
 	helpFooterLib   = helpFooter + " [/]search"
@@ -66,7 +66,7 @@ type (
 )
 
 func (m *RPCModel) Init() tea.Cmd {
-	return tea.Batch(m.fetchState(), tickCmd())
+	return tea.Batch(m.fetchState(true), tickCmd())
 }
 
 func tickCmd() tea.Cmd {
@@ -75,7 +75,7 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-func (m *RPCModel) fetchState() tea.Cmd {
+func (m *RPCModel) fetchState(includeLibrary bool) tea.Cmd {
 	return func() tea.Msg {
 		var fs rpc.FullStateResult
 		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
@@ -88,25 +88,9 @@ func (m *RPCModel) fetchState() tea.Cmd {
 			NowPlaying: fs.NowPlaying,
 			Network:    fs.Network,
 			Status:     fs.Status,
-			Library:    fs.Library,
 		}
-		return stateUpdateMsg(state)
-	}
-}
-
-func (m *RPCModel) fetchPlayerState() tea.Cmd {
-	return func() tea.Msg {
-		var fs rpc.FullStateResult
-		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
-		defer cancel()
-
-		if err := m.client.CallWithContext(ctx, "DaemonService.GetFullState", &rpc.EmptyArgs{}, &fs); err != nil {
-			return nil
-		}
-		state := &DaemonState{
-			NowPlaying: fs.NowPlaying,
-			Network:    fs.Network,
-			Status:     fs.Status,
+		if includeLibrary {
+			state.Library = fs.Library
 		}
 		return stateUpdateMsg(state)
 	}
@@ -122,9 +106,9 @@ func (m *RPCModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.needsRefresh = false
 			switch m.currentView {
 			case ViewLibrary:
-				return m, tea.Batch(m.fetchState(), tickCmd())
+				return m, tea.Batch(m.fetchState(true), tickCmd())
 			default:
-				return m, tea.Batch(m.fetchPlayerState(), tickCmd())
+				return m, tea.Batch(m.fetchState(false), tickCmd())
 			}
 		}
 		return m, tickCmd()
@@ -202,7 +186,7 @@ func (m *RPCModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				m.state.Status = nil
 			}
-			return m, m.fetchPlayerState()
+			return m, m.fetchState(false)
 		}
 		return m, nil
 	}
@@ -238,7 +222,7 @@ func (m *RPCModel) executeAction(method string, args any) (tea.Model, tea.Cmd) {
 	if err := m.client.CallWithContext(ctx, method, args, &result); err != nil {
 		m.state.Status = nil
 	}
-	return m, m.fetchPlayerState()
+	return m, m.fetchState(false)
 }
 
 func (m *RPCModel) nextView() {

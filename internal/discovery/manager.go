@@ -62,8 +62,6 @@ func NewManager(cfg ManagerConfig) *Manager {
 	bootstrapPeers := cfg.BootstrapPeers
 	if len(bootstrapPeers) == 0 {
 		logger.Debugf("Using default IPFS bootstrap peers for DHT")
-		// GetDefaultBootstrapPeerAddrInfos returns []peer.AddrInfo, not []string
-		// We need to convert them to strings for slices.Clone
 		defaultPeers := dht.GetDefaultBootstrapPeerAddrInfos()
 		bootstrapPeers = make([]string, len(defaultPeers))
 		for i, p := range defaultPeers {
@@ -135,12 +133,7 @@ func (m *Manager) GetNetworkState() NetworkState {
 	if m.dht != nil {
 		state.DHTPeers = m.dht.RoutingTable().Size()
 	}
-
-	connectedPeers := m.host.Network().Peers()
-	connectedPeersMap := make(map[peer.ID]bool, len(connectedPeers))
-	for _, pid := range connectedPeers {
-		connectedPeersMap[pid] = true
-	}
+	connectedPeersMap := m.getConnectedPeersMap()
 
 	const maxInt32 = int64(1<<31 - 1)
 	if m.mdnsPeerCount > uint64(maxInt32) {
@@ -170,6 +163,7 @@ func (m *Manager) GetNetworkState() NetworkState {
 		})
 	}
 
+	connectedPeers := m.host.Network().Peers()
 	for _, pid := range connectedPeers {
 		if pid == m.host.ID() {
 			continue
@@ -329,10 +323,10 @@ func prioritizeAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 
 func (m *Manager) AddBootstrapPeer(ctx context.Context, peerAddr peer.AddrInfo) error {
 	if !m.dhtEnabled {
-		return fmt.Errorf("DHT discovery is disabled")
+		return fmt.Errorf("dht discovery is disabled")
 	}
 	if m.dht == nil {
-		return fmt.Errorf("DHT not initialized")
+		return fmt.Errorf("dht not initialized")
 	}
 
 	logger.Infof("Adding bootstrap peer peer=%s", peerAddr.ID)
@@ -744,4 +738,13 @@ func (m *Manager) PublishSongAnnounce(action string, song SongInfo) {
 
 func (m *Manager) DHT() *dht.IpfsDHT {
 	return m.dht
+}
+
+func (m *Manager) getConnectedPeersMap() map[peer.ID]bool {
+	peers := m.host.Network().Peers()
+	result := make(map[peer.ID]bool, len(peers))
+	for _, pid := range peers {
+		result[pid] = true
+	}
+	return result
 }

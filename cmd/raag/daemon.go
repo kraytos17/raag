@@ -83,15 +83,13 @@ func runDaemon(cmd *cobra.Command) {
 	}
 
 	logger.Infof("Raag daemon started. Use Ctrl+C to stop.")
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	select {
-	case <-sigCh:
+	case <-ctx.Done():
 		logger.Infof("received termination signal")
 	case <-rpcServer.ShutdownRequested():
-		logger.Infof("shutdown requested via RPC")
-	case <-ctx.Done():
 		logger.Infof("shutdown requested via RPC")
 	}
 
@@ -101,6 +99,6 @@ func runDaemon(cmd *cobra.Command) {
 		logger.Warnf("failed to close network manager error=%v", err)
 	}
 
-	a.SaveState()
+	a.SaveState(context.Background())
 	logger.Infof("daemon stopped")
 }

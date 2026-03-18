@@ -59,12 +59,12 @@ func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
 
 	pm := playlist.NewManager()
 	if err := storage.LoadPlaylists(ctx, store, pm); err != nil {
-		fmt.Printf("Warning: failed to load playlists: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to load playlists: %v\n", err)
 	}
 
 	state, err := storage.LoadState(ctx, store)
 	if err != nil {
-		fmt.Printf("Warning: failed to load state: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to load state: %v\n", err)
 	} else if state != nil && state.Volume > 0 {
 		_ = p.SetVolume(float64(state.Volume))
 	}
@@ -93,8 +93,7 @@ func (a *App) StartNetwork(ctx context.Context) {
 	}()
 }
 
-func (a *App) SaveState() {
-	ctx := context.Background()
+func (a *App) SaveState(ctx context.Context) {
 	state := &storage.PlayerState{
 		Volume: int(a.Player.GetVolume()),
 	}
@@ -103,13 +102,13 @@ func (a *App) SaveState() {
 		state.Position = a.Player.GetPosition()
 	}
 	if err := storage.SaveState(ctx, a.Store, state); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save player state: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to save player state: %v\n", err)
 	}
 	if err := storage.SavePlaylists(ctx, a.Store, a.PM); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save playlists: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to save playlists: %v\n", err)
 	}
 	if err := config.SaveConfig(a.V, a.Cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to save config: %v\n", err)
 	}
 }
 
@@ -118,10 +117,14 @@ func (a *App) Close() {
 		a.cancel()
 	}
 	if a.NetMgr != nil {
-		_ = a.NetMgr.Close()
+		if err := a.NetMgr.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to close network manager: %v\n", err)
+		}
 	}
 	if a.Store != nil {
-		_ = a.Store.Close()
+		if err := a.Store.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to close store: %v\n", err)
+		}
 	}
-	a.SaveState()
+	a.SaveState(context.Background())
 }

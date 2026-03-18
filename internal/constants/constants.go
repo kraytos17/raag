@@ -10,21 +10,9 @@ const (
 	// DefaultPort is the default listen port for peer connections
 	DefaultPort = 45678
 
-	// DefaultHTTPPort is the default HTTP API port
-	DefaultHTTPPort = 8080
-
 	// EnvAuthSecret is the environment variable name for shared auth secret
 	EnvAuthSecret = "AUTH_SECRET"
 )
-
-// DefaultBootstrapPeers are public IPFS/Libp2p bootstrap nodes for DHT
-// These are well-known public nodes maintained by the libp2p community
-var DefaultBootstrapPeers = []string{
-	"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-	"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-	"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-}
 
 // Peer Discovery
 const (
@@ -33,24 +21,6 @@ const (
 
 	// DefaultMaxPeers is the default maximum number of connected peers
 	DefaultMaxPeers = 100
-
-	// PeerCleanupInterval is how often to clean up stale peers
-	PeerCleanupInterval = 5 * time.Minute
-
-	// PeerTimeout is how long before a peer is considered stale
-	PeerTimeout = 10 * time.Minute
-
-	// PeerHealthCheckInterval is how often to check peer connectivity
-	PeerHealthCheckInterval = 2 * time.Minute
-
-	// PeerPingTimeout is the timeout for ping requests
-	PeerPingTimeout = 10 * time.Second
-
-	// PeerMetricsLogInterval is how often to log connection metrics
-	PeerMetricsLogInterval = 30 * time.Second
-
-	// NonceExpiry is how long used nonces are kept (prevents reuse within token validity)
-	NonceExpiry = 24 * time.Hour
 )
 
 // Discovery Intervals
@@ -76,9 +46,6 @@ const (
 
 // Timeouts
 const (
-	// HTTPClientTimeout is the timeout for HTTP client requests
-	HTTPClientTimeout = 10 * time.Second
-
 	// RPCTimeout is the timeout for RPC calls
 	RPCTimeout = 10 * time.Second
 )
