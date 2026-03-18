@@ -19,6 +19,7 @@ type Song struct {
 	Hash      string
 	Size      int64
 	Extension string
+	CID       string
 }
 
 func ExtractMetadata(filePath string) (Song, error) {

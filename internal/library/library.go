@@ -287,3 +287,23 @@ func (l *Library) GetMusicDir() string {
 	defer l.musicMu.RUnlock()
 	return l.musicDir
 }
+
+func (l *Library) UpdateCID(hash, cidStr string) {
+	songsMap := l.Songs.Load()
+	if songsMap == nil {
+		return
+	}
+
+	val, ok := songsMap.Load(hash)
+	if !ok {
+		return
+	}
+
+	song, ok := val.(metadata.Song)
+	if !ok {
+		return
+	}
+
+	song.CID = cidStr
+	songsMap.Store(hash, song)
+}

@@ -3,95 +3,150 @@ package transfer
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/ipfs/boxo/bitswap"
+	bsnet "github.com/ipfs/boxo/bitswap/network/bsnet"
+	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
-	"github.com/ipfs/go-block-format"
+	chunk "github.com/ipfs/boxo/chunker"
+	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
+	"github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
+	ufsio "github.com/ipfs/boxo/ipld/unixfs/io"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
-	"github.com/multiformats/go-multihash"
-
+	format "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/routing"
-
 	"github.com/p-society/raag/internal/logger"
 )
 
 type Stack struct {
-	host       host.Host
-	blockstore blockstore.Blockstore
-	dht        routing.ContentRouting
+	bs       blockstore.Blockstore
+	exchange *bitswap.Bitswap
+	bsvc     blockservice.BlockService
+	dag      format.DAGService
+	dht      routing.ContentRouting
 }
 
 func NewStack(ctx context.Context, h host.Host, dht routing.ContentRouting, bsDS ds.Batching) (*Stack, error) {
+	if bsDS == nil {
+		return nil, fmt.Errorf("transfer.NewStack: bsDS (blockstore datastore) must not be nil")
+	}
+
 	bs := blockstore.NewBlockstore(bsDS)
 	bs = blockstore.NewIdStore(bs)
+	bsNet := bsnet.NewFromIpfsHost(h, nil)
+	exchange := bitswap.New(ctx, bsNet, dht, bs)
+	bsvc := blockservice.New(bs, exchange)
+	dag := merkledag.NewDAGService(bsvc)
 	return &Stack{
-		host:       h,
-		blockstore: bs,
-		dht:        dht,
+		bs:       bs,
+		exchange: exchange,
+		bsvc:     bsvc,
+		dag:      dag,
+		dht:      dht,
 	}, nil
 }
 
 func (s *Stack) AddFile(ctx context.Context, path string) (cid.Cid, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
-		return cid.MustParse(""), fmt.Errorf("read file: %w", err)
+		return cid.MustParse(""), fmt.Errorf("AddFile open %q: %w", path, err)
+	}
+	defer f.Close()
+
+	spl := chunk.NewSizeSplitter(f, chunk.DefaultBlockSize)
+	dbp := helpers.DagBuilderParams{
+		Dagserv:   s.dag,
+		RawLeaves: true,
+		Maxlinks:  helpers.DefaultLinksPerBlock,
+		NoCopy:    false,
 	}
 
-	h, _ := multihash.Sum(data, multihash.SHA2_256, -1)
-	c := cid.NewCidV1(cid.Raw, h)
-
-	b, err := blocks.NewBlockWithCid(data, c)
+	db, err := dbp.New(spl)
 	if err != nil {
-		return cid.MustParse(""), fmt.Errorf("create block: %w", err)
+		return cid.MustParse(""), fmt.Errorf("AddFile dag builder %q: %w", path, err)
 	}
 
-	if err := s.blockstore.Put(ctx, b); err != nil {
-		return cid.MustParse(""), fmt.Errorf("put block: %w", err)
+	nd, err := balanced.Layout(db)
+	if err != nil {
+		return cid.MustParse(""), fmt.Errorf("AddFile layout %q: %w", path, err)
 	}
 
-	logger.Infof("Added file to blockstore cid=%s path=%s", c, path)
-	return c, nil
+	rootCID := nd.Cid()
+	if s.dht != nil {
+		if err := s.dht.Provide(ctx, rootCID, true); err != nil {
+			logger.Warnf("AddFile: DHT Provide %s failed (non-fatal): %v", rootCID, err)
+		}
+	}
+
+	logger.Infof("AddFile: ingested file path=%s root_cid=%s", path, rootCID)
+	return rootCID, nil
 }
 
 func (s *Stack) FetchFile(ctx context.Context, c cid.Cid, destPath string) error {
-	b, err := s.blockstore.Get(ctx, c)
+	nd, err := s.dag.Get(ctx, c)
 	if err != nil {
-		return fmt.Errorf("get block: %w", err)
+		return fmt.Errorf("FetchFile get root %s: %w", c, err)
 	}
 
+	dr, err := ufsio.NewDagReader(ctx, nd, s.dag)
+	if err != nil {
+		return fmt.Errorf("FetchFile dag reader %s: %w", c, err)
+	}
+	defer dr.Close()
+
 	dir := filepath.Dir(destPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create dir: %w", err)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("FetchFile mkdir %q: %w", dir, err)
 	}
 
 	tmp, err := os.CreateTemp(dir, ".raag-fetch-*.part")
 	if err != nil {
-		return fmt.Errorf("temp file: %w", err)
+		return fmt.Errorf("FetchFile create temp: %w", err)
 	}
-
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
-	if _, err := tmp.Write(b.RawData()); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write: %w", err)
+	if _, err := io.Copy(tmp, dr); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("FetchFile copy %s: %w", c, err)
 	}
-
 	if err := tmp.Close(); err != nil {
-		return err
+		return fmt.Errorf("FetchFile close temp: %w", err)
 	}
 
-	logger.Infof("Fetched file from network cid=%s dest=%s", c, destPath)
+	logger.Infof("FetchFile: complete cid=%s dest=%s", c, destPath)
 	return os.Rename(tmpPath, destPath)
 }
 
+func (s *Stack) OpenStream(ctx context.Context, c cid.Cid) (ufsio.DagReader, error) {
+	sessionDag := merkledag.NewDAGService(s.bsvc)
+
+	nd, err := sessionDag.Get(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("OpenStream get root %s: %w", c, err)
+	}
+
+	dr, err := ufsio.NewDagReader(ctx, nd, sessionDag)
+	if err != nil {
+		return nil, fmt.Errorf("OpenStream dag reader %s: %w", c, err)
+	}
+	return dr, nil
+}
+
 func (s *Stack) HasBlock(ctx context.Context, c cid.Cid) (bool, error) {
-	return s.blockstore.Has(ctx, c)
+	return s.bs.Has(ctx, c)
+}
+
+func (s *Stack) Blockstore() blockstore.Blockstore {
+	return s.bs
 }
 
 func (s *Stack) Close() error {
-	return nil
+	return s.exchange.Close()
 }
