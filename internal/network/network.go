@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -788,4 +789,15 @@ func (n *NetworkManager) onRemoteSongAnnounce(pid peer.ID, msg discovery.Library
 		}
 		logger.Infof("Pre-fetch complete title=%q", msg.Song.Title)
 	}()
+}
+
+func sanitizeTransferName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, "\\", "_")
+	name = strings.ReplaceAll(name, string(filepath.Separator), "_")
+	if name == "" {
+		return "received"
+	}
+	return name
 }

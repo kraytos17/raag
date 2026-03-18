@@ -40,7 +40,6 @@ type Manager struct {
 	mdnsPeerCount       uint64
 	mdnsService         mdns.Service
 	mdnsNotifee         *mdnsNotifee
-	heartbeatEvery      time.Duration
 	mdnsRetryDelay      time.Duration
 	pendingSongCallback func(peer.ID, LibraryAnnounceMessage)
 	stateMu             sync.RWMutex
@@ -75,19 +74,12 @@ func NewManager(cfg ManagerConfig) *Manager {
 		mdnsEnabled:     cfg.MDNSEnabled,
 		mdnsServiceName: cfg.MDNSServiceName,
 		peerStore:       cfg.PeerStore,
-		heartbeatEvery:  constants.TrackerHeartbeatInterval,
 		mdnsRetryDelay:  constants.MDNSRetryInitialDelay,
 	}
 }
 
 func (m *Manager) SetOnPeerSave(callback func(peers []peer.AddrInfo)) {
 	m.onPeerSave = callback
-}
-
-func (m *Manager) SetTestIntervals(heartbeat, refresh, retryDelay, maxRetryDelay time.Duration) {
-	if heartbeat > 0 {
-		m.heartbeatEvery = heartbeat
-	}
 }
 
 type PeerInfo struct {
