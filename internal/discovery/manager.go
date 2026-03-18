@@ -62,7 +62,16 @@ func NewManager(cfg ManagerConfig) *Manager {
 	bootstrapPeers := cfg.BootstrapPeers
 	if len(bootstrapPeers) == 0 {
 		logger.Debugf("Using default IPFS bootstrap peers for DHT")
-		bootstrapPeers = constants.DefaultBootstrapPeers
+		// GetDefaultBootstrapPeerAddrInfos returns []peer.AddrInfo, not []string
+		// We need to convert them to strings for slices.Clone
+		defaultPeers := dht.GetDefaultBootstrapPeerAddrInfos()
+		bootstrapPeers = make([]string, len(defaultPeers))
+		for i, p := range defaultPeers {
+			for _, addr := range p.Addrs {
+				bootstrapPeers[i] = addr.String()
+				break // Take first address
+			}
+		}
 	}
 	return &Manager{
 		host:            cfg.Host,
