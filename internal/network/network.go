@@ -3,8 +3,10 @@ package network
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -22,6 +24,8 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
+	"golang.org/x/crypto/hkdf"
+
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/discovery"
@@ -281,6 +285,15 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 
 	connectionGater := NewRaagConnectionGater()
 	opts = append(opts, libp2p.ConnectionGater(connectionGater))
+	if cfg.AuthSecret != "" {
+		psk, err := deriveNetworkPSK(cfg.AuthSecret)
+		if err != nil {
+			return nil, fmt.Errorf("derive network PSK: %w", err)
+		}
+		opts = append(opts, libp2p.PrivateNetwork(psk))
+		logger.Infof("PSK private network enabled (--auth-secret configured)")
+	}
+
 	host, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
@@ -608,6 +621,15 @@ func (n *NetworkManager) SetSongAnnounceHandler(handler func(peer.ID, discovery.
 	if n.discovery != nil {
 		n.discovery.SetSongAnnounceCallback(handler)
 	}
+}
+
+func deriveNetworkPSK(secret string) ([]byte, error) {
+	h := hkdf.New(sha256.New, []byte(secret), []byte("raag-psk-v1"), nil)
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(h, key); err != nil {
+		return nil, fmt.Errorf("derive PSK: %w", err)
+	}
+	return key, nil
 }
 
 // AddBootstrapPeer adds a bootstrap peer to the discovery system
