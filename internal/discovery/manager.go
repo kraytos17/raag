@@ -23,30 +23,27 @@ import (
 )
 
 type Manager struct {
-	host                    host.Host
-	ctx                     context.Context
-	dht                     *dht.IpfsDHT
-	discovery               *routing.RoutingDiscovery
-	maxPeers                int
-	listenHost              string
-	rendezvous              string
-	dhtEnabled              bool
-	bootstrapPeers          []string
-	mdnsEnabled             bool
-	mdnsServiceName         string
-	pubsub                  *PubSubManager
-	peerStore               *storage.PeerStore
-	onPeerSave              func(peers []peer.AddrInfo)
-	mdnsPeerCount           uint64
-	mdnsService             mdns.Service
-	mdnsNotifee             *mdnsNotifee
-	heartbeatEvery          time.Duration
-	mdnsRetryDelay          time.Duration
-	lastBootstrap           time.Time
-	bootstrapThrottle       time.Duration
-	peerCountSinceBootstrap int
-	pendingSongCallback     func(peer.ID, LibraryAnnounceMessage)
-	stateMu                 sync.RWMutex
+	host                host.Host
+	ctx                 context.Context
+	dht                 *dht.IpfsDHT
+	discovery           *routing.RoutingDiscovery
+	maxPeers            int
+	listenHost          string
+	rendezvous          string
+	dhtEnabled          bool
+	bootstrapPeers      []string
+	mdnsEnabled         bool
+	mdnsServiceName     string
+	pubsub              *PubSubManager
+	peerStore           *storage.PeerStore
+	onPeerSave          func(peers []peer.AddrInfo)
+	mdnsPeerCount       uint64
+	mdnsService         mdns.Service
+	mdnsNotifee         *mdnsNotifee
+	heartbeatEvery      time.Duration
+	mdnsRetryDelay      time.Duration
+	pendingSongCallback func(peer.ID, LibraryAnnounceMessage)
+	stateMu             sync.RWMutex
 }
 
 type ManagerConfig struct {
@@ -69,20 +66,17 @@ func NewManager(cfg ManagerConfig) *Manager {
 		bootstrapPeers = constants.DefaultBootstrapPeers
 	}
 	return &Manager{
-		host:                    cfg.Host,
-		maxPeers:                cfg.MaxPeers,
-		listenHost:              cfg.ListenHost,
-		rendezvous:              cfg.Rendezvous,
-		dhtEnabled:              cfg.DHTEnabled,
-		bootstrapPeers:          slices.Clone(bootstrapPeers),
-		mdnsEnabled:             cfg.MDNSEnabled,
-		mdnsServiceName:         cfg.MDNSServiceName,
-		peerStore:               cfg.PeerStore,
-		heartbeatEvery:          constants.TrackerHeartbeatInterval,
-		mdnsRetryDelay:          constants.MDNSRetryInitialDelay,
-		lastBootstrap:           time.Now(),
-		bootstrapThrottle:       constants.DHTBootstrapThrottle,
-		peerCountSinceBootstrap: 0,
+		host:            cfg.Host,
+		maxPeers:        cfg.MaxPeers,
+		listenHost:      cfg.ListenHost,
+		rendezvous:      cfg.Rendezvous,
+		dhtEnabled:      cfg.DHTEnabled,
+		bootstrapPeers:  slices.Clone(bootstrapPeers),
+		mdnsEnabled:     cfg.MDNSEnabled,
+		mdnsServiceName: cfg.MDNSServiceName,
+		peerStore:       cfg.PeerStore,
+		heartbeatEvery:  constants.TrackerHeartbeatInterval,
+		mdnsRetryDelay:  constants.MDNSRetryInitialDelay,
 	}
 }
 
@@ -276,11 +270,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return nil
 	})
 	g.Go(func() error {
-		m.discoverViaDHT(ctx)
-		return nil
-	})
-	g.Go(func() error {
-		m.advertisePeriodically(ctx)
+		m.oneShotDHTDiscovery(ctx)
 		return nil
 	})
 
@@ -354,33 +344,6 @@ func (m *Manager) AddBootstrapPeer(ctx context.Context, peerAddr peer.AddrInfo) 
 
 	m.savePeer(peerAddr, false)
 	return nil
-}
-
-func (m *Manager) throttledBootstrap(ctx context.Context) {
-	if m.dht == nil {
-		return
-	}
-
-	m.stateMu.Lock()
-	m.peerCountSinceBootstrap++
-	timeSinceLastBootstrap := time.Since(m.lastBootstrap)
-	if timeSinceLastBootstrap < m.bootstrapThrottle && m.peerCountSinceBootstrap < constants.DHTBootstrapPeerThreshold {
-		m.stateMu.Unlock()
-		logger.Debugf("Skipping DHT bootstrap: throttled (timeSinceLast=%v, peerCountSince=%d)",
-			timeSinceLastBootstrap, m.peerCountSinceBootstrap)
-		return
-	}
-
-	m.lastBootstrap = time.Now()
-	m.peerCountSinceBootstrap = 0
-	m.stateMu.Unlock()
-
-	bootstrapCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := m.dht.Bootstrap(bootstrapCtx); err != nil {
-		logger.Warnf("DHT bootstrap warning error=%v", err)
-	}
-	logger.Debugf("DHT routing table size after bootstrap size=%d", m.dht.RoutingTable().Size())
 }
 
 func (m *Manager) savePeer(p peer.AddrInfo, skipAutoConnect bool) {
@@ -461,7 +424,6 @@ func (m *Manager) connectWithRetry(p peer.AddrInfo) {
 		}
 
 		logger.Infof("Connected to discovered peer peer=%s", p.ID)
-		m.throttledBootstrap(m.ctx)
 		cancel()
 		return
 	}
@@ -558,47 +520,8 @@ func (m *Manager) initDHT(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) waitForPeers(ctx context.Context, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-		}
-		connectedPeers := len(m.host.Network().Peers())
-		if connectedPeers > 1 {
-			logger.Debugf("Found connected peers, proceeding with DHT count=%d", connectedPeers-1)
-			return true
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-	logger.Debugf("Timeout waiting for peers found=%d", len(m.host.Network().Peers())-1)
-	return false
-}
-
-func (m *Manager) advertisePeriodically(ctx context.Context) {
-	ticker := time.NewTicker(constants.DHTAdvertisementInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if m.discovery != nil {
-				_, _ = m.discovery.Advertise(ctx, m.rendezvous)
-			}
-		}
-	}
-}
-
 func (m *Manager) logNetworkStatus(ctx context.Context) {
-	ticker := time.NewTicker(constants.DHTLogInterval)
+	ticker := time.NewTicker(constants.MDNSLogInterval)
 	defer ticker.Stop()
 
 	for {
@@ -632,7 +555,13 @@ func (m *Manager) logNetworkStatus(ctx context.Context) {
 	}
 }
 
-func (m *Manager) discoverViaDHT(ctx context.Context) {
+func (m *Manager) oneShotDHTDiscovery(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(constants.DHTBootstrapDelay):
+	}
+
 	if m.discovery == nil {
 		return
 	}
@@ -643,76 +572,35 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 		logger.Debugf("DHT advertise failed (expected if no DHT peers yet): %v", err)
 	}
 
-	logger.Debugf("DHT: Advertisement complete")
-	logger.Debugf("DHT: Waiting for peer connections...")
-	hasPeers := m.waitForPeers(ctx, constants.DHTWaitForPeersTimeout)
-	if !hasPeers {
-		logger.Debugf("DHT: No peers connected yet, starting discovery anyway")
+	logger.Debugf("DHT: Starting one-shot peer discovery...")
+	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	peerChan, err := m.discovery.FindPeers(queryCtx, m.rendezvous)
+	if err != nil {
+		logger.Warnf("DHT FindPeers error: %v", err)
+		return
 	}
 
-	logger.Debugf("DHT: Starting peer discovery...")
-	for {
-		queryCtx, cancel := context.WithTimeout(ctx, constants.DHTQueryTimeout)
-		peerChan, err := m.discovery.FindPeers(queryCtx, m.rendezvous)
-		if err != nil {
-			cancel()
-			logger.Warnf("DHT FindPeers error error=%v", err)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(constants.DHTRetryDelay):
-			}
+	knownPeersList := m.host.Peerstore().Peers()
+	knownPeersMap := make(map[peer.ID]bool, len(knownPeersList))
+	for _, pid := range knownPeersList {
+		knownPeersMap[pid] = true
+	}
+
+	count := 0
+	for p := range peerChan {
+		if p.ID == "" || p.ID == m.host.ID() {
 			continue
 		}
-
-		discovered := make(map[peer.ID]bool)
-		count := 0
-		roundDone := false
-		knownPeersList := m.host.Peerstore().Peers()
-		knownPeersMap := make(map[peer.ID]bool, len(knownPeersList))
-		for _, pid := range knownPeersList {
-			knownPeersMap[pid] = true
+		if knownPeersMap[p.ID] {
+			continue
 		}
-		for {
-			select {
-			case <-ctx.Done():
-				cancel()
-				return
-			case p, ok := <-peerChan:
-				if !ok {
-					logger.Debugf("DHT: Finished discovery round, discovered %d new peers", count)
-					roundDone = true
-					break
-				}
-				if p.ID == "" || p.ID == m.host.ID() {
-					continue
-				}
-
-				alreadyKnown := knownPeersMap[p.ID]
-				if alreadyKnown {
-					continue
-				}
-				if discovered[p.ID] {
-					continue
-				}
-
-				discovered[p.ID] = true
-				count++
-				logger.Debugf("DHT discovered peer peer=%s", p.ID)
-				m.savePeer(p, false)
-			}
-			if roundDone {
-				break
-			}
-		}
-		cancel()
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(constants.DHTDiscoveryInterval):
-		}
+		count++
+		logger.Debugf("DHT discovered peer: %s", p.ID)
+		m.savePeer(p, false)
 	}
+	logger.Debugf("DHT discovery complete: found %d new peers", count)
 }
 
 func (m *Manager) getMDNSServiceName() string {

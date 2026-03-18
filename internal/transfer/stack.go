@@ -21,15 +21,16 @@ import (
 type Stack struct {
 	host       host.Host
 	blockstore blockstore.Blockstore
+	dht        routing.ContentRouting
 }
 
 func NewStack(ctx context.Context, h host.Host, dht routing.ContentRouting, bsDS ds.Batching) (*Stack, error) {
 	bs := blockstore.NewBlockstore(bsDS)
 	bs = blockstore.NewIdStore(bs)
-
 	return &Stack{
 		host:       h,
 		blockstore: bs,
+		dht:        dht,
 	}, nil
 }
 

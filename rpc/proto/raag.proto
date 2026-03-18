@@ -1,0 +1,262 @@
+syntax = "proto3";
+
+package raag;
+
+option go_package = "github.com/p-society/raag/rpc/proto";
+
+service Raag {
+  // Peer Management
+  rpc PeersList(Empty) returns (PeerListResponse);
+  rpc PeersInfo(Empty) returns (PeersInfoResponse);
+  rpc Connect(ConnectRequest) returns (Empty);
+  rpc Disconnect(DisconnectRequest) returns (Empty);
+  rpc AddBootstrap(BootstrapRequest) returns (Empty);
+  rpc KnownPeers(Empty) returns (KnownPeersResponse);
+
+  // Library
+  rpc LibraryList(Empty) returns (LibraryListResponse);
+  rpc LibrarySearch(SearchRequest) returns (LibrarySearchResponse);
+  rpc LibraryAdd(AddRequest) returns (Empty);
+  rpc LibraryRemove(RemoveRequest) returns (Empty);
+  rpc LibraryRescan(Empty) returns (RescanResponse);
+
+  // Player
+  rpc Play(PlayRequest) returns (Empty);
+  rpc Pause(Empty) returns (Empty);
+  rpc Resume(Empty) returns (Empty);
+  rpc Stop(Empty) returns (Empty);
+  rpc Next(Empty) returns (Empty);
+  rpc Previous(Empty) returns (Empty);
+  rpc SetVolume(VolumeRequest) returns (Empty);
+  rpc Seek(SeekRequest) returns (Empty);
+  rpc GetQueue(Empty) returns (QueueResponse);
+  rpc NowPlaying(Empty) returns (NowPlayingResponse);
+
+  // Playlist
+  rpc PlaylistSongs(PlaylistSongsRequest) returns (PlaylistSongsResponse);
+  rpc PlaylistCreate(PlaylistCreateRequest) returns (Empty);
+  rpc PlaylistDelete(PlaylistDeleteRequest) returns (Empty);
+  rpc PlaylistList(Empty) returns (PlaylistListResponse);
+  rpc PlaylistAdd(PlaylistAddRequest) returns (Empty);
+  rpc PlaylistRemove(PlaylistRemoveRequest) returns (Empty);
+
+  // Config
+  rpc ConfigGet(Empty) returns (ConfigGetResponse);
+  rpc ConfigSet(ConfigSetRequest) returns (Empty);
+  rpc ConfigReset(Empty) returns (Empty);
+
+  // Network
+  rpc NetworkStatus(Empty) returns (NetworkStatusResponse);
+
+  // Status
+  rpc Status(Empty) returns (StatusResponse);
+  rpc GetFullState(Empty) returns (FullStateResponse);
+  rpc Shutdown(Empty) returns (Empty);
+
+  // Sharing
+  rpc ShareSong(ShareRequest) returns (Empty);
+
+  // Server-streaming RPCs (TUI live updates)
+  rpc WatchPlayer(Empty) returns (stream PlayerEvent);
+  rpc WatchPeers(Empty) returns (stream PeerEvent);
+  rpc WatchTransfers(Empty) returns (stream TransferEvent);
+}
+
+// Common
+message Empty {}
+
+message ConnectRequest {
+  string multiaddr = 1;
+}
+
+message DisconnectRequest {
+  string peer_id = 1;
+}
+
+message BootstrapRequest {
+  string multiaddr = 1;
+}
+
+message EmptyResponse {}
+
+// Peer
+message PeerInfo {
+  string id = 1;
+  string addr = 2;
+  bool connected = 3;
+}
+
+message PeerListResponse {
+  repeated PeerInfo peers = 1;
+}
+
+message PeersInfoResponse {
+  map<string, string> self = 1;
+  repeated PeerInfo connected_peers = 2;
+  int32 connected_peer_count = 3;
+  repeated PeerInfo known_peers = 4;
+  int32 known_peer_count = 5;
+}
+
+message KnownPeersResponse {
+  repeated PeerInfo peers = 1;
+}
+
+message PeerEvent {
+  string peer_id = 1;
+  string addr = 2;
+  string event = 3;
+}
+
+// Library
+message LibrarySong {
+  string title = 1;
+  string artist = 2;
+  string album = 3;
+  string path = 4;
+  string cid = 5;
+}
+
+message LibraryListResponse {
+  repeated LibrarySong songs = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+}
+
+message LibrarySearchResponse {
+  repeated LibrarySong songs = 1;
+}
+
+message AddRequest {
+  string path = 1;
+}
+
+message RemoveRequest {
+  string path = 1;
+}
+
+message RescanResponse {
+  int32 scanned = 1;
+  int32 added = 2;
+  int32 removed = 3;
+}
+
+// Player
+message PlayRequest {
+  string path = 1;
+  int32 index = 2;
+}
+
+message VolumeRequest {
+  int32 volume = 1;
+}
+
+message SeekRequest {
+  int32 position = 1;
+}
+
+message QueueResponse {
+  repeated LibrarySong queue = 1;
+  int32 current_index = 2;
+}
+
+message NowPlayingResponse {
+  LibrarySong song = 1;
+  int32 position = 2;
+  int32 duration = 3;
+  bool playing = 4;
+  int32 volume = 5;
+}
+
+message PlayerEvent {
+  string title = 1;
+  string artist = 2;
+  string album = 3;
+  int32 position = 4;
+  int32 duration = 5;
+  double volume = 6;
+  bool playing = 7;
+  bool paused = 8;
+}
+
+// Playlist
+message PlaylistSongsRequest {
+  string name = 1;
+}
+
+message PlaylistSongsResponse {
+  repeated LibrarySong songs = 1;
+}
+
+message PlaylistCreateRequest {
+  string name = 1;
+}
+
+message PlaylistDeleteRequest {
+  string name = 1;
+}
+
+message PlaylistListResponse {
+  repeated string names = 1;
+}
+
+message PlaylistAddRequest {
+  string name = 1;
+  string song_path = 2;
+}
+
+message PlaylistRemoveRequest {
+  string name = 1;
+  int32 index = 2;
+}
+
+// Config
+message ConfigGetResponse {
+  string config = 1;
+}
+
+message ConfigSetRequest {
+  string key = 1;
+  string value = 2;
+}
+
+// Network
+message NetworkStatusResponse {
+  bool dht_enabled = 1;
+  int32 dht_peers = 2;
+  int32 mdns_peers = 3;
+  bool online = 4;
+}
+
+// Status
+message StatusResponse {
+  bool running = 1;
+  int32 peer_count = 2;
+  bool network_online = 3;
+  string uptime = 4;
+  string version = 5;
+}
+
+message FullStateResponse {
+  StatusResponse status = 1;
+  NetworkStatusResponse network = 2;
+  QueueResponse queue = 3;
+  NowPlayingResponse now_playing = 4;
+  repeated string playlists = 5;
+}
+
+// Transfer
+message TransferEvent {
+  string cid = 1;
+  string song_title = 2;
+  int32 done_blocks = 3;
+  int32 total_blocks = 4;
+  string status = 5;
+}
+
+// Sharing
+message ShareRequest {
+  string path = 1;
+}

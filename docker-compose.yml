@@ -1,31 +1,24 @@
 services:
-  tracker:
+  raag:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: raag-tracker
+    container_name: raag-node
     ports:
-      - "${PORT:-8080}:${PORT:-8080}"
       - "${LIBP2P_PORT:-45678}:${LIBP2P_PORT:-45678}"
     environment:
-      PORT: "${PORT:-8080}"
       LIBP2P_PORT: "${LIBP2P_PORT:-45678}"
-      AUTH_SECRET: "${AUTH_SECRET:-raag-secret}"
-      TLS_ENABLED: "${TLS_ENABLED:-false}"
-      # Uncomment and set these for TLS:
-      # TLS_CERT_FILE: "/app/certs/cert.pem"
-      # TLS_KEY_FILE: "/app/certs/key.pem"
-      #
-      # For Railway: set AUTH_SECRET in Railway Dashboard → Variables
-      # For custom secret: AUTH_SECRET=yourpassword docker compose up -d
-      # For HTTPS: TLS_ENABLED=true docker compose up -d
+      DATA_DIR: "${DATA_DIR:-/home/raag/data}"
+      MUSIC_DIR: "${MUSIC_DIR:-/home/raag/music}"
+      AUTH_SECRET: "${AUTH_SECRET:-}"
+      DHT: "${DHT:-true}"
+      MDNS: "${MDNS:-true}"
+      MAX_PEERS: "${MAX_PEERS:-50}"
+      RENDEZVOUS: "${RENDEZVOUS:-raag-v1}"
+    volumes:
+      - raag-data:/home/raag/data
+      - music:/home/raag/music
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8080}/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     logging:
       driver: "json-file"
       options:
@@ -33,6 +26,10 @@ services:
         max-file: "3"
     networks:
       - raag-network
+
+volumes:
+  raag-data:
+  music:
 
 networks:
   raag-network:

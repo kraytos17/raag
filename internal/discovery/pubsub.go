@@ -9,17 +9,9 @@ import (
 	"github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
 )
-
-type PresenceMessage struct {
-	PeerID    string   `json:"peer_id"`
-	Addrs     []string `json:"addrs"`
-	Timestamp int64    `json:"timestamp"`
-	LibHash   string   `json:"library_hash"`
-}
 
 type LibraryAnnounceMessage struct {
 	PeerID    string   `json:"peer_id"`
@@ -40,30 +32,31 @@ type SongInfo struct {
 }
 
 type PubSubManager struct {
-	host          host.Host
-	pubsub        *pubsub.PubSub
-	presenceTopic *pubsub.Topic
-	libraryTopic  *pubsub.Topic
+	host         host.Host
+	pubsub       *pubsub.PubSub
+	libraryTopic *pubsub.Topic
 
 	OnPeerDiscover func(peer.AddrInfo)
 	OnSongAnnounce func(peer.ID, LibraryAnnounceMessage)
 
-	mu                sync.RWMutex
-	ourAddrs          []string
-	libraryHash       string
-	heartbeatInterval time.Duration
+	mu sync.RWMutex
 }
 
 func NewPubSubManager(h host.Host) (*PubSubManager, error) {
-	ps, err := pubsub.NewGossipSub(context.Background(), h)
+	ps, err := pubsub.NewGossipSub(
+		context.Background(),
+		h,
+		pubsub.WithPeerExchange(true),
+		pubsub.WithFloodPublish(true),
+		pubsub.WithMessageSignaturePolicy(pubsub.StrictSign),
+	)
 	if err != nil {
 		return nil, err
 	}
+
 	psm := &PubSubManager{
-		host:              h,
-		pubsub:            ps,
-		heartbeatInterval: constants.PubSubHeartbeatInterval,
-		ourAddrs:          make([]string, 0),
+		host:   h,
+		pubsub: ps,
 	}
 
 	logger.Debugf("PubSub manager created")
@@ -71,83 +64,44 @@ func NewPubSubManager(h host.Host) (*PubSubManager, error) {
 }
 
 func (p *PubSubManager) Start(ctx context.Context) error {
-	presenceTopic, err := p.pubsub.Join(constants.PresenceTopic)
+	err := p.pubsub.RegisterTopicValidator(
+		constants.LibraryAnnounceTopic,
+		p.topicValidator,
+		pubsub.WithValidatorTimeout(500),
+	)
 	if err != nil {
-		return err
+		logger.Warnf("Failed to register topic validator: %v", err)
 	}
 
-	p.presenceTopic = presenceTopic
 	libraryTopic, err := p.pubsub.Join(constants.LibraryAnnounceTopic)
 	if err != nil {
 		return err
 	}
 
 	p.libraryTopic = libraryTopic
-	subPresence, err := presenceTopic.Subscribe()
-	if err != nil {
-		return err
-	}
 
 	subLibrary, err := libraryTopic.Subscribe()
 	if err != nil {
 		return err
 	}
 
-	go p.handlePresenceMessages(ctx, subPresence)
 	go p.handleLibraryMessages(ctx, subLibrary)
-	go p.runPresenceHeartbeat(ctx)
-	logger.Infof("GossipSub initialized: topics=%s,%s", constants.PresenceTopic, constants.LibraryAnnounceTopic)
+	logger.Infof("GossipSub initialized: topic=%s", constants.LibraryAnnounceTopic)
 	return nil
 }
 
-func (p *PubSubManager) handlePresenceMessages(ctx context.Context, sub *pubsub.Subscription) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			msg, err := sub.Next(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				logger.Debugf("Presence subscription error: %v", err)
-				continue
-			}
-			p.processPresenceMessage(msg)
-		}
+func (p *PubSubManager) topicValidator(ctx context.Context, pid peer.ID, msg *pubsub.Message) pubsub.ValidationResult {
+	var announce LibraryAnnounceMessage
+	if err := json.Unmarshal(msg.Data, &announce); err != nil {
+		return pubsub.ValidationReject
 	}
-}
-
-func (p *PubSubManager) processPresenceMessage(msg *pubsub.Message) {
-	var presence PresenceMessage
-	if err := json.Unmarshal(msg.Data, &presence); err != nil {
-		logger.Debugf("Failed to unmarshal presence message: %v", err)
-		return
+	if announce.Action != "add" && announce.Action != "remove" {
+		return pubsub.ValidationReject
 	}
-	if presence.PeerID == p.host.ID().String() {
-		return
+	if announce.PeerID == "" {
+		return pubsub.ValidationReject
 	}
-
-	pid, err := peer.Decode(presence.PeerID)
-	if err != nil {
-		logger.Debugf("Failed to decode peer ID: %v", err)
-		return
-	}
-
-	addrs := make([]multiaddr.Multiaddr, 0, len(presence.Addrs))
-	for _, addrStr := range presence.Addrs {
-		ma, err := multiaddr.NewMultiaddr(addrStr)
-		if err != nil {
-			continue
-		}
-		addrs = append(addrs, ma)
-	}
-
-	peerInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
-	if p.OnPeerDiscover != nil {
-		p.OnPeerDiscover(peerInfo)
-	}
+	return pubsub.ValidationAccept
 }
 
 func (p *PubSubManager) handleLibraryMessages(ctx context.Context, sub *pubsub.Subscription) {
@@ -189,49 +143,12 @@ func (p *PubSubManager) processLibraryMessage(msg *pubsub.Message) {
 	}
 }
 
-func (p *PubSubManager) runPresenceHeartbeat(ctx context.Context) {
-	ticker := time.NewTicker(p.heartbeatInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			p.publishPresence(ctx)
-		}
-	}
-}
-
-func (p *PubSubManager) publishPresence(ctx context.Context) {
-	p.mu.RLock()
-	addrs := make([]string, len(p.ourAddrs))
-	copy(addrs, p.ourAddrs)
-	libHash := p.libraryHash
-	p.mu.RUnlock()
-
-	msg := PresenceMessage{
-		PeerID:    p.host.ID().String(),
-		Addrs:     addrs,
-		Timestamp: time.Now().Unix(),
-		LibHash:   libHash,
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		logger.Warnf("Failed to marshal presence message: %v", err)
-		return
-	}
-	if err := p.presenceTopic.Publish(ctx, data); err != nil {
-		logger.Debugf("Failed to publish presence: %v", err)
-	}
-}
-
 func (p *PubSubManager) PublishLibraryAnnounce(ctx context.Context, action string, song SongInfo) {
 	msg := LibraryAnnounceMessage{
 		PeerID:    p.host.ID().String(),
 		Action:    action,
 		Song:      song,
+		CID:       song.CID,
 		Timestamp: time.Now().Unix(),
 	}
 
@@ -245,26 +162,7 @@ func (p *PubSubManager) PublishLibraryAnnounce(ctx context.Context, action strin
 	}
 }
 
-func (p *PubSubManager) UpdateAddrs(addrs []multiaddr.Multiaddr) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.ourAddrs = make([]string, len(addrs))
-	for i, addr := range addrs {
-		p.ourAddrs[i] = addr.String()
-	}
-}
-
-func (p *PubSubManager) UpdateLibraryHash(hash string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.libraryHash = hash
-}
-
 func (p *PubSubManager) Stop() error {
-	if p.presenceTopic != nil {
-		p.presenceTopic.Close()
-	}
 	if p.libraryTopic != nil {
 		p.libraryTopic.Close()
 	}

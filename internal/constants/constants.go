@@ -55,15 +55,6 @@ const (
 
 // Discovery Intervals
 const (
-	// DHTAdvertisementInterval is how often to re-advertise on DHT
-	DHTAdvertisementInterval = 30 * time.Minute
-
-	// DHTDiscoveryInterval is how often to run DHT discovery
-	DHTDiscoveryInterval = 30 * time.Second
-
-	// DHTLogInterval is how often to log DHT routing table size
-	DHTLogInterval = 10 * time.Second
-
 	// MDNSLogInterval is how often to log mDNS peer count
 	MDNSLogInterval = 10 * time.Second
 
@@ -91,14 +82,8 @@ const (
 	// TrackerRetryMaxDelay is the max backoff delay for tracker retries
 	TrackerRetryMaxDelay = 10 * time.Second
 
-	// DHTBootstrapThrottle is the minimum interval between DHT bootstrap calls
-	DHTBootstrapThrottle = 30 * time.Second
-
-	// DHTBootstrapPeerThreshold is the number of new peers needed to trigger bootstrap
-	DHTBootstrapPeerThreshold = 5
-
-	// DHTTrackerRefreshInterval is how often to refresh DHT with tracker peers
-	DHTTrackerRefreshInterval = 5 * time.Minute
+	// DHTBootstrapDelay is the startup delay before first DHT rendezvous
+	DHTBootstrapDelay = 30 * time.Second
 )
 
 // Tracker Authentication
@@ -119,15 +104,6 @@ const (
 
 // Timeouts
 const (
-	// DHTQueryTimeout is the timeout for DHT queries
-	DHTQueryTimeout = 30 * time.Second
-
-	// DHTWaitForPeersTimeout is how long to wait for peers to connect
-	DHTWaitForPeersTimeout = 10 * time.Second
-
-	// DHTRetryDelay is how long to wait before retrying DHT discovery
-	DHTRetryDelay = 10 * time.Second
-
 	// HTTPClientTimeout is the timeout for HTTP client requests
 	HTTPClientTimeout = 10 * time.Second
 
@@ -205,12 +181,6 @@ const (
 
 // GossipSub / PubSub
 const (
-	// PresenceTopic is for peer presence announcements
-	PresenceTopic = "/raag/presence/1.0.0"
-
 	// LibraryAnnounceTopic is for library change announcements
 	LibraryAnnounceTopic = "/raag/library/1.0.0"
-
-	// PubSubHeartbeatInterval is how often to send presence updates
-	PubSubHeartbeatInterval = 30 * time.Second
 )

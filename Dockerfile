@@ -24,41 +24,34 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 
 FROM debian:bookworm-slim AS runtime
 
-ARG PORT=8080
 ARG LIBP2P_PORT=45678
+ARG DATA_DIR=/home/raag/data
+ARG MUSIC_DIR=/home/raag/music
 ARG AUTH_SECRET=
-ARG TLS_ENABLED=false
-ARG TLS_CERT_FILE=
-ARG TLS_KEY_FILE=
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libasound2 \
-    wget \
     && rm -rf /var/lib/apt/lists/* \
     && (getent group raag >/dev/null || groupadd --gid 1000 raag) \
     && (getent passwd raag >/dev/null || useradd -o --uid 1000 --gid raag --shell /bin/false --create-home raag)
 
 WORKDIR /home/raag
 
-COPY --from=builder /app/raag ./
-COPY --from=builder /app/entrypoint.sh ./
+RUN mkdir -p "$DATA_DIR" "$MUSIC_DIR"
 
-RUN chmod +x entrypoint.sh && \
-    chown -R raag:raag /home/raag
+COPY --from=builder /app/raag ./
+
+RUN chown -R raag:raag /home/raag
 
 USER raag
 
-ENV PORT=${PORT}
 ENV LIBP2P_PORT=${LIBP2P_PORT}
+ENV DATA_DIR=${DATA_DIR}
+ENV MUSIC_DIR=${MUSIC_DIR}
 ENV AUTH_SECRET=${AUTH_SECRET}
-ENV TLS_ENABLED=${TLS_ENABLED}
-ENV TLS_CERT_FILE=${TLS_CERT_FILE}
-ENV TLS_KEY_FILE=${TLS_KEY_FILE}
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
+EXPOSE ${LIBP2P_PORT}
 
-EXPOSE ${PORT} ${LIBP2P_PORT}
-
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["./raag"]
+CMD ["daemon"]
