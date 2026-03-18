@@ -3,12 +3,7 @@ package network
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
-	"io"
 	"net"
-	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,79 +13,39 @@ import (
 	appconfig "github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/library"
-	"github.com/p-society/raag/internal/metadata"
 	"github.com/spf13/viper"
 )
 
-// TestTrackerHeartbeatKeepsPeerRegistered - REMOVED: tracker deleted in v1.0.0 overhaul
-// Tracker functionality replaced by DHT-based discovery and AutoRelay
-/*
-func TestTrackerHeartbeatKeepsPeerRegistered(t *testing.T) {
-	t.Skip("REMOVED: tracker deleted in v1.0.0")
-}
-*/
+func TestNetworkManagerCreation(t *testing.T) {
+	manager, cleanup := newTestNetworkManager(t, "")
+	defer cleanup()
 
-func TestTwoPeerFramedTransfer(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if manager.Host() == nil {
+		t.Fatal("host should be set")
+	}
+}
+
+func TestPeerConnection(t *testing.T) {
 	managerA, cleanupA := newTestNetworkManager(t, "")
 	defer cleanupA()
+
 	managerB, cleanupB := newTestNetworkManager(t, "")
 	defer cleanupB()
 
-	ctxA := t.Context()
-	ctxB := t.Context()
-	go func() { _ = managerA.Start(ctxA) }()
-	go func() { _ = managerB.Start(ctxB) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	addr := managerB.GetMultiaddr()
-	addrInfo, err := peerAddrInfoFromString(addr)
-	if err != nil {
-		t.Fatalf("parse peer multiaddr: %v", err)
-	}
-	if err := managerA.Connect(context.Background(), *addrInfo); err != nil {
-		t.Fatalf("connect peers: %v", err)
+	peerInfo := peer.AddrInfo{
+		ID:    managerB.Host().ID(),
+		Addrs: managerB.Host().Addrs(),
 	}
 
-	waitForCondition(t, 5*time.Second, func() bool {
-		return managerA.WaitForPeers(100*time.Millisecond) && managerB.WaitForPeers(100*time.Millisecond)
-	})
-
-	sourcePath := filepath.Join(managerA.musicDir, "song.ogg")
-	payload := []byte("this-is-a-real-framed-transfer-test")
-	if err := os.WriteFile(sourcePath, payload, 0o644); err != nil {
-		t.Fatalf("write source file: %v", err)
+	if err := managerA.Connect(ctx, peerInfo); err != nil {
+		t.Fatalf("failed to connect: %v", err)
 	}
 
-	song := metadata.Song{
-		Title:  "Integration Song",
-		Artist: "Raag",
-		Album:  "Tests",
-		Path:   sourcePath,
-		Size:   int64(len(payload)),
-	}
-	if err := managerA.ShareSong(addrInfo, song); err != nil {
-		t.Fatalf("share song: %v", err)
-	}
-
-	var receivedPath string
-	waitForCondition(t, 5*time.Second, func() bool {
-		matches, err := filepath.Glob(filepath.Join(managerB.musicDir, managerA.GetPeerID().String()+"_Integration Song.ogg"))
-		if err != nil || len(matches) == 0 {
-			return false
-		}
-		receivedPath = matches[0]
-		return true
-	})
-
-	received, err := os.ReadFile(receivedPath)
-	if err != nil {
-		t.Fatalf("read received file: %v", err)
-	}
-	if string(received) != string(payload) {
-		t.Fatalf("received payload mismatch: got %q want %q", string(received), string(payload))
-	}
-	if filepath.Ext(receivedPath) != ".ogg" {
-		t.Fatalf("received extension = %q, want .ogg", filepath.Ext(receivedPath))
+	if !managerA.IsOnline() {
+		t.Fatal("managerA should be online after connection")
 	}
 }
 
@@ -131,7 +86,7 @@ func newTestNetworkManager(t *testing.T, trackerURL string) (*NetworkManager, fu
 		t.Fatalf("generate test identity: %v", err)
 	}
 
-	musicDir := filepath.Join(t.TempDir(), "music")
+	musicDir := t.TempDir()
 	lib, err := library.NewLibrary(musicDir)
 	if err != nil {
 		t.Fatalf("new library: %v", err)
@@ -140,10 +95,9 @@ func newTestNetworkManager(t *testing.T, trackerURL string) (*NetworkManager, fu
 	port := freeTCPPort(t)
 	v := viper.New()
 	cfg := &appconfig.Config{
-		Host:       "127.0.0.1",
-		Port:       port,
-		Rendezvous: constants.DefaultRendezvous,
-		// TrackerURL removed in v1.0.0 - using DHT discovery
+		Host:           "127.0.0.1",
+		Port:           port,
+		Rendezvous:     constants.DefaultRendezvous,
 		DHTEnabled:     false,
 		MaxPeers:       constants.DefaultMaxPeers,
 		BootstrapPeers: nil,
@@ -174,59 +128,4 @@ func freeTCPPort(t *testing.T) int {
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
-}
-
-func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if fn() {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("condition not met within %v", timeout)
-}
-
-func httpGet(url string) (string, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
-
-func peerAddrInfoFromString(addr string) (*peer.AddrInfo, error) {
-	addrInfo, err := peer.AddrInfoFromString(addr)
-	if err != nil {
-		return nil, fmt.Errorf("parse addr info: %w", err)
-	}
-	return addrInfo, nil
-}
-
-func extractLastSeen(body string) (string, bool) {
-	idx := strings.Index(body, "\"last_seen\":")
-	if idx == -1 {
-		return "", false
-	}
-
-	start := idx + len("\"last_seen\":")
-	for start < len(body) && body[start] == ' ' {
-		start++
-	}
-
-	end := start
-	for end < len(body) && body[end] >= '0' && body[end] <= '9' {
-		end++
-	}
-	if end == start {
-		return "", false
-	}
-	return body[start:end], true
 }

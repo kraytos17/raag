@@ -9,6 +9,8 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/faiface/beep v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/ipfs/boxo v0.37.0
+	github.com/ipfs/go-block-format v0.2.3
 	github.com/ipfs/go-datastore v0.9.1
 	github.com/ipfs/go-ds-badger4 v0.1.8
 	github.com/libp2p/go-libp2p v0.48.0
@@ -40,6 +42,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/filecoin-project/go-clock v0.1.0 // indirect
+	github.com/gammazero/chanqueue v1.1.2 // indirect
+	github.com/gammazero/deque v1.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -51,8 +55,12 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/icza/bitio v1.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/ipfs/boxo v0.37.0 // indirect
+	github.com/ipfs/bbloom v0.0.4 // indirect
+	github.com/ipfs/go-cidutil v0.1.1 // indirect
+	github.com/ipfs/go-dsqueue v0.2.0 // indirect
+	github.com/ipfs/go-ipld-format v0.6.3 // indirect
 	github.com/ipfs/go-log/v2 v2.9.1 // indirect
+	github.com/ipfs/go-metrics-interface v0.3.0 // indirect
 	github.com/ipld/go-ipld-prime v0.22.0 // indirect
 	github.com/jfreymuth/oggvorbis v1.0.5 // indirect
 	github.com/jfreymuth/vorbis v1.0.2 // indirect

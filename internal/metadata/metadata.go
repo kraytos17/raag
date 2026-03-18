@@ -12,12 +12,13 @@ import (
 )
 
 type Song struct {
-	Title  string
-	Artist string
-	Album  string
-	Path   string
-	Hash   string
-	Size   int64
+	Title     string
+	Artist    string
+	Album     string
+	Path      string
+	Hash      string
+	Size      int64
+	Extension string
 }
 
 func ExtractMetadata(filePath string) (Song, error) {

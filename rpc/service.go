@@ -517,25 +517,20 @@ type ShareArgs struct {
 	SongTitle string `json:"song_title"`
 }
 
+// GetPeers returns information about all known peers
+func (s *DaemonService) GetPeers(args *EmptyArgs, result *PeerListResult) error {
+	peers := s.app.NetMgr.GetPeers()
+	peerList := make([]PeerInfo, 0, len(peers))
+	for _, p := range peers {
+		peerList = append(peerList, PeerInfo{
+			ID:   p.ID.String(),
+			Addr: p.Addrs[0].String(),
+		})
+	}
+	result.Peers = peerList
+	return nil
+}
+
 func (s *DaemonService) ShareSong(args *ShareArgs, result *EmptyResult) error {
-	peerID, err := peer.Decode(args.PeerID)
-	if err != nil {
-		return fmt.Errorf("invalid peer ID: %w", err)
-	}
-
-	song, err := s.app.Lib.FindSong(args.SongTitle)
-	if err != nil {
-		return fmt.Errorf("song not found: %w", err)
-	}
-
-	addrs := s.app.NetMgr.Host().Peerstore().Addrs(peerID)
-	if len(addrs) == 0 {
-		return fmt.Errorf("peer not found or not reachable: %s", args.PeerID)
-	}
-
-	peerInfo := &peer.AddrInfo{
-		ID:    peerID,
-		Addrs: addrs,
-	}
-	return s.app.NetMgr.ShareSong(peerInfo, song)
+	return fmt.Errorf("ShareSong is no longer supported - use BroadcastSongAdded instead")
 }

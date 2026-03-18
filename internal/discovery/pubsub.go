@@ -25,15 +25,18 @@ type LibraryAnnounceMessage struct {
 	PeerID    string   `json:"peer_id"`
 	Action    string   `json:"action"`
 	Song      SongInfo `json:"song"`
+	CID       string   `json:"cid"`
 	Timestamp int64    `json:"timestamp"`
 }
 
 type SongInfo struct {
-	Title  string `json:"title"`
-	Artist string `json:"artist"`
-	Album  string `json:"album"`
-	Hash   string `json:"hash"`
-	Size   int64  `json:"size"`
+	Title     string `json:"title"`
+	Artist    string `json:"artist"`
+	Album     string `json:"album"`
+	Hash      string `json:"hash"`
+	Size      int64  `json:"size"`
+	Extension string `json:"extension"`
+	CID       string `json:"cid"`
 }
 
 type PubSubManager struct {

@@ -290,34 +290,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) selectAdvertisedAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-	filtered := filterReachableAddresses(addrs)
-	prioritized := prioritizeAddresses(filtered)
-	if len(prioritized) == 0 {
-		return nil
-	}
-
-	const maxAdvertisedAddrs = 6
-	selected := make([]multiaddr.Multiaddr, 0, min(len(prioritized), maxAdvertisedAddrs))
-	seen := make(map[string]struct{})
-	for _, addr := range prioritized {
-		addrStr := addr.String()
-		if _, ok := seen[addrStr]; ok {
-			continue
-		}
-
-		seen[addrStr] = struct{}{}
-		selected = append(selected, addr)
-		if len(selected) >= maxAdvertisedAddrs {
-			break
-		}
-	}
-	if len(selected) == 0 && len(addrs) > 0 {
-		return addrs[:1]
-	}
-	return selected
-}
-
 func isReachableAddr(addr multiaddr.Multiaddr) bool {
 	ipStr, err := addr.ValueForProtocol(multiaddr.P_IP4)
 	if err != nil {
