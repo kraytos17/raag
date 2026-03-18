@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
@@ -273,7 +274,26 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 			logger.Debugf("Connection manager initialized with limits")
 		}
 
-		opts = append(opts, libp2p.EnableRelay())
+		opts = append(opts, libp2p.EnableAutoRelay(
+			autorelay.WithPeerSource(func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
+				out := make(chan peer.AddrInfo, numPeers)
+				go func() {
+					defer close(out)
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						default:
+							return
+						}
+					}
+				}()
+				return out
+			}),
+			autorelay.WithMinCandidates(1),
+			autorelay.WithMaxCandidates(5),
+			autorelay.WithBackoff(30*time.Second),
+		))
 		opts = append(opts, libp2p.EnableHolePunching())
 		opts = append(opts, libp2p.NATPortMap())
 		opts = append(opts, libp2p.EnableNATService())
