@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,53 +19,16 @@ import (
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/metadata"
-	"github.com/p-society/raag/tracker"
 	"github.com/spf13/viper"
 )
 
+// TestTrackerHeartbeatKeepsPeerRegistered - REMOVED: tracker deleted in v1.0.0 overhaul
+// Tracker functionality replaced by DHT-based discovery and AutoRelay
+/*
 func TestTrackerHeartbeatKeepsPeerRegistered(t *testing.T) {
-	t.Skip("flaky: test expects heartbeat within 3s but TrackerHeartbeatInterval is 2min")
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	tr := tracker.NewTracker(tracker.TrackerConfig{})
-	ts := httptest.NewServer(tr)
-	defer ts.Close()
-
-	manager, cleanup := newTestNetworkManager(t, ts.URL)
-	defer cleanup()
-
-	ctx := t.Context()
-	go func() {
-		_ = manager.Start(ctx)
-	}()
-
-	var firstLastSeen string
-	waitForCondition(t, 3*time.Second, func() bool {
-		resp, err := httpGet(ts.URL + "/peers")
-		if err != nil {
-			return false
-		}
-		if !strings.Contains(resp, "\"peer_id\":") || !strings.Contains(resp, "\"addrs\":") {
-			return false
-		}
-
-		lastSeen, ok := extractLastSeen(resp)
-		if !ok {
-			return false
-		}
-		firstLastSeen = lastSeen
-		return true
-	})
-
-	waitForCondition(t, 3*time.Second, func() bool {
-		resp, err := httpGet(ts.URL + "/peers")
-		if err != nil {
-			return false
-		}
-		updatedLastSeen, ok := extractLastSeen(resp)
-		return ok && updatedLastSeen != firstLastSeen
-	})
+	t.Skip("REMOVED: tracker deleted in v1.0.0")
 }
+*/
 
 func TestTwoPeerFramedTransfer(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -178,10 +140,10 @@ func newTestNetworkManager(t *testing.T, trackerURL string) (*NetworkManager, fu
 	port := freeTCPPort(t)
 	v := viper.New()
 	cfg := &appconfig.Config{
-		Host:           "127.0.0.1",
-		Port:           port,
-		Rendezvous:     constants.DefaultRendezvous,
-		TrackerURL:     trackerURL,
+		Host:       "127.0.0.1",
+		Port:       port,
+		Rendezvous: constants.DefaultRendezvous,
+		// TrackerURL removed in v1.0.0 - using DHT discovery
 		DHTEnabled:     false,
 		MaxPeers:       constants.DefaultMaxPeers,
 		BootstrapPeers: nil,

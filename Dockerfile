@@ -20,9 +20,6 @@ ARG TARGETARCH=amd64
 
 RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
-    -o tracker ./tracker/cmd/tracker && \
-    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
     -o raag ./cmd/raag
 
 FROM debian:bookworm-slim AS runtime
@@ -44,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /home/raag
 
-COPY --from=builder /app/tracker /app/raag ./
+COPY --from=builder /app/raag ./
 COPY --from=builder /app/entrypoint.sh ./
 
 RUN chmod +x entrypoint.sh && \

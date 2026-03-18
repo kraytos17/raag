@@ -24,6 +24,6 @@ if [ -n "$AUTH_KEY" ]; then
     IFS="$OLD_IFS"
 fi
 
-# Note: AUTH_SECRET is handled internally by the tracker application
-echo "Starting tracker with arguments: $*"
-exec ./tracker "$@"
+# Note: AUTH_KEY is handled by the raag application
+echo "Starting raag with arguments: $*"
+exec ./raag "$@"
