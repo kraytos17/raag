@@ -188,6 +188,11 @@ func (n *NetworkManager) Close() error {
 			logger.Warnf("Error closing transfer stack: %v", err)
 		}
 	}
+	if dht := n.discovery.DHT(); dht != nil {
+		if err := dht.Close(); err != nil {
+			logger.Warnf("Error closing DHT: %v", err)
+		}
+	}
 	return n.host.Close()
 }
 
@@ -623,7 +628,7 @@ func (n *NetworkManager) runReprovider(ctx context.Context) {
 	if dht == nil || n.transferStack == nil {
 		return
 	}
-	
+
 	logger.Infof("Reprovider started: re-announces all local CIDs every 22 hours")
 	for {
 		select {
@@ -633,7 +638,7 @@ func (n *NetworkManager) runReprovider(ctx context.Context) {
 			if n.transferStack == nil {
 				return
 			}
-			
+
 			keys, err := n.transferStack.Blockstore().AllKeysChan(ctx)
 			if err != nil {
 				logger.Warnf("reprovide failed to get keys: %v", err)
@@ -652,7 +657,7 @@ func (n *NetworkManager) ingestLibrary(ctx context.Context) {
 	if n.transferStack == nil || n.library == nil {
 		return
 	}
-	
+
 	ingested := 0
 	skipped := 0
 	for song := range n.library.AllSongs() {
@@ -671,13 +676,13 @@ func (n *NetworkManager) ingestLibrary(ctx context.Context) {
 				}
 			}
 		}
-		
+
 		c, err := n.transferStack.AddFile(ctx, song.Path)
 		if err != nil {
 			logger.Debugf("ingestLibrary: skipping %q: %v", song.Title, err)
 			continue
 		}
-		
+
 		n.library.UpdateCID(song.Hash, c.String())
 		ingested++
 	}
@@ -691,7 +696,7 @@ func (n *NetworkManager) onRemoteSongAnnounce(pid peer.ID, msg discovery.Library
 	if n.transferStack == nil {
 		return
 	}
-	
+
 	c, err := cid.Decode(msg.CID)
 	if err != nil {
 		logger.Debugf("onRemoteSongAnnounce: invalid CID from %s: %v", pid, err)
@@ -700,17 +705,17 @@ func (n *NetworkManager) onRemoteSongAnnounce(pid peer.ID, msg discovery.Library
 	if has, _ := n.transferStack.HasBlock(n.getContext(), c); has {
 		return
 	}
-	
+
 	ext := msg.Song.Extension
 	if ext == "" {
 		ext = ".mp3"
 	}
-	
+
 	destPath := filepath.Join(n.musicDir, sanitizeTransferName(msg.Song.Title)+ext)
 	if _, err := os.Stat(destPath); err == nil {
 		return
 	}
-	
+
 	logger.Infof("Pre-fetching song announced by peer=%s title=%q cid=%s", pid, msg.Song.Title, c)
 	go func() {
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
