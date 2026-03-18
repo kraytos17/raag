@@ -157,6 +157,7 @@ type NetworkManager struct {
 	viper           *viper.Viper
 	library         *library.Library
 	musicDir        string
+	store           *storage.Store
 	Online          bool
 	OnPeerJoin      func(peer.ID)
 	OnPeerLeave     func(peer.ID)
@@ -311,6 +312,7 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		viper:           v,
 		library:         lib,
 		musicDir:        musicDir,
+		store:           store,
 		discovery:       discoveryMgr,
 		pingService:     pingService,
 		peerConnectCh:   make(chan struct{}, 1),
@@ -385,16 +387,22 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
 	}
-
-	if n.discovery.DHT() != nil && n.transferStack == nil {
-		ts, err := transfer.NewStack(ctx, n.host, n.discovery.DHT(), nil)
+	if n.store != nil && n.transferStack == nil {
+		dhtRouting := n.discovery.DHT()
+		ts, err := transfer.NewStack(ctx, n.host, dhtRouting, n.store.Blocks)
 		if err != nil {
-			logger.Warnf("Failed to create transfer stack: %v", err)
+			logger.Errorf("Failed to create transfer stack: %v", err)
 		} else {
 			n.transferStack = ts
+			logger.Infof("Transfer stack initialized (Bitswap + UnixFS DAG)")
+			if dhtRouting != nil {
+				go n.runReprovider(ctx)
+			}
+			go n.ingestLibrary(ctx)
 		}
 	}
 
+	n.discovery.SetSongAnnounceCallback(n.onRemoteSongAnnounce)
 	addrs := n.host.Addrs()
 	if len(addrs) > 0 {
 		logger.Debugf("Your Raag Node Multiaddress address=%s", fmt.Sprintf("%s/p2p/%s", addrs[0], n.host.ID()))
@@ -608,4 +616,112 @@ func (n *NetworkManager) AddBootstrapPeer(ctx context.Context, multiaddrStr stri
 		return fmt.Errorf("invalid multiaddress: %w", err)
 	}
 	return n.discovery.AddBootstrapPeer(ctx, *peerAddr)
+}
+
+func (n *NetworkManager) runReprovider(ctx context.Context) {
+	dht := n.discovery.DHT()
+	if dht == nil || n.transferStack == nil {
+		return
+	}
+	
+	logger.Infof("Reprovider started: re-announces all local CIDs every 22 hours")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(22 * time.Hour):
+			if n.transferStack == nil {
+				return
+			}
+			
+			keys, err := n.transferStack.Blockstore().AllKeysChan(ctx)
+			if err != nil {
+				logger.Warnf("reprovide failed to get keys: %v", err)
+				continue
+			}
+			for c := range keys {
+				if err := dht.Provide(ctx, c, true); err != nil {
+					logger.Warnf("reprovide failed for %s: %v", c, err)
+				}
+			}
+		}
+	}
+}
+
+func (n *NetworkManager) ingestLibrary(ctx context.Context) {
+	if n.transferStack == nil || n.library == nil {
+		return
+	}
+	
+	ingested := 0
+	skipped := 0
+	for song := range n.library.AllSongs() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if song.CID != "" {
+			c, err := cid.Decode(song.CID)
+			if err == nil {
+				has, _ := n.transferStack.HasBlock(ctx, c)
+				if has {
+					skipped++
+					continue
+				}
+			}
+		}
+		
+		c, err := n.transferStack.AddFile(ctx, song.Path)
+		if err != nil {
+			logger.Debugf("ingestLibrary: skipping %q: %v", song.Title, err)
+			continue
+		}
+		
+		n.library.UpdateCID(song.Hash, c.String())
+		ingested++
+	}
+	logger.Infof("ingestLibrary: ingested=%d skipped=%d", ingested, skipped)
+}
+
+func (n *NetworkManager) onRemoteSongAnnounce(pid peer.ID, msg discovery.LibraryAnnounceMessage) {
+	if msg.Action != "add" || msg.CID == "" {
+		return
+	}
+	if n.transferStack == nil {
+		return
+	}
+	
+	c, err := cid.Decode(msg.CID)
+	if err != nil {
+		logger.Debugf("onRemoteSongAnnounce: invalid CID from %s: %v", pid, err)
+		return
+	}
+	if has, _ := n.transferStack.HasBlock(n.getContext(), c); has {
+		return
+	}
+	
+	ext := msg.Song.Extension
+	if ext == "" {
+		ext = ".mp3"
+	}
+	
+	destPath := filepath.Join(n.musicDir, sanitizeTransferName(msg.Song.Title)+ext)
+	if _, err := os.Stat(destPath); err == nil {
+		return
+	}
+	
+	logger.Infof("Pre-fetching song announced by peer=%s title=%q cid=%s", pid, msg.Song.Title, c)
+	go func() {
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		if err := n.transferStack.FetchFile(fetchCtx, c, destPath); err != nil {
+			logger.Warnf("Pre-fetch failed title=%q: %v", msg.Song.Title, err)
+			return
+		}
+		if err := n.library.ScanMusicLibrary(n.musicDir); err != nil {
+			logger.Warnf("Library rescan after pre-fetch failed: %v", err)
+		}
+		logger.Infof("Pre-fetch complete title=%q", msg.Song.Title)
+	}()
 }
