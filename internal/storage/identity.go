@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,7 +32,7 @@ func (i *IdentityStore) LoadOrGenerate(ctx context.Context) (crypto.PrivKey, err
 		}
 	}
 
-	key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+	key, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
@@ -42,7 +43,7 @@ func (i *IdentityStore) LoadOrGenerate(ctx context.Context) (crypto.PrivKey, err
 	}
 
 	sk := serializedKey{
-		Type: "RSA",
+		Type: "Ed25519",
 		Data: keyData,
 	}
 
@@ -76,7 +77,7 @@ func (i *IdentityStore) SaveLibP2PKey(ctx context.Context, key crypto.PrivKey) e
 	}
 
 	sk := serializedKey{
-		Type: "RSA",
+		Type: "Ed25519",
 		Data: keyData,
 	}
 

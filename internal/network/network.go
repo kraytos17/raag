@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -41,7 +42,7 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 	keyPath, err := config.IdentityKeyPath()
 	if err != nil {
 		logger.Warnf("Could not get identity key path, generating new key: %v", err)
-		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		key, _, err := crypto.GenerateEd25519Key(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
@@ -51,7 +52,7 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 	dir, err := config.Dir()
 	if err != nil {
 		logger.Warnf("Could not get config dir, generating new key: %v", err)
-		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		key, _, err := crypto.GenerateEd25519Key(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
@@ -61,7 +62,7 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+			key, _, err := crypto.GenerateEd25519Key(rand.Reader)
 			if err != nil {
 				return nil, err
 			}
@@ -69,7 +70,7 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 		}
 
 		logger.Warnf("Could not open config root, generating new key: %v", err)
-		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		key, _, err := crypto.GenerateEd25519Key(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
@@ -79,7 +80,7 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 	relPath, err := filepath.Rel(dir, keyPath)
 	if err != nil {
 		logger.Warnf("Could not compute relative path, generating new key: %v", err)
-		key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+		key, _, err := crypto.GenerateEd25519Key(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +118,7 @@ func loadOrGenerateIdentity() (crypto.PrivKey, error) {
 }
 
 func generateAndSaveKey(keyPath string) (crypto.PrivKey, error) {
-	key, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+	key, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
@@ -128,7 +129,7 @@ func generateAndSaveKey(keyPath string) (crypto.PrivKey, error) {
 	}
 
 	sk := serializedKey{
-		Type: "RSA",
+		Type: "Ed25519",
 		Data: keyData,
 	}
 
