@@ -496,6 +496,10 @@ func (m *Manager) initDHT(ctx context.Context) error {
 		logger.Debugf("DHT seeded with persisted peers count=%d", len(allPeers)-1)
 	}
 
+	defaultBootstrap := dht.GetDefaultBootstrapPeerAddrInfos()
+	bootstrapPeers = append(bootstrapPeers, defaultBootstrap...)
+	logger.Debugf("DHT total bootstrap peers: %d", len(bootstrapPeers))
+
 	var opts []dht.Option
 	opts = append(opts, dht.Mode(dht.ModeAutoServer))
 	if len(bootstrapPeers) > 0 {
