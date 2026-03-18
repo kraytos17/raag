@@ -154,7 +154,7 @@ func newTestNetworkManager(t *testing.T, trackerURL string) (*NetworkManager, fu
 		LogLevel:       "error",
 	}
 
-	nm, err := newNetworkWithIdentity(cfg, v, lib, musicDir, identity)
+	nm, err := newNetworkWithIdentity(cfg, v, lib, musicDir, nil, identity)
 	if err != nil {
 		t.Fatalf("new network: %v", err)
 	}

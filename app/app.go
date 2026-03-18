@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// App is the application container. All services access components through App.
 type App struct {
 	V      *viper.Viper
 	Cfg    *config.Config
@@ -23,16 +22,19 @@ type App struct {
 	Player *player.Player
 	NetMgr *network.NetworkManager
 	PM     *playlist.Manager
+	Store  *storage.Store
 
 	StartTime time.Time
 	cancel    context.CancelFunc
 }
 
-// NewApp creates and initializes all application components and services.
 func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
-	if err := storage.Init(); err != nil {
+	store, err := storage.NewStore(cfg.DataDir)
+	if err != nil {
 		return nil, fmt.Errorf("init storage: %w", err)
 	}
+
+	ctx := context.Background()
 
 	lib, err := library.NewLibrary(cfg.MusicDir)
 	if err != nil {
@@ -50,15 +52,23 @@ func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
 		return p.Next()
 	})
 
-	netMgr, err := network.NewNetwork(cfg, v, lib, cfg.MusicDir)
+	netMgr, err := network.NewNetwork(cfg, v, lib, cfg.MusicDir, store)
 	if err != nil {
 		return nil, fmt.Errorf("init network: %w", err)
 	}
 
 	pm := playlist.NewManager()
-	if err := storage.LoadPlaylists(pm); err != nil {
+	if err := storage.LoadPlaylists(ctx, store, pm); err != nil {
 		fmt.Printf("Warning: failed to load playlists: %v\n", err)
 	}
+
+	state, err := storage.LoadState(ctx, store)
+	if err != nil {
+		fmt.Printf("Warning: failed to load state: %v\n", err)
+	} else if state != nil && state.Volume > 0 {
+		_ = p.SetVolume(float64(state.Volume))
+	}
+
 	startTime := time.Now()
 	app := &App{
 		V:         v,
@@ -67,12 +77,12 @@ func NewApp(v *viper.Viper, cfg *config.Config) (*App, error) {
 		Player:    p,
 		NetMgr:    netMgr,
 		PM:        pm,
+		Store:     store,
 		StartTime: startTime,
 	}
 	return app, nil
 }
 
-// StartNetwork begins network discovery in the background.
 func (a *App) StartNetwork(ctx context.Context) {
 	go func() {
 		if err := a.NetMgr.Start(ctx); err != nil {
@@ -83,8 +93,8 @@ func (a *App) StartNetwork(ctx context.Context) {
 	}()
 }
 
-// SaveState persists player state and playlists.
 func (a *App) SaveState() {
+	ctx := context.Background()
 	state := &storage.PlayerState{
 		Volume: int(a.Player.GetVolume()),
 	}
@@ -92,10 +102,10 @@ func (a *App) SaveState() {
 		state.LastSong = song.Title
 		state.Position = a.Player.GetPosition()
 	}
-	if err := storage.SaveState(state); err != nil {
+	if err := storage.SaveState(ctx, a.Store, state); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save player state: %v\n", err)
 	}
-	if err := storage.SavePlaylists(a.PM); err != nil {
+	if err := storage.SavePlaylists(ctx, a.Store, a.PM); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save playlists: %v\n", err)
 	}
 	if err := config.SaveConfig(a.V, a.Cfg); err != nil {
@@ -103,13 +113,15 @@ func (a *App) SaveState() {
 	}
 }
 
-// Close shuts down the application cleanly.
 func (a *App) Close() {
 	if a.cancel != nil {
 		a.cancel()
 	}
 	if a.NetMgr != nil {
 		_ = a.NetMgr.Close()
+	}
+	if a.Store != nil {
+		_ = a.Store.Close()
 	}
 	a.SaveState()
 }

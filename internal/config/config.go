@@ -31,6 +31,9 @@ type Config struct {
 
 	// Playback - persistent playback settings
 	MusicDir string `json:"playback.music_dir"`
+
+	// Storage - persistent storage settings
+	DataDir string `json:"storage.data_dir"`
 	// Runtime - these are set at startup
 	Network    bool   `mapstructure:"-" json:"-"`
 	ForceRelay bool   `mapstructure:"-" json:"-"`
@@ -44,6 +47,10 @@ func DefaultConfig() Config {
 	if defaultMusicDir, err := MusicDir(); err == nil {
 		musicDir = defaultMusicDir
 	}
+	dataDir := "./data"
+	if defaultDataDir, err := DataDir(); err == nil {
+		dataDir = defaultDataDir
+	}
 	return Config{
 		Host:            constants.DefaultHost,
 		Port:            constants.DefaultPort,
@@ -56,6 +63,7 @@ func DefaultConfig() Config {
 		MDNSEnabled:     true,
 		MDNSServiceName: "",
 		MusicDir:        musicDir,
+		DataDir:         dataDir,
 		Volume:          constants.DefaultVolume,
 		Network:         false,
 		ForceRelay:      false,
@@ -114,6 +122,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("discovery.mdns_service_name", defaults.MDNSServiceName)
 	v.SetDefault("discovery.auth_secret", os.Getenv("AUTH_SECRET"))
 	v.SetDefault("playback.music_dir", defaults.MusicDir)
+	v.SetDefault("storage.data_dir", defaults.DataDir)
 }
 
 func bindFlags(v *viper.Viper, cmd *cobra.Command) {
@@ -131,6 +140,7 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 	_ = v.BindPFlag("discovery.bootstrap_peers", root.PersistentFlags().Lookup("bootstrap"))
 	_ = v.BindPFlag("discovery.auth_secret", root.PersistentFlags().Lookup("auth-secret"))
 	_ = v.BindPFlag("playback.music_dir", root.PersistentFlags().Lookup("music-dir"))
+	_ = v.BindPFlag("storage.data_dir", root.PersistentFlags().Lookup("data-dir"))
 }
 
 // LoadConfig loads configuration from Viper instance.
@@ -148,6 +158,7 @@ func LoadConfig(v *viper.Viper) (*Config, error) {
 		MDNSServiceName: v.GetString("discovery.mdns_service_name"),
 		AuthSecret:      v.GetString("discovery.auth_secret"),
 		MusicDir:        v.GetString("playback.music_dir"),
+		DataDir:         v.GetString("storage.data_dir"),
 		ForceRelay:      v.GetBool("network.force_relay"),
 	}
 	if cfg.TrackerURL == "" {

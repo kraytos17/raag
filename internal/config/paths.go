@@ -69,3 +69,11 @@ func MusicDir() (string, error) {
 	}
 	return filepath.Join(dir, "music"), nil
 }
+
+func DataDir() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "data"), nil
+}

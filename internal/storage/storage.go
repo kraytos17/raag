@@ -1,74 +1,23 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
-	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
 	"github.com/p-society/raag/internal/playlist"
 )
 
-func WriteJSONAtomic(filePath string, data any) error {
-	dir, err := config.Dir()
-	if err != nil {
-		return err
-	}
-
-	tmpFile, err := os.CreateTemp(dir, "storage-*.tmp")
-	if err != nil {
-		return fmt.Errorf("error creating temp file: %w", err)
-	}
-
-	defer func() {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpFile.Name())
-	}()
-
-	encoder := json.NewEncoder(tmpFile)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(data); err != nil {
-		return fmt.Errorf("error encoding JSON: %w", err)
-	}
-	if err := tmpFile.Sync(); err != nil {
-		return fmt.Errorf("error syncing to disk: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("error closing file: %w", err)
-	}
-
-	finalPath := filepath.Clean(filePath)
-	tmpName := tmpFile.Name()
-	if err := os.Rename(tmpName, finalPath); err != nil {
-		return fmt.Errorf("error atomically saving file: %w", err)
-	}
-	return nil
-}
+const playlistsPrefix = "/playlists/"
 
 type PlaylistData struct {
 	Name  string          `json:"name"`
 	Songs []metadata.Song `json:"songs"`
 }
 
-type StorageData struct {
-	Playlists []PlaylistData `json:"playlists"`
-}
-
-func Init() error {
-	dir, err := config.Dir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("error creating config directory: %w", err)
-	}
-	return nil
-}
-
-func SavePlaylists(pm *playlist.Manager) error {
+func SavePlaylists(ctx context.Context, store *Store, pm *playlist.Manager) error {
 	playlistNames := pm.List()
 	playlists := make([]PlaylistData, 0, len(playlistNames))
 	for _, name := range playlistNames {
@@ -83,65 +32,51 @@ func SavePlaylists(pm *playlist.Manager) error {
 		})
 	}
 
-	data := StorageData{Playlists: playlists}
-	filePath, err := config.PlaylistsPath()
+	for _, pl := range playlists {
+		data, err := json.Marshal(pl)
+		if err != nil {
+			return fmt.Errorf("failed to marshal playlist %s: %w", pl.Name, err)
+		}
+		key := playlistsPrefix + pl.Name
+		if err := store.Put(ctx, key, data); err != nil {
+			return fmt.Errorf("failed to save playlist %s: %w", pl.Name, err)
+		}
+	}
+
+	allPlaylists, err := store.GetAll(ctx, playlistsPrefix)
 	if err != nil {
 		return err
 	}
-	return WriteJSONAtomic(filePath, data)
+
+	savedNames := make(map[string]bool)
+	for _, pl := range playlists {
+		savedNames[pl.Name] = true
+	}
+
+	for key := range allPlaylists {
+		name := key[len(playlistsPrefix):]
+		if !savedNames[name] {
+			if err := store.Delete(ctx, key); err != nil {
+				logger.Warnf("failed to delete playlist %s: %v", name, err)
+			}
+		}
+	}
+
+	return nil
 }
 
-func LoadPlaylists(pm *playlist.Manager) error {
-	filePath, err := config.PlaylistsPath()
+func LoadPlaylists(ctx context.Context, store *Store, pm *playlist.Manager) error {
+	allData, err := store.GetAll(ctx, playlistsPrefix)
 	if err != nil {
 		return err
 	}
 
-	dir, err := config.Dir()
-	if err != nil {
-		return err
-	}
-
-	cleanPath := filepath.Clean(filePath)
-	relPath, err := filepath.Rel(dir, cleanPath)
-	if err != nil {
-		return fmt.Errorf("error computing relative path: %w", err)
-	}
-
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+	for _, data := range allData {
+		var pl PlaylistData
+		if err := json.Unmarshal(data, &pl); err != nil {
+			logger.Warnf("corrupted playlist data, skipping: %v", err)
+			continue
 		}
-		return fmt.Errorf("error opening config root: %w", err)
-	}
-
-	stat, err := root.Stat(relPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("error checking file: %w", err)
-	}
-	if stat.IsDir() {
-		return fmt.Errorf("path is a directory, not a file")
-	}
-
-	data, err := root.ReadFile(relPath)
-	if err != nil {
-		return fmt.Errorf("error reading playlists file: %w", err)
-	}
-	if len(data) == 0 {
-		logger.Warnf("playlists file is empty, starting with no playlists")
-		return nil
-	}
-
-	var storageData StorageData
-	if err := json.Unmarshal(data, &storageData); err != nil {
-		logger.Warnf("corrupted playlists file, resetting error=%v", err)
-		return nil
-	}
-	for _, pl := range storageData.Playlists {
 		if err := pm.Create(pl.Name); err != nil {
 			continue
 		}

@@ -33,6 +33,7 @@ import (
 	"github.com/p-society/raag/internal/library"
 	"github.com/p-society/raag/internal/logger"
 	"github.com/p-society/raag/internal/metadata"
+	"github.com/p-society/raag/internal/storage"
 	"github.com/p-society/raag/internal/transfer"
 	"github.com/spf13/viper"
 )
@@ -339,19 +340,27 @@ func (n *NetworkManager) verifyNonceUsed(nonce string) error {
 	return nil
 }
 
-func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string) (*NetworkManager, error) {
-	return newNetworkWithIdentity(cfg, v, lib, musicDir, nil)
+func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string, store *storage.Store) (*NetworkManager, error) {
+	return newNetworkWithIdentity(cfg, v, lib, musicDir, store, nil)
 }
 
-func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string, identity crypto.PrivKey) (*NetworkManager, error) {
+func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string, store *storage.Store, identity crypto.PrivKey) (*NetworkManager, error) {
 	logger.Debugf("Network config network=%v host=%s port=%d rendezvous=%s", cfg.Network, cfg.Host, cfg.Port, cfg.Rendezvous)
 
 	prvKey := identity
 	var err error
 	if prvKey == nil {
-		prvKey, err = loadOrGenerateIdentity()
-		if err != nil {
-			return nil, fmt.Errorf("failed to load identity: %w", err)
+		if store != nil {
+			identityStore := storage.NewIdentityStore(store, "")
+			prvKey, err = identityStore.LoadOrGenerate(context.Background())
+			if err != nil {
+				return nil, fmt.Errorf("failed to load identity: %w", err)
+			}
+		} else {
+			prvKey, err = loadOrGenerateIdentity()
+			if err != nil {
+				return nil, fmt.Errorf("failed to load identity: %w", err)
+			}
 		}
 	}
 

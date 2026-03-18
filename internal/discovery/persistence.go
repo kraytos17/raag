@@ -2,13 +2,13 @@ package discovery
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	appconfig "github.com/p-society/raag/internal/config"
-	"github.com/p-society/raag/internal/storage"
 )
 
 type PeerPersistence struct {
@@ -59,5 +59,34 @@ func (p *PeerPersistence) Save(peers []peer.AddrInfo) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
-	return storage.WriteJSONAtomic(p.peersFile, multiaddrs)
+
+	data, err := json.MarshalIndent(multiaddrs, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal peers: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp(dir, "peers-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer func() {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	if err := os.Rename(tmpFile.Name(), p.peersFile); err != nil {
+		return fmt.Errorf("failed to rename file: %w", err)
+	}
+
+	return nil
 }
