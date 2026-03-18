@@ -21,7 +21,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoreds"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
@@ -365,6 +367,17 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 	}
 
 	var opts []libp2p.Option
+
+	var ps peerstore.Peerstore
+	if store != nil {
+		ps, err = pstoreds.NewPeerstore(context.Background(), store.Peers, pstoreds.DefaultOpts())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create persistent peerstore: %w", err)
+		}
+		opts = append(opts, libp2p.Peerstore(ps))
+		logger.Debugf("Using persistent peerstore backed by Badger")
+	}
+
 	tcpListenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.Host, cfg.Port)
 	quicListenAddr := fmt.Sprintf("/ip4/%s/udp/%d/quic-v1", cfg.Host, cfg.Port)
 	wsListenAddr := fmt.Sprintf("/ip4/%s/tcp/%d/ws", cfg.Host, cfg.Port+1)
@@ -454,23 +467,17 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		maxPeers = constants.DefaultMaxPeers
 	}
 
-	identityKeyBytes, err := crypto.MarshalPrivateKey(prvKey)
-	if err != nil {
-		logger.Warnf("Failed to marshal identity key: %v", err)
-	}
-
 	discoveryMgr := discovery.NewManager(discovery.ManagerConfig{
-		Host:             host,
-		IdentityKeyBytes: identityKeyBytes,
-		AuthSecret:       cfg.AuthSecret,
-		TrackerURL:       cfg.TrackerURL,
-		MaxPeers:         maxPeers,
-		ListenHost:       cfg.Host,
-		Rendezvous:       cfg.Rendezvous,
-		DHTEnabled:       cfg.DHTEnabled,
-		BootstrapPeers:   cfg.BootstrapPeers,
-		MDNSEnabled:      cfg.MDNSEnabled,
-		MDNSServiceName:  cfg.MDNSServiceName,
+		Host:            host,
+		AuthSecret:      cfg.AuthSecret,
+		TrackerURL:      cfg.TrackerURL,
+		MaxPeers:        maxPeers,
+		ListenHost:      cfg.Host,
+		Rendezvous:      cfg.Rendezvous,
+		DHTEnabled:      cfg.DHTEnabled,
+		BootstrapPeers:  cfg.BootstrapPeers,
+		MDNSEnabled:     cfg.MDNSEnabled,
+		MDNSServiceName: cfg.MDNSServiceName,
 	})
 	nm := &NetworkManager{
 		host:            host,

@@ -5,13 +5,18 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/ipfs/go-datastore"
+	ds "github.com/ipfs/go-datastore"
+	ns "github.com/ipfs/go-datastore/namespace"
 	"github.com/ipfs/go-datastore/query"
+	dssync "github.com/ipfs/go-datastore/sync"
 	badger4 "github.com/ipfs/go-ds-badger4"
 )
 
 type Store struct {
-	ds *badger4.Datastore
+	ds     *badger4.Datastore
+	Peers  ds.Batching
+	Blocks ds.Batching
+	App    ds.Batching
 }
 
 func NewStore(dataDir string) (*Store, error) {
@@ -29,27 +34,32 @@ func NewStore(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("failed to open badger datastore: %w", err)
 	}
 
-	return &Store{ds: store}, nil
+	return &Store{
+		ds:     store,
+		Peers:  ns.Wrap(dssync.MutexWrap(store), ds.NewKey("/peers")),
+		Blocks: ns.Wrap(dssync.MutexWrap(store), ds.NewKey("/blocks")),
+		App:    ns.Wrap(dssync.MutexWrap(store), ds.NewKey("/app")),
+	}, nil
 }
 
 func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	if s.ds == nil {
 		return nil, fmt.Errorf("datastore not initialized")
 	}
-	return s.ds.Get(ctx, datastore.NewKey(key))
+	return s.ds.Get(ctx, ds.NewKey(key))
 }
 
 func (s *Store) Put(ctx context.Context, key string, value []byte) error {
 	if s.ds == nil {
 		return fmt.Errorf("datastore not initialized")
 	}
-	return s.ds.Put(ctx, datastore.NewKey(key), value)
+	return s.ds.Put(ctx, ds.NewKey(key), value)
 }
 
 func (s *Store) GetBool(ctx context.Context, key string) (bool, error) {
 	data, err := s.Get(ctx, key)
 	if err != nil {
-		if err == datastore.ErrNotFound {
+		if err == ds.ErrNotFound {
 			return false, nil
 		}
 		return false, err
@@ -71,7 +81,7 @@ func (s *Store) PutBool(ctx context.Context, key string, value bool) error {
 func (s *Store) GetString(ctx context.Context, key string) (string, error) {
 	data, err := s.Get(ctx, key)
 	if err != nil {
-		if err == datastore.ErrNotFound {
+		if err == ds.ErrNotFound {
 			return "", nil
 		}
 		return "", err
@@ -87,14 +97,14 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	if s.ds == nil {
 		return fmt.Errorf("datastore not initialized")
 	}
-	return s.ds.Delete(ctx, datastore.NewKey(key))
+	return s.ds.Delete(ctx, ds.NewKey(key))
 }
 
 func (s *Store) Has(ctx context.Context, key string) (bool, error) {
 	if s.ds == nil {
 		return false, fmt.Errorf("datastore not initialized")
 	}
-	return s.ds.Has(ctx, datastore.NewKey(key))
+	return s.ds.Has(ctx, ds.NewKey(key))
 }
 
 func (s *Store) GetAll(ctx context.Context, prefix string) (map[string][]byte, error) {

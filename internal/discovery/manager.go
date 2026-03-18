@@ -29,7 +29,6 @@ type Manager struct {
 	ctx             context.Context
 	dht             *dht.IpfsDHT
 	discovery       *routing.RoutingDiscovery
-	persistence     *PeerPersistence
 	tracker         *TrackerClient
 	maxPeers        int
 	trackerURL      string
@@ -62,37 +61,29 @@ type Manager struct {
 }
 
 type ManagerConfig struct {
-	Host             host.Host
-	TrackerURL       string
-	IdentityKeyBytes []byte
-	AuthSecret       string
-	MaxPeers         int
-	ListenHost       string
-	Rendezvous       string
-	DHTEnabled       bool
-	BootstrapPeers   []string
-	MDNSEnabled      bool
-	MDNSServiceName  string
+	Host            host.Host
+	TrackerURL      string
+	AuthSecret      string
+	MaxPeers        int
+	ListenHost      string
+	Rendezvous      string
+	DHTEnabled      bool
+	BootstrapPeers  []string
+	MDNSEnabled     bool
+	MDNSServiceName string
 }
 
 func NewManager(cfg ManagerConfig) *Manager {
 	h := cfg.Host
 	var authKeyPair ed25519.PrivateKey
 	var err error
-	// Priority: AuthSecret > IdentityKey > Random
+	// Priority: AuthSecret > Random
 	if cfg.AuthSecret != "" {
 		authKeyPair, err = auth.DeriveKey([]byte(cfg.AuthSecret), "raag-secret-v1")
 		if err != nil {
 			logger.Warnf("Failed to derive auth key from secret: %v", err)
 		} else {
 			logger.Debugf("Auth enabled via shared secret")
-		}
-	} else if len(cfg.IdentityKeyBytes) > 0 {
-		authKeyPair, err = auth.DeriveKey(cfg.IdentityKeyBytes, "raag-identity-v1")
-		if err != nil {
-			logger.Warnf("Failed to derive auth key from identity: %v", err)
-		} else {
-			logger.Debugf("Auth enabled via identity key")
 		}
 	}
 	if authKeyPair == nil {
@@ -111,7 +102,6 @@ func NewManager(cfg ManagerConfig) *Manager {
 	}
 	return &Manager{
 		host:                    h,
-		persistence:             NewPeerPersistence(),
 		tracker:                 NewTrackerClient(cfg.TrackerURL),
 		maxPeers:                cfg.MaxPeers,
 		trackerURL:              cfg.TrackerURL,
@@ -301,9 +291,6 @@ func (m *Manager) LogNetworkState() {
 
 func (m *Manager) Start(ctx context.Context) error {
 	m.ctx = ctx
-	if err := m.loadPersistedPeers(); err != nil {
-		logger.Errorf("Failed to load persisted peers error=%v", err)
-	}
 
 	logger.Debugf("Starting peer discovery from tracker...")
 	if err := m.discoverFromTracker(ctx); err != nil {
@@ -646,21 +633,6 @@ func (m *Manager) AddBootstrapPeer(ctx context.Context, peerAddr peer.AddrInfo) 
 	return nil
 }
 
-func (m *Manager) loadPersistedPeers() error {
-	peers, err := m.persistence.Load()
-	if err != nil {
-		logger.Warnf("Could not load persisted peers error=%v", err)
-		return nil
-	}
-
-	for _, p := range peers {
-		m.host.Peerstore().AddAddrs(p.ID, p.Addrs, peerstore.PermanentAddrTTL)
-	}
-
-	logger.Debugf("Loaded persisted peers count=%d", len(peers))
-	return nil
-}
-
 func (m *Manager) discoverFromTrackerWithRetry(ctx context.Context) error {
 	retryDelay := 1 * time.Second
 	maxRetryDelay := m.maxRetryDelay
@@ -766,7 +738,6 @@ func (m *Manager) savePeer(p peer.AddrInfo, skipAutoConnect bool) {
 		}
 
 		m.host.Peerstore().AddAddrs(p.ID, p.Addrs, peerstore.PermanentAddrTTL)
-		m.persistPeers()
 		logger.Debugf("Saved new peer peer=%s", p.ID)
 		if !skipAutoConnect && !alreadyConnected {
 			m.tryConnectToPeer(p)
@@ -844,30 +815,6 @@ func (m *Manager) GetAllPeers() []peer.AddrInfo {
 		}
 	}
 	return peersList
-}
-
-func (m *Manager) persistPeers() {
-	var peersList []peer.AddrInfo
-	peerIDs := m.host.Peerstore().Peers()
-	for _, pid := range peerIDs {
-		if pid == m.host.ID() {
-			continue
-		}
-
-		addrs := m.host.Peerstore().Addrs(pid)
-		if len(addrs) > 0 {
-			peersList = append(peersList, peer.AddrInfo{ID: pid, Addrs: addrs})
-		}
-	}
-	if err := m.persistence.Save(peersList); err != nil {
-		logger.Errorf("Failed to save peers to disk error=%v", err)
-	} else {
-		logger.Debugf("Persisted peers to disk count=%d", len(peersList))
-	}
-
-	if m.onPeerSave != nil {
-		m.onPeerSave(peersList)
-	}
 }
 
 func (m *Manager) connectBootstrapPeers(ctx context.Context) error {
