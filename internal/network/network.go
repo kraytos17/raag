@@ -505,9 +505,6 @@ func (n *NetworkManager) Connect(ctx context.Context, addrInfo peer.AddrInfo) er
 	}
 
 	logger.Debugf("Connected to peer peer_id=%s", addrInfo.ID)
-	if n.discovery != nil {
-		n.discovery.RefreshTrackerRegistration(ctx)
-	}
 	return nil
 }
 

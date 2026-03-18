@@ -64,7 +64,6 @@ func networkStatusCommand() *cobra.Command {
 			logger.Infof("Mode: %s", result.State.Mode)
 			logger.Infof("DHT: enabled=%v peers=%d", result.State.DHTEnabled, result.State.DHTPeers)
 			logger.Infof("mDNS: enabled=%v discovered=%d", result.State.MDNSEnabled, result.State.MDNSDiscovered)
-			logger.Infof("Tracker: %s (%s)", result.State.TrackerURL, result.State.TrackerStatus)
 			logger.Infof("")
 			logger.Infof("=== Connections ===")
 			logger.Infof("Connected: %d", len(result.State.ConnectedPeers))

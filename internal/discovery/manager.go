@@ -23,32 +23,24 @@ import (
 )
 
 type Manager struct {
-	host            host.Host
-	ctx             context.Context
-	dht             *dht.IpfsDHT
-	discovery       *routing.RoutingDiscovery
-	tracker         *TrackerClient
-	maxPeers        int
-	trackerURL      string
-	listenHost      string
-	rendezvous      string
-	dhtEnabled      bool
-	bootstrapPeers  []string
-	mdnsEnabled     bool
-	mdnsServiceName string
-	pubsub          *PubSubManager
-	peerStore       *storage.PeerStore
-	networkManager  interface {
-		NotifyPeerConnected(peerID peer.ID, addr string)
-	}
+	host                    host.Host
+	ctx                     context.Context
+	dht                     *dht.IpfsDHT
+	discovery               *routing.RoutingDiscovery
+	maxPeers                int
+	listenHost              string
+	rendezvous              string
+	dhtEnabled              bool
+	bootstrapPeers          []string
+	mdnsEnabled             bool
+	mdnsServiceName         string
+	pubsub                  *PubSubManager
+	peerStore               *storage.PeerStore
 	onPeerSave              func(peers []peer.AddrInfo)
 	mdnsPeerCount           uint64
 	mdnsService             mdns.Service
 	mdnsNotifee             *mdnsNotifee
 	heartbeatEvery          time.Duration
-	refreshEvery            time.Duration
-	retryDelay              time.Duration
-	maxRetryDelay           time.Duration
 	mdnsRetryDelay          time.Duration
 	lastBootstrap           time.Time
 	bootstrapThrottle       time.Duration
@@ -59,7 +51,6 @@ type Manager struct {
 
 type ManagerConfig struct {
 	Host            host.Host
-	TrackerURL      string
 	AuthSecret      string
 	MaxPeers        int
 	ListenHost      string
@@ -72,18 +63,14 @@ type ManagerConfig struct {
 }
 
 func NewManager(cfg ManagerConfig) *Manager {
-	h := cfg.Host
-
 	bootstrapPeers := cfg.BootstrapPeers
 	if len(bootstrapPeers) == 0 {
 		logger.Debugf("Using default IPFS bootstrap peers for DHT")
 		bootstrapPeers = constants.DefaultBootstrapPeers
 	}
 	return &Manager{
-		host:                    h,
-		tracker:                 NewTrackerClient(cfg.TrackerURL),
+		host:                    cfg.Host,
 		maxPeers:                cfg.MaxPeers,
-		trackerURL:              cfg.TrackerURL,
 		listenHost:              cfg.ListenHost,
 		rendezvous:              cfg.Rendezvous,
 		dhtEnabled:              cfg.DHTEnabled,
@@ -92,21 +79,11 @@ func NewManager(cfg ManagerConfig) *Manager {
 		mdnsServiceName:         cfg.MDNSServiceName,
 		peerStore:               cfg.PeerStore,
 		heartbeatEvery:          constants.TrackerHeartbeatInterval,
-		refreshEvery:            constants.TrackerRefreshInterval,
-		retryDelay:              constants.TrackerRetryInitialDelay,
-		maxRetryDelay:           constants.TrackerRetryMaxDelay,
 		mdnsRetryDelay:          constants.MDNSRetryInitialDelay,
 		lastBootstrap:           time.Now(),
 		bootstrapThrottle:       constants.DHTBootstrapThrottle,
 		peerCountSinceBootstrap: 0,
 	}
-}
-
-func (m *Manager) SetNetworkManager(nm interface {
-	NotifyPeerConnected(peerID peer.ID, addr string)
-},
-) {
-	m.networkManager = nm
 }
 
 func (m *Manager) SetOnPeerSave(callback func(peers []peer.AddrInfo)) {
@@ -116,15 +93,6 @@ func (m *Manager) SetOnPeerSave(callback func(peers []peer.AddrInfo)) {
 func (m *Manager) SetTestIntervals(heartbeat, refresh, retryDelay, maxRetryDelay time.Duration) {
 	if heartbeat > 0 {
 		m.heartbeatEvery = heartbeat
-	}
-	if refresh > 0 {
-		m.refreshEvery = refresh
-	}
-	if retryDelay > 0 {
-		m.retryDelay = retryDelay
-	}
-	if maxRetryDelay > 0 {
-		m.maxRetryDelay = maxRetryDelay
 	}
 }
 
@@ -141,8 +109,6 @@ type NetworkState struct {
 	SelfID         string     `json:"self_id"`
 	ListenAddr     string     `json:"listen_addr"`
 	Mode           string     `json:"mode"`
-	TrackerURL     string     `json:"tracker_url"`
-	TrackerStatus  string     `json:"tracker_status"`
 	DHTEnabled     bool       `json:"dht_enabled"`
 	DHTPeers       int        `json:"dht_peers"`
 	MDNSEnabled    bool       `json:"mdns_enabled"`
@@ -159,8 +125,6 @@ func (m *Manager) GetNetworkState() NetworkState {
 		SelfID:         m.host.ID().String(),
 		ListenAddr:     "",
 		Mode:           "networked",
-		TrackerURL:     m.trackerURL,
-		TrackerStatus:  "unknown",
 		DHTEnabled:     m.dhtEnabled,
 		DHTPeers:       0,
 		MDNSEnabled:    m.mdnsEnabled && m.listenHost != "127.0.0.1" && m.listenHost != "localhost",
@@ -238,7 +202,6 @@ func (m *Manager) LogNetworkState() {
 	logger.Infof("Mode: %s", state.Mode)
 
 	logger.Infof("--- Discovery ---")
-	logger.Infof("Tracker: %s", state.TrackerURL)
 	logger.Infof("DHT: enabled=%v (peers=%d)", state.DHTEnabled, state.DHTPeers)
 	logger.Infof("mDNS: enabled=%v (discovered=%d)", state.MDNSEnabled, state.MDNSDiscovered)
 
@@ -266,33 +229,12 @@ func (m *Manager) LogNetworkState() {
 func (m *Manager) Start(ctx context.Context) error {
 	m.ctx = ctx
 
-	logger.Debugf("Starting peer discovery from tracker...")
-	if err := m.discoverFromTracker(ctx); err != nil {
-		logger.Warnf("Initial tracker discovery failed error=%v", err)
-		go func() {
-			time.Sleep(2 * time.Second)
-			logger.Debugf("Retrying initial tracker discovery...")
-			if err := m.discoverFromTracker(ctx); err != nil {
-				logger.Debugf("Retry tracker discovery failed error=%v", err)
-			}
-		}()
-	}
-
 	if err := m.connectBootstrapPeers(ctx); err != nil {
 		logger.Warnf("Failed to connect configured bootstrap peers error=%v", err)
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		m.runTrackerRegistrationLoop(ctx)
-		return nil
-	})
-	g.Go(func() error {
-		m.runTrackerRefreshLoop(ctx)
-		return nil
-	})
 
-	// mDNS is enabled if: explicitly enabled in config AND not in localhost mode
 	mdnsCanStart := m.mdnsEnabled && m.listenHost != "127.0.0.1" && m.listenHost != "localhost"
 	if m.mdnsEnabled && !mdnsCanStart {
 		if m.listenHost == "127.0.0.1" || m.listenHost == "localhost" {
@@ -318,12 +260,11 @@ func (m *Manager) Start(ctx context.Context) error {
 		return nil
 	}
 
-	logger.Debugf("Initializing DHT with existing peer connections...")
+	logger.Debugf("Initializing DHT...")
 	if err := m.initDHT(ctx); err != nil {
 		logger.Errorf("Failed to initialize DHT error=%v", err)
 	}
 
-	m.populateDHTFromConnectedPeers()
 	if err := m.initPubSub(ctx); err != nil {
 		logger.Warnf("Failed to initialize PubSub: %v", err)
 	} else {
@@ -342,21 +283,11 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.advertisePeriodically(ctx)
 		return nil
 	})
-	g.Go(func() error {
-		m.refreshDHTFromTrackerPeriodically(ctx)
-		return nil
-	})
 
 	if err := g.Wait(); err != nil {
 		logger.Warnf("Background service error: %v", err)
 	}
 	return nil
-}
-
-func (m *Manager) refreshRegistration(ctx context.Context) {
-	if err := m.tryRefreshRegistration(ctx); err != nil {
-		logger.Errorf("Failed to register with tracker error=%v", err)
-	}
 }
 
 func (m *Manager) selectAdvertisedAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
@@ -410,7 +341,7 @@ func filterReachableAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr
 		}
 	}
 	if len(filtered) == 0 {
-		logger.Debugf("No public addresses available (NAT detected), will use observed IP if tracker available")
+		logger.Debugf("No public addresses available (NAT detected)")
 		return nil
 	}
 	return filtered
@@ -433,114 +364,6 @@ func prioritizeAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 	return result
 }
 
-func (m *Manager) RefreshTrackerRegistration(ctx context.Context) {
-	m.refreshRegistration(ctx)
-}
-
-func (m *Manager) runTrackerRegistrationLoop(ctx context.Context) {
-	if m.trackerURL == "" {
-		return
-	}
-	if err := m.refreshRegistrationWithRetry(ctx); err != nil {
-		logger.Warnf("Initial tracker registration failed error=%v", err)
-	}
-}
-
-func (m *Manager) runTrackerRefreshLoop(ctx context.Context) {
-	if m.trackerURL == "" {
-		return
-	}
-
-	ticker := time.NewTicker(m.refreshEvery)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := m.discoverFromTrackerWithRetry(ctx); err != nil {
-				logger.Warnf("Tracker peer refresh failed error=%v", err)
-			}
-		}
-	}
-}
-
-func (m *Manager) refreshRegistrationWithRetry(ctx context.Context) error {
-	if m.trackerURL == "" {
-		return nil
-	}
-
-	retryDelay := m.retryDelay
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		registerCtx, cancel := context.WithTimeout(ctx, constants.HTTPClientTimeout)
-		err := m.tryRefreshRegistration(registerCtx)
-		cancel()
-		if err == nil {
-			return nil
-		}
-
-		logger.Debugf("Tracker registration failed, retrying error=%v retryDelay=%v", err, retryDelay)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(retryDelay):
-		}
-
-		retryDelay *= 2
-		if retryDelay > m.maxRetryDelay {
-			retryDelay = m.maxRetryDelay
-		}
-	}
-}
-
-func (m *Manager) tryRefreshRegistration(ctx context.Context) error {
-	if m.trackerURL == "" {
-		return nil
-	}
-
-	addrs := m.host.Addrs()
-	if len(addrs) == 0 {
-		return fmt.Errorf("host has no listening addresses")
-	}
-
-	advertisedAddrs := m.selectAdvertisedAddresses(addrs)
-	if len(advertisedAddrs) == 0 {
-		logger.Debugf("No public addresses, letting tracker use observed IP")
-	}
-
-	addrWithPeerID := make([]string, 0, len(advertisedAddrs))
-	for _, addr := range advertisedAddrs {
-		addrWithPeerID = append(addrWithPeerID, addr.Encapsulate(multiaddr.StringCast("/p2p/"+m.host.ID().String())).String())
-	}
-
-	peerID := m.host.ID().String()
-	if err := m.tracker.RegisterPeer(ctx, addrWithPeerID, peerID); err != nil {
-		return err
-	}
-	logger.Infof("Registered with tracker peer_id=%s addrs=%d", peerID, len(addrWithPeerID))
-	return nil
-}
-
-func (m *Manager) UpdateTrackerURL(ctx context.Context, newURL string) {
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
-
-	if newURL == m.trackerURL {
-		return
-	}
-
-	logger.Infof("Updating tracker URL from=%s to=%s", m.trackerURL, newURL)
-	m.trackerURL = newURL
-	m.tracker = NewTrackerClient(newURL)
-}
-
 func (m *Manager) AddBootstrapPeer(ctx context.Context, peerAddr peer.AddrInfo) error {
 	if !m.dhtEnabled {
 		return fmt.Errorf("DHT discovery is disabled")
@@ -559,63 +382,6 @@ func (m *Manager) AddBootstrapPeer(ctx context.Context, peerAddr peer.AddrInfo) 
 
 	m.savePeer(peerAddr, false)
 	return nil
-}
-
-func (m *Manager) discoverFromTrackerWithRetry(ctx context.Context) error {
-	retryDelay := 1 * time.Second
-	maxRetryDelay := m.maxRetryDelay
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if err := m.discoverFromTracker(ctx); err != nil {
-				logger.Warnf("Tracker discovery failed, retrying error=%v retryDelay=%v", err, retryDelay)
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(retryDelay):
-				}
-				retryDelay = min(retryDelay*2, maxRetryDelay)
-			} else {
-				return nil
-			}
-		}
-	}
-}
-
-func (m *Manager) discoverFromTracker(ctx context.Context) error {
-	if m.trackerURL == "" {
-		return nil // No tracker configured
-	}
-
-	peers, err := m.tracker.FetchPeers(ctx)
-	if err != nil {
-		return err
-	}
-
-	logger.Debugf("Tracker returned peers count=%d", len(peers))
-	for _, p := range peers {
-		if p.ID == m.host.ID() {
-			continue
-		}
-
-		m.savePeer(p, true)
-		if err := m.host.Connect(ctx, p); err != nil {
-			logger.Warnf("Failed to connect to tracker peer peer=%s error=%v", p.ID, err)
-		} else {
-			logger.Infof("Connected to tracker peer peer=%s", p.ID)
-			m.addAsBootstrap(ctx)
-		}
-	}
-	return nil
-}
-
-func (m *Manager) addAsBootstrap(ctx context.Context) {
-	if m.dht == nil {
-		return
-	}
-	m.throttledBootstrap(ctx)
 }
 
 func (m *Manager) throttledBootstrap(ctx context.Context) {
@@ -725,18 +491,10 @@ func (m *Manager) connectWithRetry(p peer.AddrInfo) {
 		logger.Infof("Connected to discovered peer peer=%s", p.ID)
 		m.throttledBootstrap(m.ctx)
 		cancel()
-		if m.networkManager != nil {
-			addr := ""
-			if len(p.Addrs) > 0 {
-				addr = p.Addrs[0].String()
-			}
-			m.networkManager.NotifyPeerConnected(p.ID, addr)
-		}
 		return
 	}
 }
 
-// GetAllPeers returns all known peers from the peerstore
 func (m *Manager) GetAllPeers() []peer.AddrInfo {
 	peerIDs := m.host.Peerstore().Peers()
 	peersList := make([]peer.AddrInfo, 0, len(peerIDs))
@@ -804,21 +562,8 @@ func (m *Manager) initDHT(ctx context.Context) error {
 		logger.Debugf("DHT seeded with persisted peers count=%d", len(allPeers)-1)
 	}
 
-	trackerPeers := m.fetchTrackerPeersForDHT(ctx)
-	for _, p := range trackerPeers {
-		if p.ID == m.host.ID() {
-			continue
-		}
-
-		m.host.Peerstore().AddAddrs(p.ID, p.Addrs, 24*time.Hour)
-		bootstrapPeers = append(bootstrapPeers, p)
-	}
-	if len(trackerPeers) > 0 {
-		logger.Debugf("DHT seeded with tracker peers count=%d", len(trackerPeers))
-	}
-
 	var opts []dht.Option
-	opts = append(opts, dht.Mode(dht.ModeAuto))
+	opts = append(opts, dht.Mode(dht.ModeAutoServer))
 	if len(bootstrapPeers) > 0 {
 		opts = append(opts, dht.BootstrapPeers(bootstrapPeers...))
 		logger.Debugf("DHT initialized with bootstrap peers count=%d", len(bootstrapPeers))
@@ -839,26 +584,6 @@ func (m *Manager) initDHT(ctx context.Context) error {
 	logger.Debugf("DHT initialized successfully")
 	logger.Debugf("DHT routing table size (initial) size=%d", m.dht.RoutingTable().Size())
 	return nil
-}
-
-func (m *Manager) fetchTrackerPeersForDHT(ctx context.Context) []peer.AddrInfo {
-	if m.tracker == nil || m.trackerURL == "" {
-		return nil
-	}
-
-	peers, err := m.tracker.FetchPeers(ctx)
-	if err != nil {
-		logger.Debugf("Failed to fetch tracker peers for DHT: %v", err)
-		return nil
-	}
-
-	var result []peer.AddrInfo
-	for _, p := range peers {
-		if p.ID != m.host.ID() {
-			result = append(result, p)
-		}
-	}
-	return result
 }
 
 func (m *Manager) waitForPeers(ctx context.Context, timeout time.Duration) bool {
@@ -884,24 +609,6 @@ func (m *Manager) waitForPeers(ctx context.Context, timeout time.Duration) bool 
 	return false
 }
 
-func (m *Manager) populateDHTFromConnectedPeers() {
-	if m.dht == nil {
-		return
-	}
-
-	peers := m.host.Network().Peers()
-	count := 0
-	for _, peerID := range peers {
-		if peerID == m.host.ID() {
-			continue
-		}
-		count++
-	}
-	if count > 0 {
-		m.throttledBootstrap(m.ctx)
-	}
-}
-
 func (m *Manager) advertisePeriodically(ctx context.Context) {
 	ticker := time.NewTicker(constants.DHTAdvertisementInterval)
 	defer ticker.Stop()
@@ -915,44 +622,6 @@ func (m *Manager) advertisePeriodically(ctx context.Context) {
 				_, _ = m.discovery.Advertise(ctx, m.rendezvous)
 			}
 		}
-	}
-}
-
-func (m *Manager) refreshDHTFromTrackerPeriodically(ctx context.Context) {
-	ticker := time.NewTicker(constants.DHTTrackerRefreshInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			m.refreshDHTFromTracker(ctx)
-		}
-	}
-}
-
-func (m *Manager) refreshDHTFromTracker(ctx context.Context) {
-	if m.dht == nil {
-		return
-	}
-
-	peers := m.fetchTrackerPeersForDHT(ctx)
-	if len(peers) == 0 {
-		return
-	}
-
-	added := 0
-	for _, p := range peers {
-		if p.ID == m.host.ID() {
-			continue
-		}
-		m.host.Peerstore().AddAddrs(p.ID, p.Addrs, 24*time.Hour)
-		added++
-	}
-	if added > 0 {
-		m.throttledBootstrap(ctx)
-		logger.Debugf("Refreshed DHT with tracker peers count=%d", added)
 	}
 }
 
@@ -1005,7 +674,6 @@ func (m *Manager) discoverViaDHT(ctx context.Context) {
 	logger.Debugf("DHT: Advertisement complete")
 	logger.Debugf("DHT: Waiting for peer connections...")
 	hasPeers := m.waitForPeers(ctx, constants.DHTWaitForPeersTimeout)
-	m.populateDHTFromConnectedPeers()
 	if !hasPeers {
 		logger.Debugf("DHT: No peers connected yet, starting discovery anyway")
 	}
@@ -1195,7 +863,6 @@ func (m *Manager) initPubSub(ctx context.Context) error {
 	return psm.Start(ctx)
 }
 
-// SetSongAnnounceCallback sets the callback for when a peer announces a new song
 func (m *Manager) SetSongAnnounceCallback(cb func(peer.ID, LibraryAnnounceMessage)) {
 	m.pendingSongCallback = cb
 	if m.pubsub != nil {
@@ -1203,7 +870,6 @@ func (m *Manager) SetSongAnnounceCallback(cb func(peer.ID, LibraryAnnounceMessag
 	}
 }
 
-// PublishSongAnnounce broadcasts a song addition/removal to the network
 func (m *Manager) PublishSongAnnounce(action string, song SongInfo) {
 	if m.pubsub == nil || m.ctx == nil {
 		return
@@ -1211,8 +877,6 @@ func (m *Manager) PublishSongAnnounce(action string, song SongInfo) {
 	m.pubsub.PublishLibraryAnnounce(m.ctx, action, song)
 }
 
-// DHT returns the underlying *dht.IpfsDHT, which implements routing.Routing.
-// Returns nil if DHT has not been initialized yet.
 func (m *Manager) DHT() *dht.IpfsDHT {
 	return m.dht
 }
