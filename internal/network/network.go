@@ -282,51 +282,10 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		}
 
 		opts = append(opts, libp2p.EnableRelay())
-		if cfg.ForceRelay {
-			logger.Infof("Force relay mode enabled - skipping hole punching, using relay for all connections")
-		} else {
-			opts = append(opts, libp2p.EnableHolePunching())
-			opts = append(opts, libp2p.NATPortMap())
-			opts = append(opts, libp2p.EnableNATService())
-			logger.Debugf("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
-		}
-
-		relayAddrs := cfg.RelayAddress
-		if relayAddrs == "" && cfg.ForceRelay {
-			logger.Infof("Using default public relays for force-relay mode")
-		}
-		if relayAddrs != "" {
-			ma, err := multiaddr.NewMultiaddr(relayAddrs)
-			if err != nil {
-				logger.Warnf("Failed to parse relay address: %v", err)
-			} else {
-				info, err := peer.AddrInfoFromP2pAddr(ma)
-				if err != nil {
-					logger.Warnf("Failed to parse relay address: %v", err)
-				} else {
-					opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{*info}))
-					logger.Infof("Auto-relay enabled with custom relay: %s", relayAddrs)
-				}
-			}
-		} else if cfg.ForceRelay {
-			var relayInfos []peer.AddrInfo
-			for _, addr := range constants.DefaultRelayAddrs {
-				ma, err := multiaddr.NewMultiaddr(addr)
-				if err != nil {
-					continue
-				}
-
-				info, err := peer.AddrInfoFromP2pAddr(ma)
-				if err != nil {
-					continue
-				}
-				relayInfos = append(relayInfos, *info)
-			}
-			if len(relayInfos) > 0 {
-				opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays(relayInfos))
-				logger.Infof("Auto-relay enabled with %d default public relays", len(relayInfos))
-			}
-		}
+		opts = append(opts, libp2p.EnableHolePunching())
+		opts = append(opts, libp2p.NATPortMap())
+		opts = append(opts, libp2p.EnableNATService())
+		logger.Debugf("NAT traversal enabled: circuit relay, hole punching, UPnP, AutoNAT")
 	} else {
 		logger.Debugf("Using offline mode with limited transports")
 		opts = append(opts, libp2p.DefaultTransports)
@@ -354,7 +313,6 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 	discoveryMgr := discovery.NewManager(discovery.ManagerConfig{
 		Host:            host,
 		AuthSecret:      cfg.AuthSecret,
-		TrackerURL:      cfg.TrackerURL,
 		MaxPeers:        maxPeers,
 		ListenHost:      cfg.Host,
 		Rendezvous:      cfg.Rendezvous,
@@ -838,13 +796,6 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 
 	logger.Debugf("Song data saved bytes_written=%d", bytesWritten)
 	logger.Infof("Successfully received and saved song title=%s peer_id=%s file_path=%s", meta.Title, peerID, filePath)
-}
-
-// UpdateTrackerURL updates the tracker URL for discovery
-func (n *NetworkManager) UpdateTrackerURL(ctx context.Context, newURL string) {
-	if n.discovery != nil {
-		n.discovery.UpdateTrackerURL(ctx, newURL)
-	}
 }
 
 // AddBootstrapPeer adds a bootstrap peer to the discovery system

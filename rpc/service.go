@@ -142,15 +142,6 @@ func (s *DaemonService) Disconnect(args *DisconnectArgs, result *EmptyResult) er
 	return s.app.NetMgr.Disconnect(peerID)
 }
 
-type TrackerArgs struct {
-	URL string `json:"url"`
-}
-
-func (s *DaemonService) UpdateTracker(args *TrackerArgs, result *EmptyResult) error {
-	s.app.NetMgr.UpdateTrackerURL(s.ctx, args.URL)
-	return nil
-}
-
 type BootstrapArgs struct {
 	Multiaddr string `json:"multiaddr"`
 }
@@ -458,7 +449,6 @@ func (s *DaemonService) ConfigGet(_ *EmptyArgs, result *ConfigGetResult) error {
 		"host":       cfg.Host,
 		"port":       cfg.Port,
 		"log_level":  cfg.LogLevel,
-		"tracker":    cfg.TrackerURL,
 	}
 	return nil
 }

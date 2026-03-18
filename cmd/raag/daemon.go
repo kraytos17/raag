@@ -14,8 +14,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var daemonTrackerURL string
-
 func daemonCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -26,13 +24,11 @@ The daemon maintains live peer connections and exposes a Unix socket
 for fast CLI queries. Use 'raag peers list' and other commands to query.
 
 Examples:
-  raag daemon --tracker http://localhost:8080
-  raag daemon --tracker http://raag-production.up.railway.app`,
+  raag daemon --network`,
 		Run: func(cmd *cobra.Command, args []string) {
 			runDaemon(cmd)
 		},
 	}
-	cmd.Flags().StringVar(&daemonTrackerURL, "tracker", "", "Tracker URL")
 	return cmd
 }
 
@@ -64,17 +60,8 @@ func runDaemon(cmd *cobra.Command) {
 	if networkFlag := cmd.Flags().Lookup("network"); networkFlag != nil && networkFlag.Value.String() == "true" {
 		cfg.Network = true
 	}
-	if forceRelayFlag := cmd.Flags().Lookup("force-relay"); forceRelayFlag != nil && forceRelayFlag.Value.String() == "true" {
-		cfg.ForceRelay = true
-	}
 	if logLevel, _ := cmd.Flags().GetString("log-level"); logLevel == "" {
 		logger.SetLevel(cfg.LogLevel)
-	}
-	if daemonTrackerURL != "" {
-		cfg.TrackerURL = daemonTrackerURL
-		if err := config.SaveConfig(v, cfg); err != nil {
-			logger.Warnf("failed to save config: %v", err)
-		}
 	}
 
 	a, err := app.NewApp(v, cfg)

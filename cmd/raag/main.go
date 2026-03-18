@@ -37,7 +37,6 @@ func main() {
 	rootCmd.PersistentFlags().String("data-dir", "", "Directory for Badger datastore (default: ~/.config/raag/data)")
 	rootCmd.PersistentFlags().Bool("network", true, "Enable network mode for peer discovery")
 	rootCmd.PersistentFlags().Bool("tui", false, "Start in TUI mode")
-	rootCmd.PersistentFlags().String("tracker", constants.DefaultTrackerURL, "Centralized tracker URL for peer discovery")
 	rootCmd.PersistentFlags().Int("port", constants.DefaultPort, "Node listen port (use 0 for random)")
 	rootCmd.PersistentFlags().Bool("dht", true, "Enable DHT discovery (default enabled)")
 	rootCmd.PersistentFlags().Bool("mdns", true, "Enable mDNS local network discovery (default enabled)")
@@ -48,9 +47,7 @@ func main() {
 	rootCmd.PersistentFlags().String("rendezvous", constants.DefaultRendezvous, "Unique string to identify Raag nodes")
 	rootCmd.PersistentFlags().Bool("json", false, "Output logs in JSON format")
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().String("auth-secret", "", "Shared secret for tracker authentication")
-	rootCmd.PersistentFlags().Bool("force-relay", false, "Force all connections through relay (skip hole punching, works behind NAT)")
-	rootCmd.PersistentFlags().String("relay", "", "Relay server address (default: use public relays)")
+	rootCmd.PersistentFlags().String("auth-secret", "", "Shared secret for PSK authentication")
 
 	rootCmd.AddCommand(playCommand())
 	rootCmd.AddCommand(pauseCommand())

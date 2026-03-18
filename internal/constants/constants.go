@@ -13,13 +13,6 @@ const (
 	// DefaultHTTPPort is the default HTTP API port
 	DefaultHTTPPort = 8080
 
-	// DefaultTrackerURL is the default tracker URL for peer discovery (fallback)
-	// Can be overridden via TRACKER_URL environment variable or --tracker flag
-	DefaultTrackerURL = ""
-
-	// EnvTrackerURL is the environment variable name for tracker URL
-	EnvTrackerURL = "TRACKER_URL"
-
 	// EnvAuthSecret is the environment variable name for shared auth secret
 	EnvAuthSecret = "AUTH_SECRET"
 )
@@ -31,14 +24,6 @@ var DefaultBootstrapPeers = []string{
 	"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
 	"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
 	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-}
-
-// DefaultRelayAddrs are public libp2p relay nodes for NAT traversal
-// Used when --force-relay is enabled
-var DefaultRelayAddrs = []string{
-	"/ip4/147.75.87.27/tcp/4001/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-	"/ip4/147.75.80.110/tcp/4001/p2p/QmbFgm5zan8P6eWWmeyfncR5feYEMPbht5b1FW1C37aQ7y",
-	"/ip4/147.75.70.221/tcp/4001/p2p/Qme8g49gm3q4Acp7xWBKg3nAa9fxZ1YmyDJdyGgoG6LsXh",
 }
 
 // Peer Discovery

@@ -28,7 +28,6 @@ func peersCommand() *cobra.Command {
 	cmd.AddCommand(peersInfoCommand())
 	cmd.AddCommand(peersConnectCommand())
 	cmd.AddCommand(peersDisconnectCommand())
-	cmd.AddCommand(peersTrackerCommand())
 	cmd.AddCommand(peersBootstrapCommand())
 	return cmd
 }
@@ -119,19 +118,6 @@ func peersDisconnectCommand() *cobra.Command {
 			var result rpc.EmptyResult
 			invokeRPC("DaemonService.Disconnect", &rpc.DisconnectArgs{PeerID: args[0]}, &result)
 			logger.Infof("disconnected from peer")
-		},
-	}
-}
-
-func peersTrackerCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "tracker <url>",
-		Short: "Set tracker URL",
-		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			var result rpc.EmptyResult
-			invokeRPC("DaemonService.UpdateTracker", &rpc.TrackerArgs{URL: args[0]}, &result)
-			logger.Infof("tracker URL updated successfully url=%s", args[0])
 		},
 	}
 }
