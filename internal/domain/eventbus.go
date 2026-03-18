@@ -1,0 +1,130 @@
+package domain
+
+import (
+	"context"
+	"time"
+)
+
+type EventType string
+
+const (
+	EventTrackStarted     EventType = "track.started"
+	EventTrackFinished    EventType = "track.finished"
+	EventTrackPaused      EventType = "track.paused"
+	EventTrackResumed     EventType = "track.resumed"
+	EventTrackSeeked      EventType = "track.seeked"
+	EventPeerConnected    EventType = "peer.connected"
+	EventPeerDisconnected EventType = "peer.disconnected"
+	EventPeerScoreUpdated EventType = "peer.score_updated"
+	EventScanStarted      EventType = "scan.started"
+	EventScanComplete     EventType = "scan.complete"
+	EventVolumeChanged    EventType = "volume.changed"
+	EventQueueUpdated     EventType = "queue.updated"
+)
+
+type EventHandler func(Event)
+
+type Subscription interface {
+	Unsubscribe()
+}
+
+type Event struct {
+	Type    EventType
+	Payload any
+	At      time.Time
+}
+
+func NewEvent(eventType EventType, payload any) Event {
+	return Event{
+		Type:    eventType,
+		Payload: payload,
+		At:      time.Now(),
+	}
+}
+
+type EventBus interface {
+	Publish(ctx context.Context, event Event)
+	Subscribe(eventType EventType, handler EventHandler) Subscription
+	Unsubscribe(eventType EventType, handler EventHandler)
+}
+
+type TrackStartedPayload struct {
+	TrackID  TrackID
+	Title    string
+	Artist   string
+	Album    string
+	Duration time.Duration
+	Position time.Duration
+}
+
+type TrackFinishedPayload struct {
+	TrackID   TrackID
+	PlayCount uint64
+	Duration  time.Duration
+	Completed bool
+}
+
+type TrackPausedPayload struct {
+	TrackID  TrackID
+	Position time.Duration
+}
+
+type TrackResumedPayload struct {
+	TrackID  TrackID
+	Position time.Duration
+}
+
+type TrackSeekedPayload struct {
+	TrackID TrackID
+	From    time.Duration
+	To      time.Duration
+}
+
+type PeerConnectedPayload struct {
+	PeerID       PeerID
+	Addr         string
+	Capabilities *PeerCapabilities
+}
+
+type PeerDisconnectedPayload struct {
+	PeerID PeerID
+	Reason string
+}
+
+type PeerScoreUpdatedPayload struct {
+	PeerID PeerID
+	Score  float64
+}
+
+type ScanStartedPayload struct {
+	Paths     []string
+	StartTime time.Time
+}
+
+type ScanCompletePayload struct {
+	Scanned  int
+	Added    int
+	Removed  int
+	Duration time.Duration
+	Errors   []string
+}
+
+type VolumeChangedPayload struct {
+	Volume   int
+	Previous int
+}
+
+type QueueUpdatedPayload struct {
+	Action   QueueAction
+	TrackID  TrackID
+	Position int
+}
+
+type QueueAction string
+
+const (
+	QueueActionAdd    QueueAction = "add"
+	QueueActionRemove QueueAction = "remove"
+	QueueActionMove   QueueAction = "move"
+	QueueActionClear  QueueAction = "clear"
+)
