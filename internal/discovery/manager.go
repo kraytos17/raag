@@ -2,8 +2,6 @@ package discovery
 
 import (
 	"context"
-	"crypto/ed25519"
-	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -18,9 +16,9 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"github.com/multiformats/go-multiaddr"
-	"github.com/p-society/raag/internal/auth"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/logger"
+	"github.com/p-society/raag/internal/storage"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -38,9 +36,8 @@ type Manager struct {
 	bootstrapPeers  []string
 	mdnsEnabled     bool
 	mdnsServiceName string
-	authKeyPair     ed25519.PrivateKey
-	authToken       *auth.AuthToken
 	pubsub          *PubSubManager
+	peerStore       *storage.PeerStore
 	networkManager  interface {
 		NotifyPeerConnected(peerID peer.ID, addr string)
 	}
@@ -71,29 +68,11 @@ type ManagerConfig struct {
 	BootstrapPeers  []string
 	MDNSEnabled     bool
 	MDNSServiceName string
+	PeerStore       *storage.PeerStore
 }
 
 func NewManager(cfg ManagerConfig) *Manager {
 	h := cfg.Host
-	var authKeyPair ed25519.PrivateKey
-	var err error
-	// Priority: AuthSecret > Random
-	if cfg.AuthSecret != "" {
-		authKeyPair, err = auth.DeriveKey([]byte(cfg.AuthSecret), "raag-secret-v1")
-		if err != nil {
-			logger.Warnf("Failed to derive auth key from secret: %v", err)
-		} else {
-			logger.Debugf("Auth enabled via shared secret")
-		}
-	}
-	if authKeyPair == nil {
-		_, authKeyPair, err = auth.GenerateKeyPair()
-		if err != nil {
-			logger.Warnf("Failed to generate auth key pair: %v", err)
-		} else {
-			logger.Debugf("No auth configured, generated random key")
-		}
-	}
 
 	bootstrapPeers := cfg.BootstrapPeers
 	if len(bootstrapPeers) == 0 {
@@ -111,7 +90,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		bootstrapPeers:          slices.Clone(bootstrapPeers),
 		mdnsEnabled:             cfg.MDNSEnabled,
 		mdnsServiceName:         cfg.MDNSServiceName,
-		authKeyPair:             authKeyPair,
+		peerStore:               cfg.PeerStore,
 		heartbeatEvery:          constants.TrackerHeartbeatInterval,
 		refreshEvery:            constants.TrackerRefreshInterval,
 		retryDelay:              constants.TrackerRetryInitialDelay,
@@ -170,7 +149,6 @@ type NetworkState struct {
 	MDNSDiscovered int        `json:"mdns_discovered"`
 	ConnectedPeers []PeerInfo `json:"connected_peers"`
 	KnownPeers     []PeerInfo `json:"known_peers"`
-	AuthPublicKey  string     `json:"auth_public_key,omitempty"`
 }
 
 func (m *Manager) GetNetworkState() NetworkState {
@@ -189,7 +167,6 @@ func (m *Manager) GetNetworkState() NetworkState {
 		MDNSDiscovered: 0,
 		ConnectedPeers: []PeerInfo{},
 		KnownPeers:     []PeerInfo{},
-		AuthPublicKey:  m.GetAuthPublicKey(),
 	}
 
 	addrs := m.host.Addrs()
@@ -259,9 +236,6 @@ func (m *Manager) LogNetworkState() {
 	logger.Infof("=== P2P Network State ===")
 	logger.Infof("Self: %s @ %s", state.SelfID, state.ListenAddr)
 	logger.Infof("Mode: %s", state.Mode)
-	if state.AuthPublicKey != "" {
-		logger.Infof("Auth Key: %s...", state.AuthPublicKey[:32])
-	}
 
 	logger.Infof("--- Discovery ---")
 	logger.Infof("Tracker: %s", state.TrackerURL)
@@ -459,47 +433,6 @@ func prioritizeAddresses(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 	return result
 }
 
-func (m *Manager) getAuthData() (string, error) {
-	m.regenerateAuthToken()
-	if m.authToken == nil {
-		return "", fmt.Errorf("no auth key pair available")
-	}
-	return auth.SerializeToken(m.authToken)
-}
-
-func (m *Manager) regenerateAuthToken() {
-	if m.authKeyPair == nil {
-		return
-	}
-	if m.authToken != nil {
-		timeUntilExpiry := time.Until(time.Unix(m.authToken.ExpiresAt, 0))
-		if timeUntilExpiry > constants.TokenRefreshThreshold {
-			return
-		}
-		logger.Debugf("Token expiring soon (%v), regenerating", timeUntilExpiry)
-	}
-
-	token, err := auth.GenerateToken(m.host.ID(), m.authKeyPair)
-	if err != nil {
-		logger.Warnf("Failed to regenerate auth token: %v", err)
-		return
-	}
-
-	m.authToken = token
-	logger.Infof("Auth token regenerated, expires in %v", time.Until(time.Unix(token.ExpiresAt, 0)))
-}
-
-func (m *Manager) GetAuthData() (string, error) {
-	return m.getAuthData()
-}
-
-func (m *Manager) GetAuthPublicKey() string {
-	if m.authKeyPair == nil {
-		return ""
-	}
-	return hex.EncodeToString(m.authKeyPair.Public().(ed25519.PublicKey))
-}
-
 func (m *Manager) RefreshTrackerRegistration(ctx context.Context) {
 	m.refreshRegistration(ctx)
 }
@@ -588,12 +521,7 @@ func (m *Manager) tryRefreshRegistration(ctx context.Context) error {
 	}
 
 	peerID := m.host.ID().String()
-	authData, err := m.getAuthData()
-	if err != nil {
-		logger.Warnf("Failed to generate auth data: %v", err)
-		authData = ""
-	}
-	if err := m.tracker.RegisterPeer(ctx, addrWithPeerID, peerID, authData); err != nil {
+	if err := m.tracker.RegisterPeer(ctx, addrWithPeerID, peerID); err != nil {
 		return err
 	}
 	logger.Infof("Registered with tracker peer_id=%s addrs=%d", peerID, len(addrWithPeerID))
@@ -739,6 +667,13 @@ func (m *Manager) savePeer(p peer.AddrInfo, skipAutoConnect bool) {
 
 		m.host.Peerstore().AddAddrs(p.ID, p.Addrs, peerstore.PermanentAddrTTL)
 		logger.Debugf("Saved new peer peer=%s", p.ID)
+
+		if m.peerStore != nil && len(p.Addrs) > 0 {
+			if err := m.peerStore.SavePeer(m.ctx, p); err != nil {
+				logger.Debugf("Failed to persist peer to Badger: %v", err)
+			}
+		}
+
 		if !skipAutoConnect && !alreadyConnected {
 			m.tryConnectToPeer(p)
 		} else if alreadyConnected {

@@ -43,7 +43,7 @@ type DaemonState struct {
 	NowPlaying *rpc.NowPlayingResult
 	Library    *rpc.LibraryListResult
 	Network    *rpc.NetworkStatusResult
-	Status     *rpc.StatusResult
+	Status     *rpc.Status
 }
 
 func NewRPCModel(client *rpc.Client) *RPCModel {

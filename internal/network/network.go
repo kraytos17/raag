@@ -2,9 +2,7 @@ package network
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,12 +21,11 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoreds"
+	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
-	"github.com/p-society/raag/internal/auth"
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/constants"
 	"github.com/p-society/raag/internal/discovery"
@@ -39,15 +36,6 @@ import (
 	"github.com/p-society/raag/internal/transfer"
 	"github.com/spf13/viper"
 )
-
-func generateSessionNonce() string {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		nonce := time.Now().UnixNano()
-		return fmt.Sprintf("%d", nonce)
-	}
-	return hex.EncodeToString(bytes)
-}
 
 type serializedKey struct {
 	Type string `json:"type"`
@@ -187,30 +175,23 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 }
 
 type NetworkManager struct {
-	host              host.Host
-	ctx               context.Context
-	cfg               *config.Config
-	viper             *viper.Viper
-	library           *library.Library
-	musicDir          string
-	Online            bool
-	OnPeerJoin        func(peer.ID)
-	OnPeerLeave       func(peer.ID)
-	OnStateChange     func(bool)
-	discovery         *discovery.Manager
-	pingService       *ping.PingService
-	authEnabled       bool
-	authorizedPeers   map[string]struct{}
-	authorizedMu      sync.RWMutex
-	usedNonces        map[string]time.Time
-	nonceMu           sync.Mutex
-	connectedPeers    map[peer.ID]bool
-	peersMu           sync.RWMutex
-	peerConnectCh     chan struct{}
-	pendingHandshakes map[peer.ID]chan struct{}
-	handshakeMu       sync.Mutex
-	connectionGater   *RaagConnectionGater
-	transferMgr       *transfer.Manager
+	host            host.Host
+	ctx             context.Context
+	cfg             *config.Config
+	viper           *viper.Viper
+	library         *library.Library
+	musicDir        string
+	Online          bool
+	OnPeerJoin      func(peer.ID)
+	OnPeerLeave     func(peer.ID)
+	OnStateChange   func(bool)
+	discovery       *discovery.Manager
+	pingService     *ping.PingService
+	connectedPeers  map[peer.ID]bool
+	peersMu         sync.RWMutex
+	peerConnectCh   chan struct{}
+	connectionGater *RaagConnectionGater
+	transferMgr     *transfer.Manager
 }
 
 func (n *NetworkManager) getContext() context.Context {
@@ -229,117 +210,6 @@ func (n *NetworkManager) Close() error {
 		return nil
 	}
 	return n.host.Close()
-}
-
-func (n *NetworkManager) SetAuthEnabled(enabled bool) {
-	n.authorizedMu.Lock()
-	defer n.authorizedMu.Unlock()
-	n.authEnabled = enabled
-	if enabled {
-		n.authorizedPeers = make(map[string]struct{})
-		logger.Infof("P2P authentication enabled")
-	} else {
-		n.authorizedPeers = nil
-		logger.Infof("P2P authentication disabled")
-	}
-}
-
-func (n *NetworkManager) AuthorizePeer(peerID peer.ID) {
-	n.authorizedMu.Lock()
-	defer n.authorizedMu.Unlock()
-	if n.authorizedPeers != nil {
-		n.authorizedPeers[peerID.String()] = struct{}{}
-		logger.Debugf("Peer authorized: %s", peerID)
-	}
-	if n.connectionGater != nil {
-		n.connectionGater.AllowPeer(peerID)
-	}
-}
-
-func (n *NetworkManager) IsPeerAuthorized(peerID peer.ID) bool {
-	n.authorizedMu.RLock()
-	defer n.authorizedMu.RUnlock()
-	if !n.authEnabled {
-		return true
-	}
-	if n.authorizedPeers == nil {
-		return false
-	}
-	_, authorized := n.authorizedPeers[peerID.String()]
-	return authorized
-}
-
-func (n *NetworkManager) GetAuthData() (string, error) {
-	if n.discovery != nil {
-		return n.discovery.GetAuthData()
-	}
-	return "", fmt.Errorf("discovery manager not available")
-}
-
-func (n *NetworkManager) IsAuthEnabled() bool {
-	n.authorizedMu.RLock()
-	defer n.authorizedMu.RUnlock()
-	return n.authEnabled
-}
-
-func (n *NetworkManager) VerifyAuthToken(tokenData string, expectedPeerID string, sessionNonce string) error {
-	if tokenData == "" {
-		if n.IsAuthEnabled() {
-			return fmt.Errorf("authentication required but no token provided")
-		}
-		return nil
-	}
-
-	token, err := auth.DeserializeToken(tokenData)
-	if err != nil {
-		return fmt.Errorf("invalid token format: %w", err)
-	}
-
-	if expectedPeerID != "" && token.PeerID != expectedPeerID {
-		return fmt.Errorf("peer ID mismatch: token is for %s, expected %s", token.PeerID, expectedPeerID)
-	}
-
-	if err := n.verifyNonceUsed(sessionNonce); err != nil {
-		return err
-	}
-
-	valid, err := auth.VerifyToken(token)
-	if err != nil {
-		return fmt.Errorf("token verification failed: %w", err)
-	}
-	if !valid {
-		return fmt.Errorf("token verification failed")
-	}
-
-	return nil
-}
-
-func (n *NetworkManager) verifyNonceUsed(nonce string) error {
-	if nonce == "" {
-		return nil
-	}
-
-	n.nonceMu.Lock()
-	defer n.nonceMu.Unlock()
-
-	if n.usedNonces == nil {
-		n.usedNonces = make(map[string]time.Time)
-	}
-
-	if _, exists := n.usedNonces[nonce]; exists {
-		return fmt.Errorf("replay attack detected: nonce already used")
-	}
-
-	n.usedNonces[nonce] = time.Now()
-
-	go func() {
-		time.Sleep(5 * time.Minute)
-		n.nonceMu.Lock()
-		delete(n.usedNonces, nonce)
-		n.nonceMu.Unlock()
-	}()
-
-	return nil
 }
 
 func NewNetwork(cfg *config.Config, v *viper.Viper, lib *library.Library, musicDir string, store *storage.Store) (*NetworkManager, error) {
@@ -369,13 +239,26 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 	var opts []libp2p.Option
 
 	var ps peerstore.Peerstore
+	ps, err = pstoremem.NewPeerstore()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create peerstore: %w", err)
+	}
+
+	opts = append(opts, libp2p.Peerstore(ps))
+	logger.Debugf("Using memory peerstore with Badger-backed persistence")
 	if store != nil {
-		ps, err = pstoreds.NewPeerstore(context.Background(), store.Peers, pstoreds.DefaultOpts())
+		psStore := storage.NewPeerStore(store.Peers)
+		peers, err := psStore.LoadPeers(context.Background())
 		if err != nil {
-			return nil, fmt.Errorf("failed to create persistent peerstore: %w", err)
+			logger.Warnf("Failed to load persisted peers: %v", err)
+		} else {
+			for _, info := range peers {
+				if len(info.Addrs) > 0 {
+					ps.AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+				}
+			}
+			logger.Debugf("Loaded %d persisted peers from Badger", len(peers))
 		}
-		opts = append(opts, libp2p.Peerstore(ps))
-		logger.Debugf("Using persistent peerstore backed by Badger")
 	}
 
 	tcpListenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.Host, cfg.Port)
@@ -467,6 +350,11 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		maxPeers = constants.DefaultMaxPeers
 	}
 
+	var peerStore *storage.PeerStore
+	if store != nil {
+		peerStore = storage.NewPeerStore(store.Peers)
+	}
+
 	discoveryMgr := discovery.NewManager(discovery.ManagerConfig{
 		Host:            host,
 		AuthSecret:      cfg.AuthSecret,
@@ -478,6 +366,7 @@ func newNetworkWithIdentity(cfg *config.Config, v *viper.Viper, lib *library.Lib
 		BootstrapPeers:  cfg.BootstrapPeers,
 		MDNSEnabled:     cfg.MDNSEnabled,
 		MDNSServiceName: cfg.MDNSServiceName,
+		PeerStore:       peerStore,
 	})
 	nm := &NetworkManager{
 		host:            host,
@@ -571,7 +460,6 @@ func (n *NetworkManager) Start(ctx context.Context) error {
 	n.ctx = ctx
 	n.connectedPeers = make(map[peer.ID]bool)
 	n.host.SetStreamHandler(protocol.ID(constants.ShareProtocolID), n.handleStream)
-	n.host.SetStreamHandler(protocol.ID(constants.HandshakeProtocolID), n.handleHandshake)
 	n.host.SetStreamHandler(protocol.ID(constants.BlockProtocolID), n.handleBlockStream)
 	if err := n.discovery.Start(ctx); err != nil {
 		logger.Errorf("Discovery failed to start error=%v", err)
@@ -806,13 +694,6 @@ func (n *NetworkManager) GetNetworkState() (discovery.NetworkState, error) {
 	return n.discovery.GetNetworkState(), nil
 }
 
-func (n *NetworkManager) GetAuthPublicKey() string {
-	if n.discovery == nil {
-		return ""
-	}
-	return n.discovery.GetAuthPublicKey()
-}
-
 // BroadcastSongAdded announces a new song to the network via GossipSub
 func (n *NetworkManager) BroadcastSongAdded(song metadata.Song) {
 	if n.discovery == nil {
@@ -897,9 +778,7 @@ func (n *NetworkManager) ShareSong(peerInfo *peer.AddrInfo, song metadata.Song) 
 	}
 	defer stream.Close()
 
-	authToken, _ := n.GetAuthData()
-	sessionNonce := generateSessionNonce()
-	meta := buildTransferMetadata(song, song.Size, song.Hash, authToken, sessionNonce)
+	meta := buildTransferMetadata(song, song.Size, song.Hash)
 	if err := writeTransferMetadata(stream, meta); err != nil {
 		_ = stream.Reset()
 		return fmt.Errorf("failed to send transfer metadata: %w", err)
@@ -926,11 +805,6 @@ func (n *NetworkManager) handleStream(stream network.Stream) {
 	}
 	defer stream.Close()
 
-	if err := n.VerifyAuthToken(meta.AuthToken, peerID.String(), meta.SessionNonce); err != nil {
-		_ = stream.Reset()
-		logger.Warnf("Auth verification failed for peer peer_id=%s error=%v", peerID, err)
-		return
-	}
 	if meta.SizeBytes == 0 {
 		logger.Debugf("Received empty file transfer from peer peer_id=%s", peerID)
 		return
@@ -1036,9 +910,6 @@ func (n *NetworkManager) handlePeerConnect(peerID peer.ID, addr multiaddr.Multia
 	if peerID == n.host.ID() {
 		return
 	}
-	if n.IsAuthEnabled() {
-		go n.initiateHandshake(peerID)
-	}
 	n.notifyPeerConnected(peerID, addr.String())
 }
 
@@ -1050,13 +921,6 @@ func (n *NetworkManager) NotifyPeerConnected(peerID peer.ID, addr string) {
 func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, _ string) {
 	if peerID == n.host.ID() {
 		return
-	}
-	if n.IsAuthEnabled() {
-		done := n.waitForHandshake(peerID)
-		if !done {
-			logger.Warnf("Handshake failed - rejecting peer peer_id=%s", peerID)
-			return
-		}
 	}
 
 	n.peersMu.Lock()
@@ -1086,40 +950,6 @@ func (n *NetworkManager) notifyPeerConnected(peerID peer.ID, _ string) {
 			}
 		}
 	}
-}
-
-func (n *NetworkManager) waitForHandshake(peerID peer.ID) bool {
-	n.handshakeMu.Lock()
-	if n.pendingHandshakes == nil {
-		n.pendingHandshakes = make(map[peer.ID]chan struct{})
-	}
-
-	doneCh, exists := n.pendingHandshakes[peerID]
-	if exists {
-		n.handshakeMu.Unlock()
-		<-doneCh
-		n.handshakeMu.Lock()
-		delete(n.pendingHandshakes, peerID)
-		n.handshakeMu.Unlock()
-		return true
-	}
-
-	doneCh = make(chan struct{})
-	n.pendingHandshakes[peerID] = doneCh
-	n.handshakeMu.Unlock()
-
-	select {
-	case <-doneCh:
-	case <-time.After(constants.HandshakeTimeout):
-	}
-
-	n.handshakeMu.Lock()
-	delete(n.pendingHandshakes, peerID)
-	close(doneCh)
-	n.handshakeMu.Unlock()
-
-	_, stillConnected := n.connectedPeers[peerID]
-	return stillConnected
 }
 
 func (n *NetworkManager) handlePeerDisconnect(peerID peer.ID, _ multiaddr.Multiaddr) {
@@ -1168,114 +998,6 @@ func (n *NetworkManager) AddBootstrapPeer(ctx context.Context, multiaddrStr stri
 		return fmt.Errorf("invalid multiaddress: %w", err)
 	}
 	return n.discovery.AddBootstrapPeer(ctx, *peerAddr)
-}
-
-func (n *NetworkManager) handleHandshake(stream network.Stream) {
-	peerID := stream.Conn().RemotePeer()
-	logger.Debugf("Processing handshake from peer_id=%s", peerID)
-	authData, err := n.GetAuthData()
-	if err != nil {
-		logger.Warnf("Auth not configured - rejecting peer peer_id=%s", peerID)
-		n.signalHandshakeDone(peerID)
-		_ = stream.Reset()
-		return
-	}
-
-	buf := make([]byte, 4096)
-	nRead, err := stream.Read(buf)
-	if err != nil {
-		logger.Warnf("Handshake read failed for peer_id=%s error=%v", peerID, err)
-		n.signalHandshakeDone(peerID)
-		_ = stream.Reset()
-		return
-	}
-
-	peerToken := string(buf[:nRead])
-	if err := n.VerifyAuthToken(peerToken, peerID.String(), ""); err != nil {
-		logger.Warnf("Handshake auth failed for peer_id=%s error=%v", peerID, err)
-		n.signalHandshakeDone(peerID)
-		_ = stream.Reset()
-		return
-	}
-
-	_, err = stream.Write([]byte(authData))
-	if err != nil {
-		logger.Warnf("Handshake response failed for peer_id=%s error=%v", peerID, err)
-		n.signalHandshakeDone(peerID)
-		_ = stream.Reset()
-		return
-	}
-
-	_ = stream.Close()
-	n.signalHandshakeDone(peerID)
-	logger.Infof("Handshake successful - authenticated peer_id=%s", peerID)
-}
-
-func (n *NetworkManager) signalHandshakeDone(peerID peer.ID) {
-	n.handshakeMu.Lock()
-	defer n.handshakeMu.Unlock()
-	if n.pendingHandshakes == nil {
-		return
-	}
-
-	doneCh, exists := n.pendingHandshakes[peerID]
-	if !exists {
-		return
-	}
-	delete(n.pendingHandshakes, peerID)
-	close(doneCh)
-}
-
-func (n *NetworkManager) initiateHandshake(peerID peer.ID) {
-	if !n.IsAuthEnabled() {
-		return
-	}
-
-	authData, err := n.GetAuthData()
-	if err != nil {
-		logger.Warnf("Auth not configured - cannot initiate handshake with peer_id=%s", peerID)
-		n.signalHandshakeDone(peerID)
-		return
-	}
-
-	logger.Debugf("Initiating handshake with peer_id=%s", peerID)
-
-	ctx, cancel := context.WithTimeout(n.getContext(), constants.HandshakeTimeout)
-	defer cancel()
-
-	stream, err := n.host.NewStream(ctx, peerID, protocol.ID(constants.HandshakeProtocolID))
-	if err != nil {
-		logger.Warnf("Failed to connect to peer for handshake peer_id=%s error=%v", peerID, err)
-		n.signalHandshakeDone(peerID)
-		return
-	}
-	defer stream.Close()
-
-	_, err = stream.Write([]byte(authData))
-	if err != nil {
-		logger.Warnf("Failed to send auth token to peer_id=%s error=%v", peerID, err)
-		n.signalHandshakeDone(peerID)
-		return
-	}
-
-	buf := make([]byte, 4096)
-	nRead, err := stream.Read(buf)
-	if err != nil {
-		logger.Warnf("Handshake timed out or failed for peer_id=%s error=%v", peerID, err)
-		n.signalHandshakeDone(peerID)
-		return
-	}
-
-	peerToken := string(buf[:nRead])
-	if err := n.VerifyAuthToken(peerToken, peerID.String(), ""); err != nil {
-		logger.Warnf("Peer failed auth verification peer_id=%s error=%v", peerID, err)
-		_ = n.host.Network().ClosePeer(peerID)
-		n.signalHandshakeDone(peerID)
-		return
-	}
-
-	n.signalHandshakeDone(peerID)
-	logger.Infof("Mutual auth successful with peer_id=%s", peerID)
 }
 
 // handleBlockStream serves a single block over the /raag/blocks/1.0.0 protocol.

@@ -79,7 +79,7 @@ func (c *Chunker) ChunkInfo(fileSize int64) []ChunkInfo {
 
 	remaining := fileSize
 	offset := int64(0)
-	for i := 0; i < numBlocks; i++ {
+	for i := range numBlocks {
 		blockSize := c.blockSize
 		if int64(blockSize) > remaining {
 			blockSize = int(remaining)

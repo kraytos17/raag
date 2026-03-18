@@ -36,9 +36,8 @@ type trackerPeerResponse struct {
 }
 
 type trackerRegisterRequest struct {
-	Addrs    []string `json:"addrs"`
-	PeerID   string   `json:"peer_id"`
-	AuthData string   `json:"auth_data,omitempty"`
+	Addrs  []string `json:"addrs"`
+	PeerID string   `json:"peer_id"`
 }
 
 type trackerAddrResponse struct {
@@ -124,7 +123,7 @@ func (t *TrackerClient) FetchPeers(ctx context.Context) ([]peer.AddrInfo, error)
 	return peers, nil
 }
 
-func (t *TrackerClient) RegisterPeer(ctx context.Context, addrs []string, peerID string, authData string) error {
+func (t *TrackerClient) RegisterPeer(ctx context.Context, addrs []string, peerID string) error {
 	if t.trackerURL == "" {
 		return nil
 	}
@@ -135,9 +134,8 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, addrs []string, peerID
 	}
 
 	data := trackerRegisterRequest{
-		Addrs:    addrs,
-		PeerID:   peerID,
-		AuthData: authData,
+		Addrs:  addrs,
+		PeerID: peerID,
 	}
 
 	jsonData, err := json.Marshal(data)
@@ -157,9 +155,6 @@ func (t *TrackerClient) RegisterPeer(ctx context.Context, addrs []string, peerID
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("unauthorized: tracker requires authentication")
-	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("tracker registration failed: %d", resp.StatusCode)
 	}

@@ -17,39 +17,32 @@ import (
 )
 
 type transferMetadata struct {
-	Version      string `json:"version"`
-	Title        string `json:"title"`
-	Artist       string `json:"artist"`
-	Album        string `json:"album"`
-	Filename     string `json:"filename"`
-	Extension    string `json:"extension"`
-	SizeBytes    int64  `json:"size_bytes"`
-	SHA256       string `json:"sha256"`
-	AuthToken    string `json:"auth_token,omitempty"`
-	SessionNonce string `json:"session_nonce,omitempty"`
+	Version   string `json:"version"`
+	Title     string `json:"title"`
+	Artist    string `json:"artist"`
+	Album     string `json:"album"`
+	Filename  string `json:"filename"`
+	Extension string `json:"extension"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
 }
 
-func buildTransferMetadata(song metadata.Song, fileSize int64, digest string, authToken string, sessionNonce string) transferMetadata {
+func buildTransferMetadata(song metadata.Song, fileSize int64, digest string) transferMetadata {
 	ext := strings.ToLower(filepath.Ext(song.Path))
 	return transferMetadata{
-		Version:      constants.ShareProtocolVersion,
-		Title:        song.Title,
-		Artist:       song.Artist,
-		Album:        song.Album,
-		Filename:     filepath.Base(song.Path),
-		Extension:    ext,
-		SizeBytes:    fileSize,
-		SHA256:       digest,
-		AuthToken:    authToken,
-		SessionNonce: sessionNonce,
+		Version:   constants.ShareProtocolVersion,
+		Title:     song.Title,
+		Artist:    song.Artist,
+		Album:     song.Album,
+		Filename:  filepath.Base(song.Path),
+		Extension: ext,
+		SizeBytes: fileSize,
+		SHA256:    digest,
 	}
 }
 
 // writeTransferMetadata sends metadata about a file transfer including authentication token.
 func writeTransferMetadata(stream libp2pnetwork.Stream, meta transferMetadata) error {
-	//#nosec G117
-	// AuthToken is intentionally marshaled for secure P2P authentication transmission.
-	// This is not a secret leak - it's required for peer-to-peer authentication between trusted peers.
 	metadataBytes, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal transfer metadata: %w", err)

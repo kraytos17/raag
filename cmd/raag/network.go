@@ -25,7 +25,7 @@ func statusCommand() *cobra.Command {
 		Use:   "status",
 		Short: "Show daemon status",
 		Run: func(cmd *cobra.Command, args []string) {
-			var result rpc.StatusResult
+			var result rpc.Status
 			invokeRPC("DaemonService.Status", &rpc.EmptyArgs{}, &result)
 
 			logger.Infof("=== Raag Daemon ===")
@@ -47,7 +47,6 @@ func networkCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(networkStatusCommand())
-	cmd.AddCommand(networkAuthKeyCommand())
 	return cmd
 }
 
@@ -77,22 +76,6 @@ func networkStatusCommand() *cobra.Command {
 					logger.Infof("  %s", p.ID)
 				}
 			}
-		},
-	}
-}
-
-func networkAuthKeyCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "auth-key",
-		Short: "Print the full derived tracker auth key",
-		Run: func(cmd *cobra.Command, args []string) {
-			var result rpc.AuthKeyResult
-			invokeRPC("DaemonService.AuthKey", &rpc.EmptyArgs{}, &result)
-			if result.AuthPublicKey == "" {
-				logger.Errorf("No auth key available")
-				return
-			}
-			logger.Infof("Auth key: %s", result.AuthPublicKey)
 		},
 	}
 }

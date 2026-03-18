@@ -185,16 +185,7 @@ func (s *DaemonService) NetworkStatus(_ *EmptyArgs, result *NetworkStatusResult)
 	return nil
 }
 
-type AuthKeyResult struct {
-	AuthPublicKey string `json:"auth_public_key"`
-}
-
-func (s *DaemonService) AuthKey(_ *EmptyArgs, result *AuthKeyResult) error {
-	result.AuthPublicKey = s.app.NetMgr.GetAuthPublicKey()
-	return nil
-}
-
-type StatusResult struct {
+type Status struct {
 	Running   bool   `json:"running"`
 	PeerCount int    `json:"peer_count"`
 	Connected bool   `json:"network_online"`
@@ -202,7 +193,7 @@ type StatusResult struct {
 	Version   string `json:"version"`
 }
 
-func (s *DaemonService) Status(_ *EmptyArgs, result *StatusResult) error {
+func (s *DaemonService) Status(_ *EmptyArgs, result *Status) error {
 	result.Running = true
 	result.PeerCount = s.app.NetMgr.GetPeerCount()
 	result.Connected = s.app.NetMgr.IsOnline()
@@ -485,7 +476,7 @@ type FullStateResult struct {
 	NowPlaying *NowPlayingResult
 	Queue      *QueueResult
 	Network    *NetworkStatusResult
-	Status     *StatusResult
+	Status     *Status
 	Library    *LibraryListResult
 }
 
@@ -505,7 +496,7 @@ func (s *DaemonService) GetFullState(_ *EmptyArgs, result *FullStateResult) erro
 		result.Network = &network
 	}
 
-	var status StatusResult
+	var status Status
 	if err := s.Status(&EmptyArgs{}, &status); err == nil {
 		result.Status = &status
 	}
