@@ -45,7 +45,6 @@ func (p *Prefetcher) UpdateProgress(progress float64) {
 	defer p.mu.Unlock()
 
 	p.progress = progress
-
 	if progress > 0.8 && !p.prefetchStarted {
 		p.prefetchStarted = true
 		go p.prefetch()
@@ -74,7 +73,6 @@ func (p *Prefetcher) prefetch() {
 		slog.Warn("prefetch failed", "track", nextTrackID, "error", err)
 		return
 	}
-
 	if closer, ok := reader.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
 	}
@@ -89,7 +87,6 @@ func (p *Prefetcher) prefetch() {
 	p.mu.Lock()
 	p.prefetchedData[nextTrackID] = data[:n]
 	p.mu.Unlock()
-
 	slog.Debug("prefetch completed", "track", nextTrackID, "bytes", n)
 }
 

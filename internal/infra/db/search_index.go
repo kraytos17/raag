@@ -17,15 +17,15 @@ const (
 	BoostAlbum  = 1.5
 )
 
-type BadgerSearchIndex struct {
+type searchIndex struct {
 	db *DB
 }
 
-func NewBadgerSearchIndex(db *DB) *BadgerSearchIndex {
-	return &BadgerSearchIndex{db: db}
+func newSearchIndex(db *DB) *searchIndex {
+	return &searchIndex{db: db}
 }
 
-func (idx *BadgerSearchIndex) Index(ctx context.Context, track *domain.Track) error {
+func (idx *searchIndex) Index(ctx context.Context, track *domain.Track) error {
 	return idx.db.Update(func(txn *badger.Txn) error {
 		tokens := idx.tokenize(track.Title + " " + track.Artist + " " + track.Album)
 		for _, token := range tokens {
@@ -47,7 +47,7 @@ func (idx *BadgerSearchIndex) Index(ctx context.Context, track *domain.Track) er
 	})
 }
 
-func (idx *BadgerSearchIndex) IndexBatch(ctx context.Context, tracks []*domain.Track) error {
+func (idx *searchIndex) IndexBatch(ctx context.Context, tracks []*domain.Track) error {
 	wb := idx.db.NewWriteBatch()
 	defer wb.Cancel()
 
@@ -72,7 +72,7 @@ func (idx *BadgerSearchIndex) IndexBatch(ctx context.Context, tracks []*domain.T
 	return wb.Flush()
 }
 
-func (idx *BadgerSearchIndex) Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
+func (idx *searchIndex) Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
 	tokens := idx.tokenize(query)
 	if len(tokens) == 0 {
 		return nil, nil
@@ -124,7 +124,7 @@ func (idx *BadgerSearchIndex) Search(ctx context.Context, query string, limit in
 	return result, nil
 }
 
-func (idx *BadgerSearchIndex) SearchFuzzy(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
+func (idx *searchIndex) SearchFuzzy(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
 	queryTrigrams := trigrams(query)
 	if len(queryTrigrams) == 0 {
 		return nil, nil
@@ -180,7 +180,7 @@ func (idx *BadgerSearchIndex) SearchFuzzy(ctx context.Context, query string, lim
 	return result, nil
 }
 
-func (idx *BadgerSearchIndex) Delete(ctx context.Context, id domain.TrackID) error {
+func (idx *searchIndex) Delete(ctx context.Context, id domain.TrackID) error {
 	return idx.db.Update(func(txn *badger.Txn) error {
 		prefix := []byte(PrefixIdxTerm)
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -220,7 +220,7 @@ func (idx *BadgerSearchIndex) Delete(ctx context.Context, id domain.TrackID) err
 	})
 }
 
-func (idx *BadgerSearchIndex) Stats(ctx context.Context) (app.IndexStats, error) {
+func (idx *searchIndex) Stats(ctx context.Context) (app.IndexStats, error) {
 	var stats app.IndexStats
 	err := idx.db.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -253,11 +253,11 @@ func (idx *BadgerSearchIndex) Stats(ctx context.Context) (app.IndexStats, error)
 	return stats, err
 }
 
-func (idx *BadgerSearchIndex) Rebuild(ctx context.Context) error {
+func (idx *searchIndex) Rebuild(ctx context.Context) error {
 	return nil
 }
 
-func (idx *BadgerSearchIndex) tokenize(s string) []string {
+func (idx *searchIndex) tokenize(s string) []string {
 	s = strings.ToLower(s)
 	s = strings.TrimSpace(s)
 

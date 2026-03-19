@@ -78,9 +78,9 @@ func newMockLibraryRepository() *mockLibraryRepository {
 	}
 }
 
-func TestCachedLibraryRepository_Save(t *testing.T) {
+func TestCachedRepo_Save(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	track := domain.NewTrack("/music/test.mp3")
 	track.Title = "Test Song"
@@ -101,9 +101,9 @@ func TestCachedLibraryRepository_Save(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_FindByID_CacheHit(t *testing.T) {
+func TestCachedRepo_FindByID_CacheHit(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	track := domain.NewTrack("/music/test.mp3")
 	track.DurationMs = 180000
@@ -119,9 +119,9 @@ func TestCachedLibraryRepository_FindByID_CacheHit(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_FindByID_CacheMiss(t *testing.T) {
+func TestCachedRepo_FindByID_CacheMiss(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	track := domain.NewTrack("/music/test.mp3")
 	track.DurationMs = 180000
@@ -139,9 +139,9 @@ func TestCachedLibraryRepository_FindByID_CacheMiss(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_FindByID_NotFound(t *testing.T) {
+func TestCachedRepo_FindByID_NotFound(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	ctx := context.Background()
 	_, err := repo.FindByID(ctx, domain.GenerateTrackID("/nonexistent"))
@@ -150,9 +150,9 @@ func TestCachedLibraryRepository_FindByID_NotFound(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_Delete(t *testing.T) {
+func TestCachedRepo_Delete(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	track := domain.NewTrack("/music/test.mp3")
 	track.DurationMs = 180000
@@ -169,9 +169,9 @@ func TestCachedLibraryRepository_Delete(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_Invalidate(t *testing.T) {
+func TestCachedRepo_Invalidate(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	track := domain.NewTrack("/music/test.mp3")
 	track.DurationMs = 180000
@@ -184,9 +184,9 @@ func TestCachedLibraryRepository_Invalidate(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_BulkSave(t *testing.T) {
+func TestCachedRepo_BulkSave(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	tracks := []*domain.Track{
 		{ID: domain.GenerateTrackID("/music/song1.mp3"), Path: "/music/song1.mp3", Title: "Song 1", DurationMs: 180000},
@@ -203,9 +203,9 @@ func TestCachedLibraryRepository_BulkSave(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_ListAll(t *testing.T) {
+func TestCachedRepo_ListAll(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	tracks := []*domain.Track{
 		{ID: domain.GenerateTrackID("/music/song1.mp3"), Path: "/music/song1.mp3", Title: "Song 1", DurationMs: 180000},
@@ -226,9 +226,9 @@ func TestCachedLibraryRepository_ListAll(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_SaveFileStats(t *testing.T) {
+func TestCachedRepo_SaveFileStats(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	stats := map[string]*domain.FileStat{
 		"/music/song1.mp3": {Path: "/music/song1.mp3", Size: 5000},
@@ -240,9 +240,9 @@ func TestCachedLibraryRepository_SaveFileStats(t *testing.T) {
 	}
 }
 
-func TestCachedLibraryRepository_LoadFileStats(t *testing.T) {
+func TestCachedRepo_LoadFileStats(t *testing.T) {
 	mock := newMockLibraryRepository()
-	repo := NewCachedLibraryRepository(mock)
+	repo := newCachedLibraryRepo(mock)
 
 	ctx := context.Background()
 	stats, err := repo.LoadFileStats(ctx)

@@ -8,7 +8,6 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.18.4
 	github.com/libp2p/go-libp2p v0.48.0
-	github.com/looplab/fsm v1.0.3
 	github.com/spf13/viper v1.21.0
 	google.golang.org/protobuf v1.36.11
 )

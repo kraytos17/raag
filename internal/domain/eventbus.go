@@ -24,9 +24,7 @@ const (
 
 type EventHandler func(Event)
 
-type Subscription interface {
-	Unsubscribe()
-}
+type Unsubscribe func()
 
 type Event struct {
 	Type    EventType
@@ -44,8 +42,7 @@ func NewEvent(eventType EventType, payload any) Event {
 
 type EventBus interface {
 	Publish(ctx context.Context, event Event)
-	Subscribe(eventType EventType, handler EventHandler) Subscription
-	Unsubscribe(eventType EventType, handler EventHandler)
+	Subscribe(eventType EventType, handler EventHandler) Unsubscribe
 }
 
 type TrackStartedPayload struct {

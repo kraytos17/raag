@@ -9,15 +9,15 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-type BadgerPeerRepository struct {
+type peerRepo struct {
 	db *DB
 }
 
-func NewBadgerPeerRepository(db *DB) *BadgerPeerRepository {
-	return &BadgerPeerRepository{db: db}
+func newPeerRepo(db *DB) *peerRepo {
+	return &peerRepo{db: db}
 }
 
-func (r *BadgerPeerRepository) SavePeerInfo(ctx context.Context, info *domain.PeerInfo) error {
+func (r *peerRepo) SavePeerInfo(ctx context.Context, info *domain.PeerInfo) error {
 	data, err := json.Marshal(info)
 	if err != nil {
 		return err
@@ -27,7 +27,7 @@ func (r *BadgerPeerRepository) SavePeerInfo(ctx context.Context, info *domain.Pe
 	})
 }
 
-func (r *BadgerPeerRepository) GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.PeerInfo, error) {
+func (r *peerRepo) GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.PeerInfo, error) {
 	var info *domain.PeerInfo
 	err := r.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(PeerKey(id))
@@ -55,7 +55,7 @@ func (r *BadgerPeerRepository) GetPeerInfo(ctx context.Context, id domain.PeerID
 	return info, err
 }
 
-func (r *BadgerPeerRepository) SavePeerScore(ctx context.Context, id domain.PeerID, score *domain.PeerScore) error {
+func (r *peerRepo) SavePeerScore(ctx context.Context, id domain.PeerID, score *domain.PeerScore) error {
 	data, err := json.Marshal(score)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (r *BadgerPeerRepository) SavePeerScore(ctx context.Context, id domain.Peer
 	})
 }
 
-func (r *BadgerPeerRepository) GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.PeerScore, error) {
+func (r *peerRepo) GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.PeerScore, error) {
 	var score *domain.PeerScore
 	err := r.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(PeerScoreKey(id))
@@ -93,7 +93,7 @@ func (r *BadgerPeerRepository) GetPeerScore(ctx context.Context, id domain.PeerI
 	return score, err
 }
 
-func (r *BadgerPeerRepository) SaveLibraryManifest(ctx context.Context, id domain.PeerID, manifest *domain.LibraryManifest) error {
+func (r *peerRepo) SaveLibraryManifest(ctx context.Context, id domain.PeerID, manifest *domain.LibraryManifest) error {
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return err
@@ -103,7 +103,7 @@ func (r *BadgerPeerRepository) SaveLibraryManifest(ctx context.Context, id domai
 	})
 }
 
-func (r *BadgerPeerRepository) GetLibraryManifest(ctx context.Context, id domain.PeerID) (*domain.LibraryManifest, error) {
+func (r *peerRepo) GetLibraryManifest(ctx context.Context, id domain.PeerID) (*domain.LibraryManifest, error) {
 	var manifest *domain.LibraryManifest
 	err := r.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(PeerLibraryKey(id))
@@ -131,7 +131,7 @@ func (r *BadgerPeerRepository) GetLibraryManifest(ctx context.Context, id domain
 	return manifest, err
 }
 
-func (r *BadgerPeerRepository) ListAllPeers(ctx context.Context) ([]*domain.PeerInfo, error) {
+func (r *peerRepo) ListAllPeers(ctx context.Context) ([]*domain.PeerInfo, error) {
 	var peers []*domain.PeerInfo
 	err := r.db.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
