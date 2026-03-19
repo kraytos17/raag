@@ -7,9 +7,10 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.18.4
-	github.com/libp2p/go-libp2p/core v0.43.0-rc2
+	github.com/libp2p/go-libp2p v0.48.0
 	github.com/looplab/fsm v1.0.3
 	github.com/spf13/viper v1.21.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -51,6 +52,5 @@ require (
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )

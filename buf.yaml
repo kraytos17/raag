@@ -1,0 +1,12 @@
+version: v2
+name: buf.build/p-society/raag
+deps:
+  - buf.build/googleapis/googleapis
+lint:
+  use:
+    - DEFAULT
+  except:
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - FILE
