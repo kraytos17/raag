@@ -7,11 +7,11 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-func TestBadgerPlaylistRepository_CRUD(t *testing.T) {
+func TestPlaylistRepo_CRUD(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := NewBadgerPlaylistRepository(db)
+	repo := newPlaylistRepo(db)
 	ctx := context.Background()
 	playlist, err := domain.NewPlaylist("Test Playlist")
 	if err != nil {
@@ -30,11 +30,11 @@ func TestBadgerPlaylistRepository_CRUD(t *testing.T) {
 	}
 }
 
-func TestBadgerPlaylistRepository_NotFound(t *testing.T) {
+func TestPlaylistRepo_NotFound(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := NewBadgerPlaylistRepository(db)
+	repo := newPlaylistRepo(db)
 	ctx := context.Background()
 	_, err := repo.FindByID(ctx, domain.GeneratePlaylistID())
 	if err != domain.ErrPlaylistNotFound {
@@ -42,11 +42,11 @@ func TestBadgerPlaylistRepository_NotFound(t *testing.T) {
 	}
 }
 
-func TestBadgerPlaylistRepository_List(t *testing.T) {
+func TestPlaylistRepo_List(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := NewBadgerPlaylistRepository(db)
+	repo := newPlaylistRepo(db)
 	ctx := context.Background()
 	playlists := []*domain.Playlist{
 		{ID: domain.GeneratePlaylistID(), Name: "Playlist 1"},
@@ -67,11 +67,11 @@ func TestBadgerPlaylistRepository_List(t *testing.T) {
 	}
 }
 
-func TestBadgerPlaylistRepository_Delete(t *testing.T) {
+func TestPlaylistRepo_Delete(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := NewBadgerPlaylistRepository(db)
+	repo := newPlaylistRepo(db)
 	ctx := context.Background()
 	playlist, err := domain.NewPlaylist("Test Playlist")
 	if err != nil {
@@ -90,11 +90,11 @@ func TestBadgerPlaylistRepository_Delete(t *testing.T) {
 	}
 }
 
-func TestBadgerPlaylistRepository_AddTrack(t *testing.T) {
+func TestPlaylistRepo_AddTrack(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := NewBadgerPlaylistRepository(db)
+	repo := newPlaylistRepo(db)
 	ctx := context.Background()
 	playlist, err := domain.NewPlaylist("Test Playlist")
 	if err != nil {

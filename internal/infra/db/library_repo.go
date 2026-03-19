@@ -18,12 +18,12 @@ const (
 	batchSize        = 500
 )
 
-type BadgerLibraryRepository struct {
+type libraryRepo struct {
 	db    *DB
 	cache *lru.Cache[string, *domain.Track]
 }
 
-func NewBadgerLibraryRepository(db *DB, cacheSize int) (*BadgerLibraryRepository, error) {
+func newLibraryRepo(db *DB, cacheSize int) (*libraryRepo, error) {
 	if cacheSize <= 0 {
 		cacheSize = defaultCacheSize
 	}
@@ -32,19 +32,19 @@ func NewBadgerLibraryRepository(db *DB, cacheSize int) (*BadgerLibraryRepository
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LRU cache: %w", err)
 	}
-	return &BadgerLibraryRepository{
+	return &libraryRepo{
 		db:    db,
 		cache: cache,
 	}, nil
 }
 
-func (r *BadgerLibraryRepository) Save(ctx context.Context, track *domain.Track) error {
+func (r *libraryRepo) Save(ctx context.Context, track *domain.Track) error {
 	return r.db.Update(func(txn *badger.Txn) error {
 		return r.saveTrack(txn, track)
 	})
 }
 
-func (r *BadgerLibraryRepository) saveTrack(txn *badger.Txn, track *domain.Track) error {
+func (r *libraryRepo) saveTrack(txn *badger.Txn, track *domain.Track) error {
 	data, err := json.Marshal(track)
 	if err != nil {
 		return fmt.Errorf("failed to marshal track: %w", err)
@@ -66,7 +66,7 @@ func (r *BadgerLibraryRepository) saveTrack(txn *badger.Txn, track *domain.Track
 	return nil
 }
 
-func (r *BadgerLibraryRepository) FindByID(ctx context.Context, id domain.TrackID) (*domain.Track, error) {
+func (r *libraryRepo) FindByID(ctx context.Context, id domain.TrackID) (*domain.Track, error) {
 	if track, ok := r.cache.Get(string(id)); ok {
 		return track, nil
 	}
@@ -99,7 +99,7 @@ func (r *BadgerLibraryRepository) FindByID(ctx context.Context, id domain.TrackI
 	return result, err
 }
 
-func (r *BadgerLibraryRepository) FindByPath(ctx context.Context, path string) (*domain.Track, error) {
+func (r *libraryRepo) FindByPath(ctx context.Context, path string) (*domain.Track, error) {
 	var trackID domain.TrackID
 	err := r.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(PathKey(path))
@@ -125,7 +125,7 @@ func (r *BadgerLibraryRepository) FindByPath(ctx context.Context, path string) (
 	return r.FindByID(ctx, trackID)
 }
 
-func (r *BadgerLibraryRepository) Search(ctx context.Context, query app.SearchQuery) ([]*domain.Track, error) {
+func (r *libraryRepo) Search(ctx context.Context, query app.SearchQuery) ([]*domain.Track, error) {
 	tracks, err := r.ListAll(ctx)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (r *BadgerLibraryRepository) Search(ctx context.Context, query app.SearchQu
 	return results, nil
 }
 
-func (r *BadgerLibraryRepository) Delete(ctx context.Context, id domain.TrackID) error {
+func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 	track, err := r.FindByID(ctx, id)
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func (r *BadgerLibraryRepository) Delete(ctx context.Context, id domain.TrackID)
 	})
 }
 
-func (r *BadgerLibraryRepository) BulkSave(ctx context.Context, tracks []*domain.Track) error {
+func (r *libraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) error {
 	wb := r.db.NewWriteBatch()
 	defer wb.Cancel()
 
@@ -201,7 +201,7 @@ func (r *BadgerLibraryRepository) BulkSave(ctx context.Context, tracks []*domain
 	return wb.Flush()
 }
 
-func (r *BadgerLibraryRepository) ListAll(ctx context.Context) ([]*domain.Track, error) {
+func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
 	var tracks []*domain.Track
 	err := r.db.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -228,7 +228,7 @@ func (r *BadgerLibraryRepository) ListAll(ctx context.Context) ([]*domain.Track,
 	return tracks, err
 }
 
-func (r *BadgerLibraryRepository) SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error {
+func (r *libraryRepo) SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error {
 	wb := r.db.NewWriteBatch()
 	defer wb.Cancel()
 
@@ -244,7 +244,7 @@ func (r *BadgerLibraryRepository) SaveFileStats(ctx context.Context, stats map[s
 	return wb.Flush()
 }
 
-func (r *BadgerLibraryRepository) LoadFileStats(ctx context.Context) (map[string]*domain.FileStat, error) {
+func (r *libraryRepo) LoadFileStats(ctx context.Context) (map[string]*domain.FileStat, error) {
 	stats := make(map[string]*domain.FileStat)
 	err := r.db.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -273,7 +273,7 @@ func (r *BadgerLibraryRepository) LoadFileStats(ctx context.Context) (map[string
 	return stats, err
 }
 
-func (r *BadgerLibraryRepository) InvalidateCache() {
+func (r *libraryRepo) InvalidateCache() {
 	r.cache.Purge()
 }
 

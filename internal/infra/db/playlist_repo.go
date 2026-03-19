@@ -9,15 +9,15 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-type BadgerPlaylistRepository struct {
+type playlistRepo struct {
 	db *DB
 }
 
-func NewBadgerPlaylistRepository(db *DB) *BadgerPlaylistRepository {
-	return &BadgerPlaylistRepository{db: db}
+func newPlaylistRepo(db *DB) *playlistRepo {
+	return &playlistRepo{db: db}
 }
 
-func (r *BadgerPlaylistRepository) Save(ctx context.Context, playlist *domain.Playlist) error {
+func (r *playlistRepo) Save(ctx context.Context, playlist *domain.Playlist) error {
 	data, err := json.Marshal(playlist)
 	if err != nil {
 		return err
@@ -27,7 +27,7 @@ func (r *BadgerPlaylistRepository) Save(ctx context.Context, playlist *domain.Pl
 	})
 }
 
-func (r *BadgerPlaylistRepository) FindByID(ctx context.Context, id domain.PlaylistID) (*domain.Playlist, error) {
+func (r *playlistRepo) FindByID(ctx context.Context, id domain.PlaylistID) (*domain.Playlist, error) {
 	var playlist *domain.Playlist
 	err := r.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(PlaylistKey(id))
@@ -55,7 +55,7 @@ func (r *BadgerPlaylistRepository) FindByID(ctx context.Context, id domain.Playl
 	return playlist, err
 }
 
-func (r *BadgerPlaylistRepository) List(ctx context.Context) ([]*domain.Playlist, error) {
+func (r *playlistRepo) List(ctx context.Context) ([]*domain.Playlist, error) {
 	var playlists []*domain.Playlist
 	err := r.db.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -82,7 +82,7 @@ func (r *BadgerPlaylistRepository) List(ctx context.Context) ([]*domain.Playlist
 	return playlists, err
 }
 
-func (r *BadgerPlaylistRepository) Delete(ctx context.Context, id domain.PlaylistID) error {
+func (r *playlistRepo) Delete(ctx context.Context, id domain.PlaylistID) error {
 	return r.db.Update(func(txn *badger.Txn) error {
 		return txn.Delete(PlaylistKey(id))
 	})

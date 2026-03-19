@@ -12,6 +12,81 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
+type Scanner struct {
+	paths         []string
+	supportedExts map[string]bool
+	onProgress    func(scanProgress)
+	onTrack       func(*domain.Track)
+	onError       func(error)
+}
+
+func NewScanner(paths []string) *Scanner {
+	exts := make(map[string]bool)
+	for _, ext := range []string{".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma"} {
+		exts[ext] = true
+	}
+	return &Scanner{
+		paths:         paths,
+		supportedExts: exts,
+	}
+}
+
+type scanProgress struct {
+	Phase       string
+	TotalFound  int
+	CurrentFile string
+}
+
+func (s *Scanner) OnProgress(fn func(scanProgress)) {
+	s.onProgress = fn
+}
+
+func (s *Scanner) OnTrack(fn func(*domain.Track)) {
+	s.onTrack = fn
+}
+
+func (s *Scanner) OnError(fn func(error)) {
+	s.onError = fn
+}
+
+func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
+	var files []string
+	for _, path := range s.paths {
+		if err := filepath.Walk(path, func(walkPath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			if info.IsDir() {
+				return nil
+			}
+
+			ext := strings.ToLower(filepath.Ext(walkPath))
+			if s.supportedExts[ext] {
+				files = append(files, walkPath)
+				if s.onProgress != nil {
+					s.onProgress(scanProgress{
+						Phase:      "discovery",
+						TotalFound: len(files),
+					})
+				}
+			}
+			return nil
+		}); err != nil {
+			if s.onError != nil {
+				s.onError(err)
+			}
+		}
+	}
+	return files, nil
+}
+
 type LibraryScanner struct {
 	libraryRepo LibraryRepository
 	index       SearchIndex

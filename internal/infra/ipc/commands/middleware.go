@@ -103,24 +103,7 @@ func TimeoutMiddleware(timeout time.Duration) Middleware {
 		return func(ctx context.Context, cmd Command) (Response, error) {
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-
-			done := make(chan Response, 1)
-			errChan := make(chan error, 1)
-			go func() {
-				response, err := next(ctx, cmd)
-				done <- response
-				errChan <- err
-			}()
-
-			select {
-			case <-ctx.Done():
-				return Response{
-					Status: "error",
-					Error:  "command timed out",
-				}, ctx.Err()
-			case response := <-done:
-				return response, <-errChan
-			}
+			return next(ctx, cmd)
 		}
 	}
 }
@@ -176,17 +159,10 @@ func (e *ValidationError) Error() string {
 	return e.Field + ": " + e.Message
 }
 
-func MustMarshal(v any) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		slog.Error("failed to marshal", "error", err)
-		return []byte{}
-	}
-	return data
+func MarshalJSON(v any) ([]byte, error) {
+	return json.Marshal(v)
 }
 
-func MustUnmarshal(data []byte, v any) {
-	if err := json.Unmarshal(data, v); err != nil {
-		slog.Error("failed to unmarshal", "error", err)
-	}
+func UnmarshalJSON(data []byte, v any) error {
+	return json.Unmarshal(data, v)
 }

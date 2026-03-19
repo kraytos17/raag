@@ -4,102 +4,71 @@ import (
 	"context"
 	"log/slog"
 	"sync"
-	"time"
 
-	"github.com/looplab/fsm"
 	"github.com/p-society/raag/internal/domain"
 )
 
-type PeerEvent string
+type peerEvent string
 
 const (
-	PeerEventFound          PeerEvent = "found"
-	PeerEventConnectSuccess PeerEvent = "connect_success"
-	PeerEventConnectFail    PeerEvent = "connect_fail"
-	PeerEventScoreDegrade   PeerEvent = "score_degrade"
-	PeerEventScoreImprove   PeerEvent = "score_improve"
-	PeerEventRetry          PeerEvent = "retry"
-	PeerEventDisconnect     PeerEvent = "disconnect"
+	peerEventFound          = "found"
+	peerEventConnectSuccess = "connect_success"
+	peerEventConnectFail    = "connect_fail"
+	peerEventScoreDegrade   = "score_degrade"
+	peerEventScoreImprove   = "score_improve"
+	peerEventRetry          = "retry"
+	peerEventDisconnect     = "disconnect"
 )
 
-type PeerState string
+type peerState string
 
 const (
-	PeerStateDiscovered   PeerState = "discovered"
-	PeerStateConnecting   PeerState = "connecting"
-	PeerStateConnected    PeerState = "connected"
-	PeerStateDegraded     PeerState = "degraded"
-	PeerStateDisconnected PeerState = "disconnected"
+	peerStateDiscovered   = "discovered"
+	peerStateConnecting   = "connecting"
+	peerStateConnected    = "connected"
+	peerStateDegraded     = "degraded"
+	peerStateDisconnected = "disconnected"
 )
 
-type PeerLifecycleFSM struct {
-	mu  sync.Mutex
-	fsm *fsm.FSM
-	bus domain.EventBus
+type peerLifecycleFSM struct {
+	mu    sync.Mutex
+	state peerState
+	bus   domain.EventBus
 }
 
-func NewPeerLifecycleFSM(bus domain.EventBus) *PeerLifecycleFSM {
-	p := &PeerLifecycleFSM{
-		bus: bus,
-	}
-
-	p.fsm = fsm.NewFSM(
-		string(PeerStateDiscovered),
-		[]fsm.EventDesc{
-			{Name: string(PeerEventFound), Src: []string{string(PeerStateDiscovered)}, Dst: string(PeerStateDiscovered)},
-			{Name: string(PeerEventConnectSuccess), Src: []string{string(PeerStateDiscovered), string(PeerStateConnecting)}, Dst: string(PeerStateConnected)},
-			{Name: string(PeerEventConnectFail), Src: []string{string(PeerStateDiscovered), string(PeerStateConnecting)}, Dst: string(PeerStateDisconnected)},
-			{Name: string(PeerEventScoreDegrade), Src: []string{string(PeerStateConnected)}, Dst: string(PeerStateDegraded)},
-			{Name: string(PeerEventScoreImprove), Src: []string{string(PeerStateDegraded)}, Dst: string(PeerStateConnected)},
-			{Name: string(PeerEventRetry), Src: []string{string(PeerStateDegraded), string(PeerStateDisconnected)}, Dst: string(PeerStateConnecting)},
-			{Name: string(PeerEventDisconnect), Src: []string{string(PeerStateConnected), string(PeerStateDegraded), string(PeerStateConnecting)}, Dst: string(PeerStateDisconnected)},
-		},
-		map[string]fsm.Callback{
-			"enter_state": p.onStateChange,
-		},
-	)
-
-	return p
-}
-
-func (p *PeerLifecycleFSM) onStateChange(ctx context.Context, e *fsm.Event) {
-	currentState := PeerState(e.Dst)
-	event := PeerEvent(e.Event)
-
-	slog.Debug("peer lifecycle FSM state change",
-		"to", currentState,
-		"event", event,
-	)
-
-	innerCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	switch currentState {
-	case PeerStateConnected:
-		p.bus.Publish(innerCtx, domain.NewEvent(domain.EventPeerConnected, domain.PeerConnectedPayload{
-			PeerID: "",
-		}))
-	case PeerStateDisconnected:
-		p.bus.Publish(innerCtx, domain.NewEvent(domain.EventPeerDisconnected, domain.PeerDisconnectedPayload{
-			PeerID: "",
-			Reason: "FSM transition",
-		}))
+func newPeerLifecycleFSM(bus domain.EventBus) *peerLifecycleFSM {
+	return &peerLifecycleFSM{
+		state: peerStateDiscovered,
+		bus:   bus,
 	}
 }
 
-func (p *PeerLifecycleFSM) CurrentState() PeerState {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return PeerState(p.fsm.Current())
+var peerTransitions = map[peerState]map[peerEvent]peerState{
+	peerStateDiscovered:   {peerEventFound: peerStateDiscovered, peerEventConnectSuccess: peerStateConnected, peerEventConnectFail: peerStateDisconnected},
+	peerStateConnecting:   {peerEventConnectSuccess: peerStateConnected, peerEventConnectFail: peerStateDisconnected},
+	peerStateConnected:    {peerEventScoreDegrade: peerStateDegraded, peerEventDisconnect: peerStateDisconnected},
+	peerStateDegraded:     {peerEventScoreImprove: peerStateConnected, peerEventRetry: peerStateConnecting, peerEventDisconnect: peerStateDisconnected},
+	peerStateDisconnected: {peerEventRetry: peerStateConnecting},
 }
 
-func (p *PeerLifecycleFSM) Send(event PeerEvent) error {
+func (p *peerLifecycleFSM) Send(event peerEvent) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if err := p.fsm.Event(context.Background(), string(event)); err != nil {
-		slog.Warn("peer lifecycle FSM event rejected", "event", event, "current", p.fsm.Current(), "error", err)
-		return err
+	prev := p.state
+	next, ok := peerTransitions[prev][event]
+	if !ok {
+		slog.Debug("peer FSM: no transition", "event", event, "from", prev)
+		return nil
+	}
+
+	p.state = next
+	slog.Debug("peer FSM transition", "from", prev, "to", next, "event", event)
+	switch next {
+	case peerStateConnected:
+		p.bus.Publish(context.Background(), domain.NewEvent(domain.EventPeerConnected, domain.PeerConnectedPayload{}))
+	case peerStateDisconnected:
+		p.bus.Publish(context.Background(), domain.NewEvent(domain.EventPeerDisconnected, domain.PeerDisconnectedPayload{Reason: "FSM transition"}))
 	}
 	return nil
 }

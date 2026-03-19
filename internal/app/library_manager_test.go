@@ -33,7 +33,7 @@ func TestScanner_NewScanner(t *testing.T) {
 func TestScanner_OnProgress(t *testing.T) {
 	scanner := NewScanner([]string{})
 	called := false
-	scanner.OnProgress(func(progress ScanProgress) {
+	scanner.OnProgress(func(progress scanProgress) {
 		called = true
 	})
 
@@ -120,7 +120,7 @@ func TestScanner_Scan_WithProgress(t *testing.T) {
 
 	progressCalls := 0
 	scanner := NewScanner([]string{dir})
-	scanner.OnProgress(func(progress ScanProgress) {
+	scanner.OnProgress(func(progress scanProgress) {
 		progressCalls++
 	})
 
@@ -207,21 +207,16 @@ func TestLibraryManager_NewLibraryManager(t *testing.T) {
 }
 
 func TestScanProgress_Fields(t *testing.T) {
-	progress := ScanProgress{
+	progress := scanProgress{
 		Phase:       "test",
 		TotalFound:  10,
-		Processed:   5,
 		CurrentFile: "/music/song.mp3",
-		Errors:      nil,
 	}
 
 	if progress.Phase != "test" {
-		t.Errorf("ScanProgress.Phase = %v, want 'test'", progress.Phase)
+		t.Errorf("scanProgress.Phase = %v, want 'test'", progress.Phase)
 	}
 	if progress.TotalFound != 10 {
-		t.Errorf("ScanProgress.TotalFound = %d, want 10", progress.TotalFound)
-	}
-	if progress.Processed != 5 {
-		t.Errorf("ScanProgress.Processed = %d, want 5", progress.Processed)
+		t.Errorf("scanProgress.TotalFound = %d, want 10", progress.TotalFound)
 	}
 }

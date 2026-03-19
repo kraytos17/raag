@@ -8,43 +8,43 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-type Handlers struct {
+type handlers struct {
 	playback    *app.PlaybackController
 	scanner     *app.LibraryScanner
 	search      *app.SearchService
 	libraryRepo app.LibraryRepository
 	peerRepo    app.PeerRepository
-	queue       *Queue
+	queue       *queue
 }
 
-func NewHandlers(
+func newHandlers(
 	playback *app.PlaybackController,
 	scanner *app.LibraryScanner,
 	search *app.SearchService,
 	libraryRepo app.LibraryRepository,
 	peerRepo app.PeerRepository,
-) *Handlers {
-	return &Handlers{
+) *handlers {
+	return &handlers{
 		playback:    playback,
 		scanner:     scanner,
 		search:      search,
 		libraryRepo: libraryRepo,
 		peerRepo:    peerRepo,
-		queue:       NewQueue(),
+		queue:       newQueue(),
 	}
 }
 
-type PlayRequest struct {
+type playRequest struct {
 	Query   string `json:"query,omitempty"`
 	TrackID string `json:"track_id,omitempty"`
 }
 
-type PlayHandler struct {
-	*Handlers
+type playHandler struct {
+	*handlers
 }
 
-func (h *PlayHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
-	var req PlayRequest
+func (h *playHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+	var req playRequest
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &req); err != nil {
 			return Response{Status: "error", Error: err.Error()}, nil
@@ -67,35 +67,35 @@ func (h *PlayHandler) Handle(ctx context.Context, cmd Command) (Response, error)
 	return Response{Status: "ok"}, nil
 }
 
-type PauseHandler struct{}
+type pauseHandler struct{}
 
-func (h *PauseHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *pauseHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
 	return Response{Status: "ok"}, nil
 }
 
-type ResumeHandler struct{}
+type resumeHandler struct{}
 
-func (h *ResumeHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *resumeHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
 	return Response{Status: "ok"}, nil
 }
 
-type StopHandler struct{}
+type stopHandler struct{}
 
-func (h *StopHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *stopHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
 	return Response{Status: "ok"}, nil
 }
 
-type SearchRequest struct {
+type searchRequest struct {
 	Query string `json:"query"`
 	Limit int    `json:"limit"`
 }
 
-type SearchHandler struct {
-	*Handlers
+type searchHandler struct {
+	*handlers
 }
 
-func (h *SearchHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
-	var req SearchRequest
+func (h *searchHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+	var req searchRequest
 	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
 		return Response{Status: "error", Error: err.Error()}, nil
 	}
@@ -112,11 +112,11 @@ func (h *SearchHandler) Handle(ctx context.Context, cmd Command) (Response, erro
 	return Response{Status: "ok", Data: data}, nil
 }
 
-type LibScanHandler struct {
-	*Handlers
+type libScanHandler struct {
+	*handlers
 }
 
-func (h *LibScanHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *libScanHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
 	_, err := h.scanner.Scan(ctx)
 	if err != nil {
 		return Response{Status: "error", Error: err.Error()}, err
@@ -124,11 +124,11 @@ func (h *LibScanHandler) Handle(ctx context.Context, cmd Command) (Response, err
 	return Response{Status: "ok"}, nil
 }
 
-type ListPeersHandler struct {
-	*Handlers
+type listPeersHandler struct {
+	*handlers
 }
 
-func (h *ListPeersHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *listPeersHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
 	peers, err := h.peerRepo.ListAllPeers(ctx)
 	if err != nil {
 		return Response{Status: "error", Error: err.Error()}, err
@@ -138,11 +138,11 @@ func (h *ListPeersHandler) Handle(ctx context.Context, cmd Command) (Response, e
 	return Response{Status: "ok", Data: data}, nil
 }
 
-type StatusHandler struct {
-	*Handlers
+type statusHandler struct {
+	*handlers
 }
 
-func (h *StatusHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *statusHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
 	status := struct {
 		State     app.PlayerState `json:"state"`
 		Volume    int             `json:"volume"`
@@ -157,9 +157,9 @@ func (h *StatusHandler) Handle(ctx context.Context, cmd Command) (Response, erro
 	return Response{Status: "ok", Data: data}, nil
 }
 
-type HealthCheckHandler struct{}
+type healthCheckHandler struct{}
 
-func (h *HealthCheckHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *healthCheckHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
 	health := struct {
 		Status string `json:"status"`
 	}{"healthy"}
@@ -168,23 +168,23 @@ func (h *HealthCheckHandler) Handle(ctx context.Context, cmd Command) (Response,
 	return Response{Status: "ok", Data: data}, nil
 }
 
-type Queue struct {
+type queue struct {
 	tracks []domain.TrackID
 	pos    int
 }
 
-func NewQueue() *Queue {
-	return &Queue{
+func newQueue() *queue {
+	return &queue{
 		tracks: make([]domain.TrackID, 0),
 		pos:    -1,
 	}
 }
 
-func (q *Queue) Add(trackID domain.TrackID) {
+func (q *queue) Add(trackID domain.TrackID) {
 	q.tracks = append(q.tracks, trackID)
 }
 
-func (q *Queue) Next() *domain.TrackID {
+func (q *queue) Next() *domain.TrackID {
 	if len(q.tracks) == 0 {
 		return nil
 	}
@@ -197,7 +197,7 @@ func (q *Queue) Next() *domain.TrackID {
 	return &q.tracks[q.pos]
 }
 
-func (q *Queue) Prev() *domain.TrackID {
+func (q *queue) Prev() *domain.TrackID {
 	if len(q.tracks) == 0 || q.pos <= 0 {
 		return nil
 	}
@@ -206,23 +206,23 @@ func (q *Queue) Prev() *domain.TrackID {
 	return &q.tracks[q.pos]
 }
 
-func (q *Queue) Len() int {
+func (q *queue) Len() int {
 	return len(q.tracks)
 }
 
-func (q *Queue) Clear() {
+func (q *queue) Clear() {
 	q.tracks = make([]domain.TrackID, 0)
 	q.pos = -1
 }
 
-func RegisterAll(router *CommandRouter, handlers *Handlers) {
-	router.Register(CmdPlay, (&PlayHandler{Handlers: handlers}).Handle)
-	router.Register(CmdPause, (&PauseHandler{}).Handle)
-	router.Register(CmdResume, (&ResumeHandler{}).Handle)
-	router.Register(CmdStop, (&StopHandler{}).Handle)
-	router.Register(CmdSearch, (&SearchHandler{Handlers: handlers}).Handle)
-	router.Register(CmdLibScan, (&LibScanHandler{Handlers: handlers}).Handle)
-	router.Register(CmdListPeers, (&ListPeersHandler{Handlers: handlers}).Handle)
-	router.Register(CmdStatus, (&StatusHandler{Handlers: handlers}).Handle)
-	router.Register(CmdHealthCheck, (&HealthCheckHandler{}).Handle)
+func registerAll(router *CommandRouter, h *handlers) {
+	router.Register(CmdPlay, (&playHandler{handlers: h}).Handle)
+	router.Register(CmdPause, (&pauseHandler{}).Handle)
+	router.Register(CmdResume, (&resumeHandler{}).Handle)
+	router.Register(CmdStop, (&stopHandler{}).Handle)
+	router.Register(CmdSearch, (&searchHandler{handlers: h}).Handle)
+	router.Register(CmdLibScan, (&libScanHandler{handlers: h}).Handle)
+	router.Register(CmdListPeers, (&listPeersHandler{handlers: h}).Handle)
+	router.Register(CmdStatus, (&statusHandler{handlers: h}).Handle)
+	router.Register(CmdHealthCheck, (&healthCheckHandler{}).Handle)
 }

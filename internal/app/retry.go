@@ -47,7 +47,6 @@ func pow(base, exp float64) float64 {
 
 func DoWithRetry(ctx context.Context, policy *RetryPolicy, fn func() error) error {
 	var lastErr error
-
 	for attempt := 0; attempt < policy.MaxAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -59,7 +58,6 @@ func DoWithRetry(ctx context.Context, policy *RetryPolicy, fn func() error) erro
 		if lastErr == nil {
 			return nil
 		}
-
 		if !policy.ShouldRetry(attempt, lastErr) {
 			return lastErr
 		}
@@ -78,7 +76,6 @@ func DoWithRetry(ctx context.Context, policy *RetryPolicy, fn func() error) erro
 		case <-time.After(delay):
 		}
 	}
-
 	return lastErr
 }
 

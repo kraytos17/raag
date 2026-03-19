@@ -25,13 +25,13 @@ func setupTestDB(t *testing.T) (*DB, func()) {
 	return db, cleanup
 }
 
-func TestBadgerLibraryRepository_CRUD(t *testing.T) {
+func TestLibraryRepo_CRUD(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -62,13 +62,13 @@ func TestBadgerLibraryRepository_CRUD(t *testing.T) {
 	}
 }
 
-func TestBadgerLibraryRepository_NotFound(t *testing.T) {
+func TestLibraryRepo_NotFound(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -78,13 +78,13 @@ func TestBadgerLibraryRepository_NotFound(t *testing.T) {
 	}
 }
 
-func TestBadgerLibraryRepository_ListAll(t *testing.T) {
+func TestLibraryRepo_ListAll(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -107,13 +107,13 @@ func TestBadgerLibraryRepository_ListAll(t *testing.T) {
 	}
 }
 
-func TestBadgerLibraryRepository_Search(t *testing.T) {
+func TestLibraryRepo_Search(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -136,13 +136,13 @@ func TestBadgerLibraryRepository_Search(t *testing.T) {
 	}
 }
 
-func TestBadgerLibraryRepository_Delete(t *testing.T) {
+func TestLibraryRepo_Delete(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -161,13 +161,13 @@ func TestBadgerLibraryRepository_Delete(t *testing.T) {
 	}
 }
 
-func TestBadgerLibraryRepository_BulkSave(t *testing.T) {
+func TestLibraryRepo_BulkSave(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -189,13 +189,13 @@ func TestBadgerLibraryRepository_BulkSave(t *testing.T) {
 	}
 }
 
-func TestBadgerLibraryRepository_FileStats(t *testing.T) {
+func TestLibraryRepo_FileStats(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -216,27 +216,27 @@ func TestBadgerLibraryRepository_FileStats(t *testing.T) {
 	}
 }
 
-func TestBadgerLibraryRepository_InvalidateCache(t *testing.T) {
+func TestLibraryRepo_InvalidateCache(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 100)
+	repo, err := newLibraryRepo(db, 100)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() error = %v", err)
+		t.Fatalf("newLibraryRepo() error = %v", err)
 	}
 	repo.InvalidateCache()
 }
 
-func TestBadgerLibraryRepository_DefaultCacheSize(t *testing.T) {
+func TestLibraryRepo_DefaultCacheSize(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := NewBadgerLibraryRepository(db, 0)
+	repo, err := newLibraryRepo(db, 0)
 	if err != nil {
-		t.Fatalf("NewBadgerLibraryRepository() with 0 cacheSize error = %v", err)
+		t.Fatalf("newLibraryRepo() with 0 cacheSize error = %v", err)
 	}
 	if repo == nil {
-		t.Error("NewBadgerLibraryRepository() should not return nil")
+		t.Error("newLibraryRepo() should not return nil")
 	}
 }
 

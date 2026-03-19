@@ -7,18 +7,18 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-type CBState string
+type cbState string
 
 const (
-	CBStateClosed   CBState = "closed"
-	CBStateOpen     CBState = "open"
-	CBStateHalfOpen CBState = "half_open"
+	cbStateClosed   cbState = "closed"
+	cbStateOpen     cbState = "open"
+	cbStateHalfOpen cbState = "half_open"
 )
 
-type CircuitBreaker struct {
+type circuitBreaker struct {
 	mu                sync.Mutex
 	peerID            domain.PeerID
-	state             CBState
+	state             cbState
 	failCount         int
 	successCount      int
 	lastFailTime      time.Time
@@ -27,62 +27,59 @@ type CircuitBreaker struct {
 	halfOpenSuccesses int
 }
 
-func NewCircuitBreaker(peerID domain.PeerID, threshold int, cooldown time.Duration) *CircuitBreaker {
-	return &CircuitBreaker{
+func newCircuitBreaker(peerID domain.PeerID, threshold int, cooldown time.Duration) *circuitBreaker {
+	return &circuitBreaker{
 		peerID:    peerID,
-		state:     CBStateClosed,
+		state:     cbStateClosed,
 		threshold: threshold,
 		cooldown:  cooldown,
 	}
 }
 
-func (cb *CircuitBreaker) Allow() bool {
+func (cb *circuitBreaker) Allow() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	switch cb.state {
-	case CBStateClosed:
+	case cbStateClosed:
 		return true
-
-	case CBStateOpen:
+	case cbStateOpen:
 		if time.Since(cb.lastFailTime) > cb.cooldown {
-			cb.state = CBStateHalfOpen
+			cb.state = cbStateHalfOpen
 			cb.halfOpenSuccesses = 0
 			return true
 		}
 		return false
-
-	case CBStateHalfOpen:
+	case cbStateHalfOpen:
 		return true
 	}
-
 	return false
 }
 
-func (cb *CircuitBreaker) RecordSuccess() {
+func (cb *circuitBreaker) RecordSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	switch cb.state {
-	case CBStateClosed:
+	case cbStateClosed:
 		cb.successCount++
 		if cb.failCount > 0 {
 			cb.failCount--
 		}
 
-	case CBStateHalfOpen:
+	case cbStateHalfOpen:
 		cb.halfOpenSuccesses++
 		cb.successCount++
 		if cb.halfOpenSuccesses >= 3 {
-			cb.state = CBStateClosed
+			cb.state = cbStateClosed
 			cb.failCount = 0
 		}
 
-	case CBStateOpen:
+	case cbStateOpen:
 	}
 }
 
-func (cb *CircuitBreaker) RecordFailure() {
+func (cb *circuitBreaker) RecordFailure() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -90,50 +87,50 @@ func (cb *CircuitBreaker) RecordFailure() {
 	cb.lastFailTime = time.Now()
 
 	switch cb.state {
-	case CBStateClosed:
+	case cbStateClosed:
 		if cb.failCount >= cb.threshold {
-			cb.state = CBStateOpen
+			cb.state = cbStateOpen
 		}
 
-	case CBStateHalfOpen:
-		cb.state = CBStateOpen
+	case cbStateHalfOpen:
+		cb.state = cbStateOpen
 
-	case CBStateOpen:
+	case cbStateOpen:
 	}
 }
 
-func (cb *CircuitBreaker) GetState() CBState {
+func (cb *circuitBreaker) GetState() cbState {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 	return cb.state
 }
 
-func (cb *CircuitBreaker) Reset() {
+func (cb *circuitBreaker) Reset() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	cb.state = CBStateClosed
+	cb.state = cbStateClosed
 	cb.failCount = 0
 	cb.successCount = 0
 	cb.halfOpenSuccesses = 0
 }
 
-type CircuitBreakerRegistry struct {
+type cbRegistry struct {
 	mu        sync.RWMutex
-	breakers  map[domain.PeerID]*CircuitBreaker
+	breakers  map[domain.PeerID]*circuitBreaker
 	threshold int
 	cooldown  time.Duration
 }
 
-func NewCircuitBreakerRegistry(threshold int, cooldown time.Duration) *CircuitBreakerRegistry {
-	return &CircuitBreakerRegistry{
-		breakers:  make(map[domain.PeerID]*CircuitBreaker),
+func newCBRegistry(threshold int, cooldown time.Duration) *cbRegistry {
+	return &cbRegistry{
+		breakers:  make(map[domain.PeerID]*circuitBreaker),
 		threshold: threshold,
 		cooldown:  cooldown,
 	}
 }
 
-func (r *CircuitBreakerRegistry) Get(peerID domain.PeerID) *CircuitBreaker {
+func (r *cbRegistry) Get(peerID domain.PeerID) *circuitBreaker {
 	r.mu.RLock()
 	cb, exists := r.breakers[peerID]
 	r.mu.RUnlock()
@@ -149,18 +146,18 @@ func (r *CircuitBreakerRegistry) Get(peerID domain.PeerID) *CircuitBreaker {
 		return cb
 	}
 
-	cb = NewCircuitBreaker(peerID, r.threshold, r.cooldown)
+	cb = newCircuitBreaker(peerID, r.threshold, r.cooldown)
 	r.breakers[peerID] = cb
 	return cb
 }
 
-func (r *CircuitBreakerRegistry) Remove(peerID domain.PeerID) {
+func (r *cbRegistry) Remove(peerID domain.PeerID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.breakers, peerID)
 }
 
-func (r *CircuitBreakerRegistry) ResetAll() {
+func (r *cbRegistry) ResetAll() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
