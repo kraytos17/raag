@@ -1,6 +1,7 @@
 package db
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -202,35 +203,17 @@ func TestDiffFileStats_ResultsContainExpectedPaths(t *testing.T) {
 
 	result := diffFileStats(current, previous)
 
-	foundAdded := false
-	for _, p := range result.Added {
-		if p == "/music/new.mp3" {
-			foundAdded = true
-			break
-		}
-	}
+	foundAdded := slices.Contains(result.Added, "/music/new.mp3")
 	if !foundAdded {
 		t.Error("Expected /music/new.mp3 in Added list")
 	}
 
-	foundModified := false
-	for _, p := range result.Modified {
-		if p == "/music/modified" {
-			foundModified = true
-			break
-		}
-	}
+	foundModified := slices.Contains(result.Modified, "/music/modified")
 	if !foundModified {
 		t.Error("Expected /music/modified in Modified list")
 	}
 
-	foundDeleted := false
-	for _, p := range result.Deleted {
-		if p == "/music/deleted" {
-			foundDeleted = true
-			break
-		}
-	}
+	foundDeleted := slices.Contains(result.Deleted, "/music/deleted")
 	if !foundDeleted {
 		t.Error("Expected /music/deleted in Deleted list")
 	}

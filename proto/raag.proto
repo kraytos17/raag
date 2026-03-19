@@ -1,0 +1,408 @@
+syntax = "proto3";
+
+package raag;
+
+option go_package = "github.com/p-society/raag/proto/gen";
+
+message Track {
+  string id = 1;
+  string path = 2;
+  string title = 3;
+  string artist = 4;
+  string album_artist = 5;
+  string album = 6;
+  uint32 track_number = 7;
+  uint32 disc_number = 8;
+  uint32 year = 9;
+  repeated string genres = 10;
+  uint64 duration_ms = 11;
+  uint64 size_bytes = 12;
+  string mime_type = 13;
+  string codec = 14;
+  uint32 bitrate = 15;
+  uint32 sample_rate = 16;
+  uint32 channels = 17;
+  string lyrics = 18;
+  bytes cover_art = 19;
+  int64 added_at = 20;
+  int64 modified_at = 21;
+  uint64 play_count = 22;
+  int64 last_played = 23;
+  float replay_gain_track = 24;
+  float replay_gain_album = 25;
+  string content_hash = 26;
+}
+
+message Playlist {
+  string id = 1;
+  string name = 2;
+  repeated string track_ids = 3;
+  int64 created_at = 4;
+  int64 modified_at = 5;
+}
+
+message PeerInfo {
+  string peer_id = 1;
+  repeated string listen_addrs = 2;
+  int64 last_seen = 3;
+  string agent_version = 4;
+  repeated string supported_codecs = 5;
+  bool can_transcode = 6;
+}
+
+message PeerCapabilities {
+  repeated string supported_codecs = 1;
+  repeated int32 supported_bitrates = 2;
+  bool can_transcode = 3;
+  int64 upload_bandwidth = 4;
+  string protocol_version = 5;
+}
+
+message PeerScore {
+  string peer_id = 1;
+  double avg_latency_ms = 2;
+  int64 avg_bandwidth = 3;
+  int32 failure_count = 4;
+  int32 success_count = 5;
+  int64 last_seen = 6;
+  double score = 7;
+}
+
+message LibraryManifest {
+  string peer_id = 1;
+  int64 timestamp = 2;
+  int32 track_count = 3;
+  repeated string track_ids = 4;
+  repeated TrackEntry tracks = 5;
+}
+
+message TrackEntry {
+  string track_id = 1;
+  string title = 2;
+  string artist = 3;
+  string album = 4;
+  uint64 duration_ms = 5;
+  string mime_type = 6;
+}
+
+message FileStat {
+  string path = 1;
+  int64 mtime = 2;
+  int64 size = 3;
+}
+
+message ChunkRequest {
+  string track_id = 1;
+  int64 offset = 2;
+  int32 length = 3;
+}
+
+message ChunkResponse {
+  string track_id = 1;
+  int64 offset = 2;
+  bytes data = 3;
+  bool last_chunk = 4;
+}
+
+enum CommandType {
+  UNKNOWN = 0;
+  STATUS = 1;
+  PLAY = 2;
+  PAUSE = 3;
+  RESUME = 4;
+  STOP = 5;
+  NEXT = 6;
+  PREV = 7;
+  SEEK_TO = 8;
+  SET_VOLUME = 9;
+  QUEUE_ADD = 10;
+  QUEUE_REMOVE = 11;
+  QUEUE_LIST = 12;
+  QUEUE_CLEAR = 13;
+  SEARCH = 14;
+  LIB_SCAN = 15;
+  LIST_PEERS = 16;
+  STREAM_FROM = 17;
+  DEBUG_PEERS = 18;
+  DEBUG_STREAMS = 19;
+  HEALTH_CHECK = 20;
+  SUBSCRIBE = 21;
+  CREATE_PLAYLIST = 22;
+  GET_PLAYLIST = 23;
+  LIST_PLAYLISTS = 24;
+  ADD_TO_PLAYLIST = 25;
+  GET_TRACK = 26;
+  GET_TRACK_BY_PATH = 27;
+}
+
+enum SyncRequestType {
+  SYNC_UNKNOWN = 0;
+  MANIFEST = 1;
+  TRACK_DETAIL = 2;
+}
+
+message Request {
+  int32 protocol_version = 1;
+  CommandType type = 2;
+  bytes payload = 3;
+}
+
+message Response {
+  bool success = 1;
+  string error = 2;
+  bytes payload = 3;
+}
+
+message PlayRequest {
+  string track_id = 1;
+  string query = 2;
+}
+
+message PlayResponse {
+  bool ok = 1;
+  Track track = 2;
+  string error = 3;
+}
+
+message StatusResponse {
+  string state = 1;
+  Track current_track = 2;
+  int64 position_ms = 3;
+  int32 volume = 4;
+  int32 queue_length = 5;
+  int32 queue_position = 6;
+}
+
+message StatusRequest {}
+
+message PauseRequest {}
+
+message ResumeRequest {}
+
+message StopRequest {}
+
+message NextRequest {}
+
+message PrevRequest {}
+
+message SeekRequest {
+  int64 offset_ms = 1;
+}
+
+message SetVolumeRequest {
+  int32 volume = 1;
+}
+
+message QueueAddRequest {
+  string track_id = 1;
+  int32 position = 2;
+}
+
+message QueueRemoveRequest {
+  int32 position = 1;
+}
+
+message QueueResponse {
+  repeated Track tracks = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message SearchResponse {
+  repeated Track tracks = 1;
+  int32 total = 2;
+}
+
+message LibScanRequest {
+  bool incremental = 1;
+}
+
+message LibScanResponse {
+  bool started = 1;
+  int32 tracks_found = 2;
+}
+
+message Peer {
+  string id = 1;
+  repeated string addrs = 2;
+  bool connected = 3;
+  PeerScore score = 4;
+  PeerCapabilities capabilities = 5;
+}
+
+message ListPeersResponse {
+  repeated Peer peers = 1;
+}
+
+message StreamFromRequest {
+  string peer_id = 1;
+  string track_id = 2;
+}
+
+message DebugPeersResponse {
+  repeated PeerDebugInfo peers = 1;
+}
+
+message PeerDebugInfo {
+  string peer_id = 1;
+  double score = 2;
+  double avg_latency_ms = 3;
+  int64 avg_bandwidth = 4;
+  int32 success_count = 5;
+  int32 failure_count = 6;
+  string state = 7;
+  int64 last_seen = 8;
+}
+
+message DebugStreamsResponse {
+  repeated StreamDebugInfo streams = 1;
+}
+
+message StreamDebugInfo {
+  string stream_id = 1;
+  string peer_id = 2;
+  string track_id = 3;
+  int64 offset = 4;
+  int64 buffer_size = 5;
+  int64 buffer_fill = 6;
+  string state = 7;
+  int64 bytes_transferred = 8;
+}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  repeated ComponentHealth components = 2;
+}
+
+message ComponentHealth {
+  string name = 1;
+  bool healthy = 2;
+  string error = 3;
+}
+
+message SubscribeRequest {
+  int32 event_mask = 1;
+}
+
+message EventMessage {
+  EventType type = 1;
+  bytes payload = 2;
+  int64 timestamp = 3;
+}
+
+enum EventType {
+  TRACK_STARTED = 0;
+  TRACK_FINISHED = 1;
+  TRACK_PROGRESS = 2;
+  TRACK_ERROR = 3;
+  PLAYBACK_STATE_CHANGED = 4;
+  PEER_CONNECTED = 5;
+  PEER_DISCONNECTED = 6;
+  PEER_SCORE_UPDATED = 7;
+  SCAN_STARTED = 8;
+  SCAN_PROGRESS = 9;
+  SCAN_COMPLETE = 10;
+  QUEUE_UPDATED = 11;
+}
+
+message TrackStartedPayload {
+  Track track = 1;
+}
+
+message TrackFinishedPayload {
+  Track track = 1;
+}
+
+message TrackProgressPayload {
+  Track track = 1;
+  int64 position_ms = 2;
+  int64 duration_ms = 3;
+  float progress = 4;
+}
+
+message PlaybackStateChangedPayload {
+  string old_state = 1;
+  string new_state = 2;
+}
+
+message PeerEventPayload {
+  string peer_id = 1;
+  Peer peer = 2;
+}
+
+message PeerScorePayload {
+  string peer_id = 1;
+  double score = 2;
+}
+
+message ScanProgressPayload {
+  int32 phase = 1;
+  int32 total_found = 2;
+  int32 processed = 3;
+  string current_file = 4;
+}
+
+message ScanCompletePayload {
+  int32 tracks_added = 1;
+  int32 tracks_modified = 2;
+  int32 tracks_removed = 3;
+  int64 duration_ms = 4;
+}
+
+message QueueUpdatedPayload {
+  repeated Track tracks = 1;
+}
+
+message CreatePlaylistRequest {
+  string name = 1;
+}
+
+message CreatePlaylistResponse {
+  Playlist playlist = 1;
+}
+
+message GetPlaylistRequest {
+  string playlist_id = 1;
+}
+
+message GetPlaylistResponse {
+  Playlist playlist = 1;
+  repeated Track tracks = 2;
+}
+
+message ListPlaylistsResponse {
+  repeated Playlist playlists = 1;
+}
+
+message AddToPlaylistRequest {
+  string playlist_id = 1;
+  string track_id = 2;
+}
+
+message GetTrackRequest {
+  string track_id = 1;
+}
+
+message GetTrackByPathRequest {
+  string path = 1;
+}
+
+message GetTrackResponse {
+  Track track = 1;
+}
+
+message SyncRequest {
+  SyncRequestType type = 1;
+  string track_id = 2;
+}
+
+message SyncResponse {
+  oneof response {
+    LibraryManifest manifest = 1;
+    Track track = 2;
+  }
+}
