@@ -13,7 +13,7 @@ const (
 	eventChannelSize = 64
 )
 
-var subscriptionID uint64
+var subscriptionID atomic.Uint64
 
 type ringBuffer struct {
 	buf    []domain.Event
@@ -101,7 +101,7 @@ func (eb *EventBus) Subscribe(eventType domain.EventType, handler domain.EventHa
 		return func() {}
 	}
 
-	id := atomic.AddUint64(&subscriptionID, 1)
+	id := subscriptionID.Add(1)
 	sub := &subscription{
 		id:        id,
 		eventType: eventType,
