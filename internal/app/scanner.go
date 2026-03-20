@@ -183,7 +183,6 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string) (int, int, error) {
 	var scanned int
 	var added int
-
 	files := s.walkDirectory(dirPath)
 	for i, file := range files {
 		select {

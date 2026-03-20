@@ -16,7 +16,6 @@ func diffFileStats(current, previous map[string]*domain.FileStat) FileStats {
 		Modified: []string{},
 		Deleted:  []string{},
 	}
-
 	for path, currentStat := range current {
 		prevStat, exists := previous[path]
 		if !exists {

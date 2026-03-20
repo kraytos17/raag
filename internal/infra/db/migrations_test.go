@@ -7,7 +7,6 @@ import (
 
 func TestRunMigrations(t *testing.T) {
 	dir := t.TempDir()
-
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -21,7 +20,6 @@ func TestRunMigrations(t *testing.T) {
 
 func TestRunMigrations_Idempotent(t *testing.T) {
 	dir := t.TempDir()
-
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -31,7 +29,6 @@ func TestRunMigrations_Idempotent(t *testing.T) {
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("RunMigrations() first run error = %v", err)
 	}
-
 	if err := RunMigrations(db); err != nil {
 		t.Errorf("RunMigrations() second run error = %v", err)
 	}
@@ -39,7 +36,6 @@ func TestRunMigrations_Idempotent(t *testing.T) {
 
 func TestGetSchemaVersion_NewDB(t *testing.T) {
 	dir := t.TempDir()
-
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -57,7 +53,6 @@ func TestGetSchemaVersion_NewDB(t *testing.T) {
 
 func TestGetSchemaVersion_AfterMigrations(t *testing.T) {
 	dir := t.TempDir()
-
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -79,7 +74,6 @@ func TestGetSchemaVersion_AfterMigrations(t *testing.T) {
 
 func TestSetSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
-
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -121,7 +115,6 @@ func TestMigrationDescriptions(t *testing.T) {
 		"add inverted index",
 		"add peer score cache",
 	}
-
 	for i, m := range migrations {
 		if m.Description != expected[i] {
 			t.Errorf("Migration[%d].Description = %q, want %q", i, m.Description, expected[i])

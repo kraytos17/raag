@@ -13,10 +13,9 @@ func TestDiffFileStats_AllAdded(t *testing.T) {
 		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
 		"/music/song2.mp3": {Path: "/music/song2.mp3", Mtime: 1000, Size: 6000},
 	}
+	
 	previous := map[string]*domain.FileStat{}
-
 	result := diffFileStats(current, previous)
-
 	if len(result.Added) != 2 {
 		t.Errorf("Added count = %d, want 2", len(result.Added))
 	}
@@ -36,7 +35,6 @@ func TestDiffFileStats_AllDeleted(t *testing.T) {
 	}
 
 	result := diffFileStats(current, previous)
-
 	if len(result.Added) != 0 {
 		t.Errorf("Added count = %d, want 0", len(result.Added))
 	}
@@ -57,7 +55,6 @@ func TestDiffFileStats_Modified(t *testing.T) {
 	}
 
 	result := diffFileStats(current, previous)
-
 	if len(result.Added) != 0 {
 		t.Errorf("Added count = %d, want 0", len(result.Added))
 	}
@@ -78,7 +75,6 @@ func TestDiffFileStats_SizeChanged(t *testing.T) {
 	}
 
 	result := diffFileStats(current, previous)
-
 	if len(result.Modified) != 1 {
 		t.Errorf("Modified count = %d, want 1", len(result.Modified))
 	}
@@ -93,7 +89,6 @@ func TestDiffFileStats_Unchanged(t *testing.T) {
 	}
 
 	result := diffFileStats(current, previous)
-
 	if len(result.Added) != 0 {
 		t.Errorf("Added count = %d, want 0", len(result.Added))
 	}
@@ -118,7 +113,6 @@ func TestDiffFileStats_Mixed(t *testing.T) {
 	}
 
 	result := diffFileStats(current, previous)
-
 	if len(result.Added) != 1 {
 		t.Errorf("Added count = %d, want 1", len(result.Added))
 	}
@@ -132,7 +126,6 @@ func TestDiffFileStats_Mixed(t *testing.T) {
 
 func TestDiffFileStats_EmptyMaps(t *testing.T) {
 	result := diffFileStats(map[string]*domain.FileStat{}, map[string]*domain.FileStat{})
-
 	if len(result.Added) != 0 || len(result.Modified) != 0 || len(result.Deleted) != 0 {
 		t.Error("diffFileStats() with empty maps should return empty result")
 	}
@@ -183,7 +176,6 @@ func TestFileStat_Changed(t *testing.T) {
 func TestFileStat_Changed_WithHash(t *testing.T) {
 	current := &domain.FileStat{Mtime: 1000, Size: 1000, Hash: "abc"}
 	other := &domain.FileStat{Mtime: 1000, Size: 1000, Hash: "xyz"}
-
 	if current.Changed(other) {
 		t.Error("FileStat.Changed() should not consider Hash field")
 	}
@@ -202,7 +194,6 @@ func TestDiffFileStats_ResultsContainExpectedPaths(t *testing.T) {
 	}
 
 	result := diffFileStats(current, previous)
-
 	foundAdded := slices.Contains(result.Added, "/music/new.mp3")
 	if !foundAdded {
 		t.Error("Expected /music/new.mp3 in Added list")
@@ -222,7 +213,6 @@ func TestDiffFileStats_ResultsContainExpectedPaths(t *testing.T) {
 func TestFileStat_New(t *testing.T) {
 	path := "/music/test.mp3"
 	now := time.Now().Unix()
-
 	stat := &domain.FileStat{
 		Path:  path,
 		Mtime: now,

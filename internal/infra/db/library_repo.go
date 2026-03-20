@@ -149,7 +149,6 @@ func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 	if err != nil {
 		return err
 	}
-
 	return r.db.Update(func(txn *badger.Txn) error {
 		if err := txn.Delete(TrackKey(id)); err != nil {
 			return err

@@ -66,7 +66,6 @@ func (cb *circuitBreaker) RecordSuccess() {
 		if cb.failCount > 0 {
 			cb.failCount--
 		}
-
 	case cbStateHalfOpen:
 		cb.halfOpenSuccesses++
 		cb.successCount++
@@ -74,8 +73,6 @@ func (cb *circuitBreaker) RecordSuccess() {
 			cb.state = cbStateClosed
 			cb.failCount = 0
 		}
-
-	case cbStateOpen:
 	}
 }
 
@@ -91,11 +88,8 @@ func (cb *circuitBreaker) RecordFailure() {
 		if cb.failCount >= cb.threshold {
 			cb.state = cbStateOpen
 		}
-
 	case cbStateHalfOpen:
 		cb.state = cbStateOpen
-
-	case cbStateOpen:
 	}
 }
 
