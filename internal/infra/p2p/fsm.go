@@ -51,7 +51,7 @@ var peerTransitions = map[peerState]map[peerEvent]peerState{
 	peerStateDisconnected: {peerEventRetry: peerStateConnecting},
 }
 
-func (p *peerLifecycleFSM) Send(event peerEvent) error {
+func (p *peerLifecycleFSM) Send(ctx context.Context, event peerEvent) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -66,9 +66,9 @@ func (p *peerLifecycleFSM) Send(event peerEvent) error {
 	slog.Debug("peer FSM transition", "from", prev, "to", next, "event", event)
 	switch next {
 	case peerStateConnected:
-		p.bus.Publish(context.Background(), domain.NewEvent(domain.EventPeerConnected, domain.PeerConnectedPayload{}))
+		p.bus.Publish(ctx, domain.NewEvent(domain.EventPeerConnected, domain.PeerConnectedPayload{}))
 	case peerStateDisconnected:
-		p.bus.Publish(context.Background(), domain.NewEvent(domain.EventPeerDisconnected, domain.PeerDisconnectedPayload{Reason: "FSM transition"}))
+		p.bus.Publish(ctx, domain.NewEvent(domain.EventPeerDisconnected, domain.PeerDisconnectedPayload{Reason: "FSM transition"}))
 	}
 	return nil
 }

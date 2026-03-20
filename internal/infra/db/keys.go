@@ -3,22 +3,26 @@ package db
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
+	"unicode"
 
 	"github.com/p-society/raag/internal/domain"
 )
 
 const (
-	PrefixTrackData   = "trk:data:"
-	PrefixTrackPath   = "trk:path:"
-	PrefixTrackArtist = "trk:artist:"
-	PrefixTrackAlbum  = "trk:album:"
-	PrefixIdxTerm     = "idx:term:"
-	PrefixIdxTrigram  = "idx:trigram:"
-	PrefixFileStat    = "meta:filestat:"
-	PrefixPlaylist    = "pl:"
-	PrefixPeer        = "peer:"
-	PrefixPeerLib     = "peer:lib:"
-	PrefixPeerScore   = "peer:score:"
+	PrefixTrackData    = "trk:data:"
+	PrefixTrackPath    = "trk:path:"
+	PrefixTrackPathStr = "trk:pathstr:"
+	PrefixTrackArtist  = "trk:artist:"
+	PrefixTrackAlbum   = "trk:album:"
+	PrefixIdxTerm      = "idx:term:"
+	PrefixIdxTrigram   = "idx:trigram:"
+	PrefixFileStat     = "meta:filestat:"
+	PrefixPlaylist     = "pl:"
+	PrefixPeer         = "peer:"
+	PrefixPeerLib      = "peer:lib:"
+	PrefixPeerScore    = "peer:score:"
+	PrefixTrackCover   = "trk:cover:"
 
 	KeyIdentity      = "cfg:identity"
 	KeySchemaVersion = "cfg:schema"
@@ -30,6 +34,10 @@ func TrackKey(id domain.TrackID) []byte {
 
 func PathKey(path string) []byte {
 	return []byte(PrefixTrackPath + pathHash(path))
+}
+
+func PathStrKey(path string) []byte {
+	return []byte(PrefixTrackPathStr + path)
 }
 
 func ArtistIndexKey(artist string, id domain.TrackID) []byte {
@@ -68,17 +76,19 @@ func PeerScoreKey(id domain.PeerID) []byte {
 	return []byte(PrefixPeerScore + string(id))
 }
 
+func CoverArtKey(id domain.TrackID) []byte {
+	return []byte(PrefixTrackCover + string(id))
+}
+
 func normalizeKey(s string) string {
-	result := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			result = append(result, c+32)
-		} else if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
-			result = append(result, c)
+	var result strings.Builder
+	for _, r := range s {
+		lower := unicode.ToLower(r)
+		if unicode.IsLetter(lower) || r >= '0' && r <= '9' {
+			result.WriteRune(lower)
 		}
 	}
-	return string(result)
+	return result.String()
 }
 
 func pathHash(path string) string {

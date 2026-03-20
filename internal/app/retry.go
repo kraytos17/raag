@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math"
 	"time"
@@ -21,13 +22,6 @@ func DefaultRetryPolicy() *RetryPolicy {
 		MaxDelay:     5 * time.Second,
 		Multiplier:   2.0,
 	}
-}
-
-func (r *RetryPolicy) ShouldRetry(attempt int, err error) bool {
-	if attempt >= r.MaxAttempts {
-		return false
-	}
-	return err != nil
 }
 
 func (r *RetryPolicy) NextDelay(attempt int) time.Duration {
@@ -51,7 +45,7 @@ func DoWithRetry(ctx context.Context, policy *RetryPolicy, fn func() error) erro
 		if lastErr == nil {
 			return nil
 		}
-		if !policy.ShouldRetry(attempt, lastErr) {
+		if !IsRetryable(lastErr) {
 			return lastErr
 		}
 
@@ -87,7 +81,7 @@ func (e *RetryableError) Unwrap() error {
 }
 
 func IsRetryable(err error) bool {
-	_, ok := err.(*RetryableError)
+	_, ok := errors.AsType[*RetryableError](err)
 	return ok
 }
 

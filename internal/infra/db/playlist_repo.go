@@ -2,10 +2,9 @@ package db
 
 import (
 	"context"
-	"encoding/json"
+	"iter"
 
 	"github.com/dgraph-io/badger/v4"
-
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 )
@@ -19,7 +18,7 @@ func NewPlaylistRepo(db *DB) app.PlaylistRepository {
 }
 
 func (r *playlistRepo) Save(ctx context.Context, playlist *domain.Playlist) error {
-	data, err := json.Marshal(playlist)
+	data, err := domain.MarshalPlaylist(playlist)
 	if err != nil {
 		return err
 	}
@@ -41,46 +40,46 @@ func (r *playlistRepo) FindByID(ctx context.Context, id domain.PlaylistID) (*dom
 			return err
 		}
 
-		p := &domain.Playlist{}
-		if err := json.Unmarshal(data, p); err != nil {
+		p, err := domain.UnmarshalPlaylist(data)
+		if err != nil {
 			return err
 		}
 
 		playlist = p
 		return nil
 	})
-
 	if err == badger.ErrKeyNotFound {
 		return nil, domain.ErrPlaylistNotFound
 	}
 	return playlist, err
 }
 
-func (r *playlistRepo) List(ctx context.Context) ([]*domain.Playlist, error) {
-	var playlists []*domain.Playlist
-	err := r.db.View(func(txn *badger.Txn) error {
-		iter := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer iter.Close()
+func (r *playlistRepo) ListAll(ctx context.Context) iter.Seq[*domain.Playlist] {
+	return func(yield func(*domain.Playlist) bool) {
+		_ = r.db.View(func(txn *badger.Txn) error {
+			iter := txn.NewIterator(badger.DefaultIteratorOptions)
+			defer iter.Close()
 
-		iter.Seek([]byte(PrefixPlaylist))
-		for iter.ValidForPrefix([]byte(PrefixPlaylist)) {
-			item := iter.Item()
-			data, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
+			iter.Seek([]byte(PrefixPlaylist))
+			for iter.ValidForPrefix([]byte(PrefixPlaylist)) {
+				item := iter.Item()
+				data, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
+
+				p, err := domain.UnmarshalPlaylist(data)
+				if err != nil {
+					return err
+				}
+				if !yield(p) {
+					return nil
+				}
+				iter.Next()
 			}
-
-			p := &domain.Playlist{}
-			if err := json.Unmarshal(data, p); err != nil {
-				return err
-			}
-
-			playlists = append(playlists, p)
-			iter.Next()
-		}
-		return nil
-	})
-	return playlists, err
+			return nil
+		})
+	}
 }
 
 func (r *playlistRepo) Delete(ctx context.Context, id domain.PlaylistID) error {

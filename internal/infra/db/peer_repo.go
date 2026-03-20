@@ -2,10 +2,9 @@ package db
 
 import (
 	"context"
-	"encoding/json"
+	"iter"
 
 	"github.com/dgraph-io/badger/v4"
-
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 )
@@ -19,7 +18,7 @@ func NewPeerRepo(db *DB) app.PeerRepository {
 }
 
 func (r *peerRepo) SavePeerInfo(ctx context.Context, info *domain.PeerInfo) error {
-	data, err := json.Marshal(info)
+	data, err := domain.MarshalPeerInfo(info)
 	if err != nil {
 		return err
 	}
@@ -41,8 +40,8 @@ func (r *peerRepo) GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.P
 			return err
 		}
 
-		p := &domain.PeerInfo{}
-		if err := json.Unmarshal(data, p); err != nil {
+		p, err := domain.UnmarshalPeerInfo(data)
+		if err != nil {
 			return err
 		}
 
@@ -57,7 +56,7 @@ func (r *peerRepo) GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.P
 }
 
 func (r *peerRepo) SavePeerScore(ctx context.Context, id domain.PeerID, score *domain.PeerScore) error {
-	data, err := json.Marshal(score)
+	data, err := domain.MarshalPeerScore(score)
 	if err != nil {
 		return err
 	}
@@ -79,8 +78,8 @@ func (r *peerRepo) GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.
 			return err
 		}
 
-		s := &domain.PeerScore{}
-		if err := json.Unmarshal(data, s); err != nil {
+		s, err := domain.UnmarshalPeerScore(data)
+		if err != nil {
 			return err
 		}
 
@@ -95,7 +94,7 @@ func (r *peerRepo) GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.
 }
 
 func (r *peerRepo) SaveLibraryManifest(ctx context.Context, id domain.PeerID, manifest *domain.LibraryManifest) error {
-	data, err := json.Marshal(manifest)
+	data, err := domain.MarshalLibraryManifest(manifest)
 	if err != nil {
 		return err
 	}
@@ -117,56 +116,57 @@ func (r *peerRepo) GetLibraryManifest(ctx context.Context, id domain.PeerID) (*d
 			return err
 		}
 
-		m := &domain.LibraryManifest{}
-		if err := json.Unmarshal(data, m); err != nil {
+		m, err := domain.UnmarshalLibraryManifest(data)
+		if err != nil {
 			return err
 		}
 
 		manifest = m
 		return nil
 	})
-
 	if err == badger.ErrKeyNotFound {
 		return nil, nil
 	}
 	return manifest, err
 }
 
-func (r *peerRepo) ListAllPeers(ctx context.Context) ([]*domain.PeerInfo, error) {
-	var peers []*domain.PeerInfo
-	err := r.db.View(func(txn *badger.Txn) error {
-		iter := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer iter.Close()
+func (r *peerRepo) ListAll(ctx context.Context) iter.Seq[*domain.PeerInfo] {
+	return func(yield func(*domain.PeerInfo) bool) {
+		_ = r.db.View(func(txn *badger.Txn) error {
+			iter := txn.NewIterator(badger.DefaultIteratorOptions)
+			defer iter.Close()
 
-		prefix := []byte(PrefixPeer)
-		iter.Seek(prefix)
-		for iter.ValidForPrefix(prefix) {
-			item := iter.Item()
-			key := item.Key()
-			keyStr := string(key)
-			if len(keyStr) >= len(PrefixPeerLib) && keyStr[:len(PrefixPeerLib)] == PrefixPeerLib {
-				iter.Next()
-				continue
-			}
-			if len(keyStr) >= len(PrefixPeerScore) && keyStr[:len(PrefixPeerScore)] == PrefixPeerScore {
-				iter.Next()
-				continue
-			}
+			prefix := []byte(PrefixPeer)
+			iter.Seek(prefix)
+			for iter.ValidForPrefix(prefix) {
+				item := iter.Item()
+				key := item.Key()
+				keyStr := string(key)
+				if len(keyStr) >= len(PrefixPeerLib) && keyStr[:len(PrefixPeerLib)] == PrefixPeerLib {
+					iter.Next()
+					continue
+				}
+				if len(keyStr) >= len(PrefixPeerScore) && keyStr[:len(PrefixPeerScore)] == PrefixPeerScore {
+					iter.Next()
+					continue
+				}
 
-			data, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
+				data, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
 
-			p := &domain.PeerInfo{}
-			if err := json.Unmarshal(data, p); err != nil {
+				p, err := domain.UnmarshalPeerInfo(data)
+				if err != nil {
+					iter.Next()
+					continue
+				}
+				if !yield(p) {
+					return nil
+				}
 				iter.Next()
-				continue
 			}
-			peers = append(peers, p)
-			iter.Next()
-		}
-		return nil
-	})
-	return peers, err
+			return nil
+		})
+	}
 }

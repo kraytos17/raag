@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"iter"
 	"strings"
@@ -15,7 +14,7 @@ import (
 )
 
 const (
-	defaultCacheSize = 1000
+	defaultCacheSize = 10000
 	batchSize        = 500
 )
 
@@ -42,15 +41,34 @@ func (r *libraryRepo) Save(ctx context.Context, track *domain.Track) error {
 }
 
 func (r *libraryRepo) saveTrack(txn *badger.Txn, track *domain.Track) error {
-	data, err := json.Marshal(track)
-	if err != nil {
-		return fmt.Errorf("failed to marshal track: %w", err)
-	}
-	if err := txn.Set(TrackKey(track.ID), data); err != nil {
-		return fmt.Errorf("failed to save track: %w", err)
+	if len(track.CoverArt) > 0 {
+		if err := txn.Set(CoverArtKey(track.ID), track.CoverArt); err != nil {
+			return fmt.Errorf("failed to save cover art: %w", err)
+		}
+
+		trackCopy := *track
+		trackCopy.CoverArt = nil
+		data, err := domain.MarshalTrack(&trackCopy)
+		if err != nil {
+			return fmt.Errorf("failed to marshal track: %w", err)
+		}
+		if err := txn.Set(TrackKey(track.ID), data); err != nil {
+			return fmt.Errorf("failed to save track: %w", err)
+		}
+	} else {
+		data, err := domain.MarshalTrack(track)
+		if err != nil {
+			return fmt.Errorf("failed to marshal track: %w", err)
+		}
+		if err := txn.Set(TrackKey(track.ID), data); err != nil {
+			return fmt.Errorf("failed to save track: %w", err)
+		}
 	}
 	if err := txn.Set(PathKey(track.Path), []byte(track.ID)); err != nil {
 		return fmt.Errorf("failed to save path index: %w", err)
+	}
+	if err := txn.Set(PathStrKey(track.Path), []byte(track.ID)); err != nil {
+		return fmt.Errorf("failed to save path str index: %w", err)
 	}
 	if err := txn.Set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
 		return fmt.Errorf("failed to save artist index: %w", err)
@@ -80,8 +98,8 @@ func (r *libraryRepo) FindByID(ctx context.Context, id domain.TrackID) (*domain.
 			return err
 		}
 
-		track := &domain.Track{}
-		if err := json.Unmarshal(data, track); err != nil {
+		track, err := domain.UnmarshalTrack(data)
+		if err != nil {
 			return fmt.Errorf("failed to unmarshal track: %w", err)
 		}
 
@@ -94,6 +112,55 @@ func (r *libraryRepo) FindByID(ctx context.Context, id domain.TrackID) (*domain.
 		return nil, domain.ErrTrackNotFound
 	}
 	return result, err
+}
+
+func (r *libraryRepo) FindByIDs(ctx context.Context, ids []domain.TrackID) ([]*domain.Track, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var results []*domain.Track
+	idSet := make(map[domain.TrackID]bool, len(ids))
+	for _, id := range ids {
+		idSet[id] = true
+		if track, ok := r.cache.Get(string(id)); ok {
+			results = append(results, track)
+			delete(idSet, id)
+		}
+	}
+	if len(idSet) == 0 {
+		return results, nil
+	}
+
+	err := r.db.View(func(txn *badger.Txn) error {
+		iter := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer iter.Close()
+
+		prefix := []byte(PrefixTrackData)
+		for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
+			item := iter.Item()
+			key := string(item.Key())
+			trackID := domain.TrackID(key[len(PrefixTrackData):])
+			if !idSet[trackID] {
+				continue
+			}
+
+			data, err := item.ValueCopy(nil)
+			if err != nil {
+				continue
+			}
+
+			track, err := domain.UnmarshalTrack(data)
+			if err != nil {
+				continue
+			}
+
+			results = append(results, track)
+			r.cache.Add(string(trackID), track)
+		}
+		return nil
+	})
+	return results, err
 }
 
 func (r *libraryRepo) FindByPath(ctx context.Context, path string) (*domain.Track, error) {
@@ -122,9 +189,25 @@ func (r *libraryRepo) FindByPath(ctx context.Context, path string) (*domain.Trac
 	return r.FindByID(ctx, trackID)
 }
 
-func (r *libraryRepo) AllTracksIter(ctx context.Context) iter.Seq[*domain.Track] {
-	return func(yield func(*domain.Track) bool) {
-		_ = r.db.View(func(txn *badger.Txn) error {
+func (r *libraryRepo) GetCoverArt(ctx context.Context, id domain.TrackID) ([]byte, error) {
+	var coverArt []byte
+	err := r.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(CoverArtKey(id))
+		if err != nil {
+			return err
+		}
+		coverArt, err = item.ValueCopy(nil)
+		return err
+	})
+	if err == badger.ErrKeyNotFound {
+		return nil, nil
+	}
+	return coverArt, err
+}
+
+func (r *libraryRepo) AllTracksIter(ctx context.Context) iter.Seq2[*domain.Track, error] {
+	return func(yield func(*domain.Track, error) bool) {
+		err := r.db.View(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer it.Close()
 
@@ -135,26 +218,39 @@ func (r *libraryRepo) AllTracksIter(ctx context.Context) iter.Seq[*domain.Track]
 				}
 
 				item := it.Item()
-				var track domain.Track
-				err := item.Value(func(val []byte) error {
-					return json.Unmarshal(val, &track)
+				var track *domain.Track
+				e := item.Value(func(val []byte) error {
+					var err error
+					track, err = domain.UnmarshalTrack(val)
+					return err
 				})
-				if err != nil {
+				if e != nil {
+					if !yield(nil, e) {
+						return nil
+					}
 					continue
 				}
-				if !yield(&track) {
+				if !yield(track, nil) {
 					return nil
 				}
 			}
 			return nil
 		})
+		if err != nil {
+			yield(nil, err)
+		}
 	}
 }
 
 func (r *libraryRepo) Search(ctx context.Context, q app.SearchQuery) ([]*domain.Track, error) {
 	var results []*domain.Track
+	var iterErr error
 	query := strings.ToLower(strings.TrimSpace(q.Query))
-	for track := range r.AllTracksIter(ctx) {
+	for track, err := range r.AllTracksIter(ctx) {
+		if err != nil {
+			iterErr = err
+			continue
+		}
 		if strings.Contains(strings.ToLower(track.Title), query) ||
 			strings.Contains(strings.ToLower(track.Artist), query) {
 			results = append(results, track)
@@ -162,6 +258,9 @@ func (r *libraryRepo) Search(ctx context.Context, q app.SearchQuery) ([]*domain.
 				break
 			}
 		}
+	}
+	if iterErr != nil {
+		return results, iterErr
 	}
 	return results, nil
 }
@@ -175,7 +274,13 @@ func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 		if err := txn.Delete(TrackKey(id)); err != nil {
 			return err
 		}
+		if err := txn.Delete(CoverArtKey(id)); err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
 		if err := txn.Delete(PathKey(track.Path)); err != nil {
+			return err
+		}
+		if err := txn.Delete(PathStrKey(track.Path)); err != nil {
 			return err
 		}
 		if err := txn.Delete(ArtistIndexKey(track.Artist, id)); err != nil {
@@ -191,20 +296,49 @@ func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 }
 
 func (r *libraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) error {
+	// BulkSave uses BadgerDB WriteBatch with periodic Flush calls for performance.
+	// WARNING: WriteBatch is not transactional across Flush boundaries. If Flush
+	// succeeds for batch N and batch N+1 fails, the committed data from batch N
+	// is permanently written. Callers must handle partial completion by either:
+	// 1. Using unique IDs to detect duplicates on retry, or
+	// 2. Accepting that BulkSave may partially complete on error.
 	wb := r.db.NewWriteBatch()
 	for i, track := range tracks {
-		data, err := json.Marshal(track)
-		if err != nil {
-			wb.Cancel()
-			return fmt.Errorf("failed to marshal track: %w", err)
-		}
-		if err := wb.Set(TrackKey(track.ID), data); err != nil {
-			wb.Cancel()
-			return fmt.Errorf("failed to save track: %w", err)
+		if len(track.CoverArt) > 0 {
+			if err := wb.Set(CoverArtKey(track.ID), track.CoverArt); err != nil {
+				wb.Cancel()
+				return fmt.Errorf("failed to save cover art: %w", err)
+			}
+
+			trackCopy := *track
+			trackCopy.CoverArt = nil
+			data, err := domain.MarshalTrack(&trackCopy)
+			if err != nil {
+				wb.Cancel()
+				return fmt.Errorf("failed to marshal track: %w", err)
+			}
+			if err := wb.Set(TrackKey(track.ID), data); err != nil {
+				wb.Cancel()
+				return fmt.Errorf("failed to save track: %w", err)
+			}
+		} else {
+			data, err := domain.MarshalTrack(track)
+			if err != nil {
+				wb.Cancel()
+				return fmt.Errorf("failed to marshal track: %w", err)
+			}
+			if err := wb.Set(TrackKey(track.ID), data); err != nil {
+				wb.Cancel()
+				return fmt.Errorf("failed to save track: %w", err)
+			}
 		}
 		if err := wb.Set(PathKey(track.Path), []byte(track.ID)); err != nil {
 			wb.Cancel()
 			return fmt.Errorf("failed to save path index: %w", err)
+		}
+		if err := wb.Set(PathStrKey(track.Path), []byte(track.ID)); err != nil {
+			wb.Cancel()
+			return fmt.Errorf("failed to save path str index: %w", err)
 		}
 		if err := wb.Set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
 			wb.Cancel()
@@ -239,16 +373,15 @@ func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
 		iter.Seek([]byte(PrefixTrackData))
 		for iter.ValidForPrefix([]byte(PrefixTrackData)) {
 			item := iter.Item()
-			data, err := item.ValueCopy(nil)
-			if err != nil {
+			var track *domain.Track
+			e := item.Value(func(val []byte) error {
+				var err error
+				track, err = domain.UnmarshalTrack(val)
 				return err
+			})
+			if e != nil {
+				return e
 			}
-
-			track := &domain.Track{}
-			if err := json.Unmarshal(data, track); err != nil {
-				return err
-			}
-
 			tracks = append(tracks, track)
 			iter.Next()
 		}
@@ -257,10 +390,33 @@ func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
 	return tracks, err
 }
 
+func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {
+	var paths []string
+	err := r.db.View(func(txn *badger.Txn) error {
+		iter := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer iter.Close()
+
+		iter.Seek([]byte(PrefixTrackPathStr))
+		for iter.ValidForPrefix([]byte(PrefixTrackPathStr)) {
+			item := iter.Item()
+			key := string(item.Key())
+			if len(key) <= len(PrefixTrackPathStr) {
+				iter.Next()
+				continue
+			}
+
+			paths = append(paths, key[len(PrefixTrackPathStr):])
+			iter.Next()
+		}
+		return nil
+	})
+	return paths, err
+}
+
 func (r *libraryRepo) SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error {
 	wb := r.db.NewWriteBatch()
 	for path, stat := range stats {
-		data, err := json.Marshal(stat)
+		data, err := domain.MarshalFileStat(stat)
 		if err != nil {
 			wb.Cancel()
 			return err
@@ -291,8 +447,8 @@ func (r *libraryRepo) LoadFileStats(ctx context.Context) (map[string]*domain.Fil
 				return err
 			}
 
-			stat := &domain.FileStat{}
-			if err := json.Unmarshal(data, stat); err != nil {
+			stat, err := domain.UnmarshalFileStat(data)
+			if err != nil {
 				return err
 			}
 
@@ -312,10 +468,9 @@ func normalize(s string) string {
 	s = strings.ToLower(s)
 	s = strings.TrimSpace(s)
 	var result strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == ' ' {
-			result.WriteByte(c)
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' {
+			result.WriteRune(r)
 		}
 	}
 	return result.String()

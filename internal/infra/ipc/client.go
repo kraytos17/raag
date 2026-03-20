@@ -1,17 +1,17 @@
 package ipc
 
 import (
-	"context"
+	"fmt"
 	"net"
 	"time"
 
-	"github.com/p-society/raag/internal/infra/ipc/commands"
 	pb "github.com/p-society/raag/proto/gen"
 )
 
+const ipcTimeout = 3 * time.Second
+
 type Client struct {
 	socketPath string
-	conn       net.Conn
 }
 
 func NewClient(socketPath string) *Client {
@@ -20,106 +20,178 @@ func NewClient(socketPath string) *Client {
 	}
 }
 
-func (c *Client) Connect(ctx context.Context) error {
-	conn, err := net.DialTimeout("unix", c.socketPath, 3*time.Second)
+func (c *Client) Play(trackID, query string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Play{Play: &pb.PlayRequest{TrackId: trackID, Query: query}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) Pause() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Pause{Pause: &pb.PauseRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) Resume() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Resume{Resume: &pb.ResumeRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) Stop() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Stop{Stop: &pb.StopRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) Next() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Next{Next: &pb.NextRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) Prev() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Prev{Prev: &pb.PrevRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) SeekTo(offsetMs int64) error {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Seek{Seek: &pb.SeekRequest{OffsetMs: offsetMs}},
+	}
+
+	resp, err := c.send(req)
 	if err != nil {
 		return err
 	}
-	c.conn = conn
-	return nil
-}
-
-func (c *Client) Close() error {
-	if c.conn != nil {
-		return c.conn.Close()
+	if !resp.Success {
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
 
-func (c *Client) Send(ctx context.Context, cmd commands.Command) (commands.Response, error) {
-	if c.conn == nil {
-		if err := c.Connect(ctx); err != nil {
-			return commands.Response{Status: "error", Error: err.Error()}, err
-		}
-	}
-
-	cmdType, err := commandTypeFromString(cmd.Type)
-	if err != nil {
-		return commands.Response{Status: "error", Error: err.Error()}, err
-	}
-
+func (c *Client) SetVolume(volume int32) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: 1,
-		Type:            cmdType,
-		Payload:         cmd.Payload,
+		Payload:         &pb.Request_SetVolume{SetVolume: &pb.SetVolumeRequest{Volume: volume}},
 	}
-
-	if err := c.conn.SetWriteDeadline(time.Now().Add(3 * time.Second)); err != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-		return commands.Response{Status: "error", Error: err.Error()}, err
-	}
-	if err := WriteRequest(c.conn, req); err != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-		return commands.Response{Status: "error", Error: err.Error()}, err
-	}
-
-	if err := c.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-		return commands.Response{Status: "error", Error: err.Error()}, err
-	}
-	resp, err := ReadResponse(c.conn)
-	if err != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-		return commands.Response{Status: "error", Error: err.Error()}, err
-	}
-
-	status := "ok"
-	if !resp.Success {
-		status = "error"
-	}
-
-	return commands.Response{
-		Status: status,
-		Error:  resp.Error,
-		Data:   resp.Payload,
-	}, nil
+	return c.send(req)
 }
 
-func commandTypeFromString(cmdType commands.CommandType) (pb.CommandType, error) {
-	mapping := map[commands.CommandType]pb.CommandType{
-		commands.CmdPlay:           pb.CommandType_PLAY,
-		commands.CmdPause:          pb.CommandType_PAUSE,
-		commands.CmdResume:         pb.CommandType_RESUME,
-		commands.CmdStop:           pb.CommandType_STOP,
-		commands.CmdNext:           pb.CommandType_NEXT,
-		commands.CmdPrev:           pb.CommandType_PREV,
-		commands.CmdSeekTo:         pb.CommandType_SEEK_TO,
-		commands.CmdSetVolume:      pb.CommandType_SET_VOLUME,
-		commands.CmdQueueAdd:       pb.CommandType_QUEUE_ADD,
-		commands.CmdQueueRemove:    pb.CommandType_QUEUE_REMOVE,
-		commands.CmdQueueClear:     pb.CommandType_QUEUE_CLEAR,
-		commands.CmdSearch:         pb.CommandType_SEARCH,
-		commands.CmdLibScan:        pb.CommandType_LIB_SCAN,
-		commands.CmdListPeers:      pb.CommandType_LIST_PEERS,
-		commands.CmdStreamFrom:     pb.CommandType_STREAM_FROM,
-		commands.CmdDebugPeers:     pb.CommandType_DEBUG_PEERS,
-		commands.CmdDebugStreams:   pb.CommandType_DEBUG_STREAMS,
-		commands.CmdHealthCheck:    pb.CommandType_HEALTH_CHECK,
-		commands.CmdStatus:         pb.CommandType_STATUS,
-		commands.CmdSubscribe:      pb.CommandType_SUBSCRIBE,
-		commands.CmdCreatePlaylist: pb.CommandType_CREATE_PLAYLIST,
-		// TODO: Add QUEUE_MOVE and DELETE_PLAYLIST to protobuf enum
-		// These commands are not yet implemented and have no protobuf mapping
-		commands.CmdQueueMove:      pb.CommandType_UNKNOWN,
-		commands.CmdDeletePlaylist: pb.CommandType_UNKNOWN,
+func (c *Client) QueueAdd(trackID string, position int32) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_QueueAdd{QueueAdd: &pb.QueueAddRequest{TrackId: trackID, Position: position}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) QueueRemove(position int32) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_QueueRemove{QueueRemove: &pb.QueueRemoveRequest{Position: position}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) QueueClear() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_QueueClear{QueueClear: &pb.QueueClearRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) Search(query string, limit int32) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Search{Search: &pb.SearchRequest{Query: query, Limit: limit}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) LibScan(incremental bool) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_LibScan{LibScan: &pb.LibScanRequest{Incremental: incremental}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) ListPeers() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_ListPeers{ListPeers: &pb.ListPeersRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) Status() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_Status{Status: &pb.StatusRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) HealthCheck() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_HealthCheck{HealthCheck: &pb.HealthCheckRequest{}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) GetTrack(trackID string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_GetTrack{GetTrack: &pb.GetTrackRequest{TrackId: trackID}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) GetTrackByPath(path string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: 1,
+		Payload:         &pb.Request_GetTrackByPath{GetTrackByPath: &pb.GetTrackByPathRequest{Path: path}},
+	}
+	return c.send(req)
+}
+
+func (c *Client) send(req *pb.Request) (*pb.Response, error) {
+	conn, err := net.DialTimeout("unix", c.socketPath, ipcTimeout)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if err := conn.SetWriteDeadline(time.Now().Add(ipcTimeout)); err != nil {
+		return nil, err
+	}
+	if err := WriteMsg(conn, req); err != nil {
+		return nil, err
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(ipcTimeout)); err != nil {
+		return nil, err
 	}
 
-	if t, ok := mapping[cmdType]; ok {
-		return t, nil
+	var resp pb.Response
+	if err := ReadMsg(conn, &resp); err != nil {
+		return nil, err
 	}
-	return pb.CommandType_UNKNOWN, nil
+	return &resp, nil
 }

@@ -66,14 +66,13 @@ func (s *SearchService) resolveAndRankTracks(ctx context.Context, query string, 
 		score float64
 	}
 
-	scored := make([]scoredTrack, 0, len(ids))
-	for _, id := range ids {
-		track, err := s.libraryRepo.FindByID(ctx, id)
-		if err != nil {
-			slog.Warn("failed to resolve track", "id", id, "error", err)
-			continue
-		}
+	tracks, err := s.libraryRepo.FindByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("failed to batch resolve tracks", "error", err)
+	}
 
+	scored := make([]scoredTrack, 0, len(tracks))
+	for _, track := range tracks {
 		score := s.calculateRankScore(query, track)
 		scored = append(scored, scoredTrack{track: track, score: score})
 	}
@@ -129,10 +128,9 @@ func (s *SearchService) calculateRecencyScore(track *domain.Track) float64 {
 func normalizeSearchQuery(q string) string {
 	q = strings.ToLower(strings.TrimSpace(q))
 	var result strings.Builder
-	for i := 0; i < len(q); i++ {
-		c := q[i]
-		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == ' ' {
-			result.WriteByte(c)
+	for _, r := range q {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' {
+			result.WriteRune(r)
 		}
 	}
 	return result.String()
@@ -141,10 +139,9 @@ func normalizeSearchQuery(q string) string {
 func normalizeSearchField(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var result strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == ' ' {
-			result.WriteByte(c)
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' {
+			result.WriteRune(r)
 		}
 	}
 	return result.String()

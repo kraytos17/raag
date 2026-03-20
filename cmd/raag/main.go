@@ -1,17 +1,12 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/p-society/raag/internal/config"
-	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/ipc"
-	"github.com/p-society/raag/internal/infra/ipc/commands"
 	"github.com/spf13/cobra"
 )
 
@@ -56,49 +51,34 @@ func getClient() (*ipc.Client, func(), error) {
 	}
 
 	client := ipc.NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	if err := client.Connect(ctx); err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to daemon: %w (is raagd running?)", err)
-	}
-	return client, func() { _ = client.Close() }, nil
-}
-
-func sendCommand(cmd commands.Command) (commands.Response, error) {
-	client, cleanup, err := getClient()
-	if err != nil {
-		return commands.Response{}, err
-	}
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return client.Send(ctx, cmd)
+	return client, func() {}, nil
 }
 
 func newPlayCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "play [query or track-id]",
+	var byID bool
+	cmd := &cobra.Command{
+		Use:   "play [query]",
 		Short: "Play a track by search query or track ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
-			var payload []byte
-			if len(query) == 64 {
-				payload, _ = json.Marshal(map[string]string{"track_id": query})
-			} else {
-				payload, _ = json.Marshal(map[string]string{"query": query})
-			}
-
-			resp, err := sendCommand(commands.Command{
-				Type:    commands.CmdPlay,
-				Payload: payload,
-			})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			trackID, q := "", ""
+			if byID {
+				trackID = query
+			} else {
+				q = query
+			}
+			resp, err := client.Play(trackID, q)
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
 
@@ -106,6 +86,8 @@ func newPlayCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&byID, "id", "i", false, "Treat argument as track ID instead of search query")
+	return cmd
 }
 
 func newPauseCmd() *cobra.Command {
@@ -113,11 +95,17 @@ func newPauseCmd() *cobra.Command {
 		Use:   "pause",
 		Short: "Pause playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdPause})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.Pause()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
 
@@ -132,13 +120,20 @@ func newResumeCmd() *cobra.Command {
 		Use:   "resume",
 		Short: "Resume playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdResume})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.Resume()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("resumed")
 			return nil
 		},
@@ -150,13 +145,20 @@ func newStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdStop})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.Stop()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("stopped")
 			return nil
 		},
@@ -168,13 +170,20 @@ func newNextCmd() *cobra.Command {
 		Use:   "next",
 		Short: "Skip to next track",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdNext})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.Next()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("next track")
 			return nil
 		},
@@ -186,13 +195,20 @@ func newPrevCmd() *cobra.Command {
 		Use:   "prev",
 		Short: "Go to previous track",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdPrev})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.Prev()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("previous track")
 			return nil
 		},
@@ -210,17 +226,17 @@ func newSeekCmd() *cobra.Command {
 				return fmt.Errorf("invalid seconds: %s", args[0])
 			}
 
-			payload, _ := json.Marshal(map[string]int64{"offset_ms": int64(seconds) * 1000})
-			resp, err := sendCommand(commands.Command{
-				Type:    commands.CmdSeekTo,
-				Payload: payload,
-			})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
-				return fmt.Errorf("%s", resp.Error)
+			defer cleanup()
+
+			err = client.SeekTo(int64(seconds) * 1000)
+			if err != nil {
+				return err
 			}
+
 			slog.Info("seeked", "seconds", seconds)
 			return nil
 		},
@@ -233,20 +249,23 @@ func newVolumeCmd() *cobra.Command {
 		Short: "Get or set volume",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			client, cleanup, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
 			if len(args) == 0 {
-				resp, err := sendCommand(commands.Command{Type: commands.CmdStatus})
+				resp, err := client.Status()
 				if err != nil {
 					return err
 				}
-				if resp.Status != "ok" {
+				if !resp.Success {
 					return fmt.Errorf("%s", resp.Error)
 				}
-				var status struct {
-					Volume int `json:"volume"`
+				if status := resp.GetStatus(); status != nil {
+					slog.Info("volume", "level", status.Volume)
 				}
-
-				_ = json.Unmarshal(resp.Data, &status)
-				slog.Info("volume", "level", status.Volume)
 				return nil
 			}
 
@@ -258,17 +277,14 @@ func newVolumeCmd() *cobra.Command {
 				return fmt.Errorf("volume must be 0-100")
 			}
 
-			payload, _ := json.Marshal(map[string]int{"volume": volume})
-			resp, err := sendCommand(commands.Command{
-				Type:    commands.CmdSetVolume,
-				Payload: payload,
-			})
+			resp, err := client.SetVolume(int32(volume))
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("volume set", "level", volume)
 			return nil
 		},
@@ -280,28 +296,25 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show playback status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdStatus})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.Status()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
 
-			var status struct {
-				State        string        `json:"state"`
-				CurrentTrack *domain.Track `json:"current_track"`
-				Volume       int           `json:"volume"`
-				QueueSize    int           `json:"queue_size"`
-				QueuePos     int           `json:"queue_position"`
-			}
-			if err := json.Unmarshal(resp.Data, &status); err != nil {
-				return err
-			}
-
-			slog.Info("status", "state", status.State, "volume", status.Volume, "queue", status.QueueSize)
-			if status.CurrentTrack != nil {
-				slog.Info("current track", "title", status.CurrentTrack.Title, "artist", status.CurrentTrack.Artist)
+			if status := resp.GetStatus(); status != nil {
+				slog.Info("status", "state", status.State, "volume", status.Volume, "queue", status.QueueLength)
+				if status.CurrentTrack != nil {
+					slog.Info("current track", "title", status.CurrentTrack.Title, "artist", status.CurrentTrack.Artist)
+				}
 			}
 			return nil
 		},
@@ -314,32 +327,28 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search library for tracks",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			payload, _ := json.Marshal(map[string]any{
-				"query": args[0],
-				"limit": 20,
-			})
-
-			resp, err := sendCommand(commands.Command{
-				Type:    commands.CmdSearch,
-				Payload: payload,
-			})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.Search(args[0], 20)
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
 
-			var tracks []*domain.Track
-			if err := json.Unmarshal(resp.Data, &tracks); err != nil {
-				return err
-			}
-			if len(tracks) == 0 {
-				slog.Info("no tracks found")
-				return nil
-			}
-			for i, track := range tracks {
-				slog.Info("track", "index", i+1, "title", track.Title, "artist", track.Artist, "album", track.Album)
+			if searchResp := resp.GetSearch(); searchResp != nil {
+				if len(searchResp.Tracks) == 0 {
+					slog.Info("no tracks found")
+					return nil
+				}
+				for i, track := range searchResp.Tracks {
+					slog.Info("track", "index", i+1, "title", track.Title, "artist", track.Artist, "album", track.Album)
+				}
 			}
 			return nil
 		},
@@ -357,17 +366,20 @@ func newQueueCmd() *cobra.Command {
 		Short: "Add track to queue",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			payload, _ := json.Marshal(map[string]any{"track_id": args[0]})
-			resp, err := sendCommand(commands.Command{
-				Type:    commands.CmdQueueAdd,
-				Payload: payload,
-			})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.QueueAdd(args[0], -1)
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("added to queue")
 			return nil
 		},
@@ -377,13 +389,20 @@ func newQueueCmd() *cobra.Command {
 		Use:   "clear",
 		Short: "Clear queue",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdQueueClear})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.QueueClear()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("queue cleared")
 			return nil
 		},
@@ -401,13 +420,20 @@ func newLibCmd() *cobra.Command {
 		Use:   "scan",
 		Short: "Scan library for new tracks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := sendCommand(commands.Command{Type: commands.CmdLibScan})
+			client, cleanup, err := getClient()
 			if err != nil {
 				return err
 			}
-			if resp.Status != "ok" {
+			defer cleanup()
+
+			resp, err := client.LibScan(false)
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
 				return fmt.Errorf("%s", resp.Error)
 			}
+
 			slog.Info("library scan complete")
 			return nil
 		},

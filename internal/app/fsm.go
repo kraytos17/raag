@@ -54,7 +54,7 @@ func (p *PlaybackFSM) CurrentState() PlaybackState {
 	return p.state
 }
 
-func (p *PlaybackFSM) Send(event PlaybackEvent) error {
+func (p *PlaybackFSM) Send(ctx context.Context, event PlaybackEvent) error {
 	p.mu.Lock()
 	prev := p.state
 	next, ok := transitions[prev][event]
@@ -70,12 +70,12 @@ func (p *PlaybackFSM) Send(event PlaybackEvent) error {
 
 	switch next {
 	case StatePlaying:
-		p.bus.Publish(context.Background(), domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{}))
+		p.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{}))
 	case StatePaused:
-		p.bus.Publish(context.Background(), domain.NewEvent(domain.EventTrackPaused, domain.TrackPausedPayload{}))
+		p.bus.Publish(ctx, domain.NewEvent(domain.EventTrackPaused, domain.TrackPausedPayload{}))
 	case StateIdle:
 		if prev == StatePlaying || prev == StatePaused {
-			p.bus.Publish(context.Background(), domain.NewEvent(domain.EventTrackFinished, domain.TrackFinishedPayload{Completed: true}))
+			p.bus.Publish(ctx, domain.NewEvent(domain.EventTrackFinished, domain.TrackFinishedPayload{Completed: true}))
 		}
 	}
 	return nil
