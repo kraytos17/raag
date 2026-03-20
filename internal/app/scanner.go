@@ -2,13 +2,16 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/dhowden/tag"
 	"github.com/p-society/raag/internal/domain"
 )
 
@@ -141,7 +144,6 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 
 func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modified int, removed int, err error) {
 	currentStats := make(map[string]*domain.FileStat)
-	previousStats := make(map[string]*domain.FileStat)
 	for _, scanPath := range s.paths {
 		files := s.walkDirectory(scanPath)
 		for _, file := range files {
@@ -157,17 +159,15 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 	if err != nil {
 		return 0, 0, 0, err
 	}
-
-	maps.Copy(previousStats, prevStats)
 	for path, current := range currentStats {
-		previous, exists := previousStats[path]
+		previous, exists := prevStats[path]
 		if !exists {
 			added++
 		} else if current.Changed(previous) {
 			modified++
 		}
 	}
-	for path := range previousStats {
+	for path := range prevStats {
 		if _, exists := currentStats[path]; !exists {
 			removed++
 		}
@@ -237,9 +237,155 @@ func (s *LibraryScanner) walkDirectory(dirPath string) []string {
 }
 
 func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
-	return nil, nil
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	metadata, err := tag.ReadFrom(file)
+	if err != nil {
+		return nil, err
+	}
+
+	track := domain.NewTrack(path)
+	track.Title = metadata.Title()
+	track.Artist = metadata.Artist()
+	track.AlbumArtist = metadata.AlbumArtist()
+	track.Album = metadata.Album()
+	trackNum, _ := metadata.Track()
+	track.TrackNumber = uint32(trackNum)
+	discNum, _ := metadata.Disc()
+	track.DiscNumber = uint32(discNum)
+	track.Year = uint32(metadata.Year())
+
+	if genre := metadata.Genre(); genre != "" {
+		track.Genres = []string{genre}
+	}
+
+	track.Lyrics = metadata.Lyrics()
+	track.SizeBytes = uint64(stat.Size())
+	track.MimeType = mimeType(filepath.Ext(path))
+	track.Codec = codecFromExtension(filepath.Ext(path))
+	track.ModifiedAt = stat.ModTime().Unix()
+	hash, err := computeContentHash(path)
+	if err != nil {
+		slog.Warn("failed to compute content hash", "path", path, "error", err)
+	} else {
+		track.ContentHash = hash
+	}
+
+	if cover := extractCoverArt(metadata); len(cover) > 0 {
+		track.CoverArt = cover
+	}
+	return track, nil
+}
+
+func mimeType(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".mp3":
+		return "audio/mpeg"
+	case ".flac":
+		return "audio/flac"
+	case ".ogg":
+		return "audio/ogg"
+	case ".wav":
+		return "audio/wav"
+	case ".m4a":
+		return "audio/mp4"
+	case ".aac":
+		return "audio/aac"
+	case ".opus":
+		return "audio/opus"
+	case ".wma":
+		return "audio/x-ms-wma"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func codecFromExtension(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".mp3":
+		return "mp3"
+	case ".flac":
+		return "flac"
+	case ".ogg":
+		return "vorbis"
+	case ".wav":
+		return "pcm"
+	case ".m4a", ".aac":
+		return "aac"
+	case ".opus":
+		return "opus"
+	case ".wma":
+		return "wma"
+	default:
+		return "unknown"
+	}
+}
+
+func computeContentHash(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func extractCoverArt(m tag.Metadata) []byte {
+	if m == nil {
+		return nil
+	}
+
+	picture := m.Picture()
+	if picture == nil {
+		return nil
+	}
+
+	data := picture.Data
+	if len(data) > 256*1024 {
+		data = resizeCoverArt(data)
+	}
+	return data
+}
+
+func resizeCoverArt(data []byte) []byte {
+	return data
 }
 
 func (s *LibraryScanner) getFileStat(path string) (*domain.FileStat, error) {
-	return nil, nil
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	hash, err := computeContentHash(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return &domain.FileStat{
+		Path:  path,
+		Mtime: stat.ModTime().Unix(),
+		Size:  stat.Size(),
+		Hash:  hash,
+	}, nil
 }

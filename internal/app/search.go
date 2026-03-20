@@ -1,10 +1,25 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
+	"math"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/p-society/raag/internal/domain"
+)
+
+const (
+	rankMatchWeight   = 0.6
+	rankPlayWeight    = 0.25
+	rankRecencyWeight = 0.15
+
+	BoostTitle  = 3.0
+	BoostArtist = 2.0
+	BoostAlbum  = 1.5
 )
 
 type SearchService struct {
@@ -29,7 +44,7 @@ func (s *SearchService) Search(ctx context.Context, query string, limit int) ([]
 		slog.Warn("search index failed, falling back to library search", "error", err)
 		return s.libraryRepo.Search(ctx, SearchQuery{Query: query, Limit: limit})
 	}
-	return s.resolveTrackIDs(ctx, trackIDs)
+	return s.resolveAndRankTracks(ctx, query, trackIDs, limit)
 }
 
 func (s *SearchService) SearchFuzzy(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
@@ -42,18 +57,95 @@ func (s *SearchService) SearchFuzzy(ctx context.Context, query string, limit int
 		slog.Warn("fuzzy search failed, falling back to exact search", "error", err)
 		return s.Search(ctx, query, limit)
 	}
-	return s.resolveTrackIDs(ctx, trackIDs)
+	return s.resolveAndRankTracks(ctx, query, trackIDs, limit)
 }
 
-func (s *SearchService) resolveTrackIDs(ctx context.Context, ids []domain.TrackID) ([]*domain.Track, error) {
-	tracks := make([]*domain.Track, 0, len(ids))
+func (s *SearchService) resolveAndRankTracks(ctx context.Context, query string, ids []domain.TrackID, limit int) ([]*domain.Track, error) {
+	type scoredTrack struct {
+		track *domain.Track
+		score float64
+	}
+
+	scored := make([]scoredTrack, 0, len(ids))
 	for _, id := range ids {
 		track, err := s.libraryRepo.FindByID(ctx, id)
 		if err != nil {
 			slog.Warn("failed to resolve track", "id", id, "error", err)
 			continue
 		}
-		tracks = append(tracks, track)
+
+		score := s.calculateRankScore(query, track)
+		scored = append(scored, scoredTrack{track: track, score: score})
 	}
-	return tracks, nil
+
+	slices.SortFunc(scored, func(a, b scoredTrack) int {
+		return cmp.Compare(b.score, a.score)
+	})
+
+	result := make([]*domain.Track, 0, min(len(scored), limit))
+	for i := 0; i < min(len(scored), limit); i++ {
+		result = append(result, scored[i].track)
+	}
+	return result, nil
+}
+
+func (s *SearchService) calculateRankScore(query string, track *domain.Track) float64 {
+	matchScore := s.calculateMatchScore(query, track)
+	playScore := s.calculatePlayScore(track)
+	recencyScore := s.calculateRecencyScore(track)
+	return matchScore*rankMatchWeight + playScore*rankPlayWeight + recencyScore*rankRecencyWeight
+}
+
+func (s *SearchService) calculateMatchScore(query string, track *domain.Track) float64 {
+	normalizedQuery := normalizeSearchQuery(query)
+	score := 0.0
+	if strings.Contains(normalizeSearchField(track.Title), normalizedQuery) {
+		score += BoostTitle
+	}
+	if strings.Contains(normalizeSearchField(track.Artist), normalizedQuery) {
+		score += BoostArtist
+	}
+	if strings.Contains(normalizeSearchField(track.Album), normalizedQuery) {
+		score += BoostAlbum
+	}
+	return score
+}
+
+func (s *SearchService) calculatePlayScore(track *domain.Track) float64 {
+	if track.PlayCount == 0 {
+		return 0.0
+	}
+	return math.Log1p(float64(track.PlayCount))
+}
+
+func (s *SearchService) calculateRecencyScore(track *domain.Track) float64 {
+	if track.LastPlayed == 0 {
+		return 0.5
+	}
+	hoursSince := time.Since(time.Unix(track.LastPlayed, 0)).Hours()
+	return 1.0 / (1.0 + hoursSince/24.0)
+}
+
+func normalizeSearchQuery(q string) string {
+	q = strings.ToLower(strings.TrimSpace(q))
+	var result strings.Builder
+	for i := 0; i < len(q); i++ {
+		c := q[i]
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == ' ' {
+			result.WriteByte(c)
+		}
+	}
+	return result.String()
+}
+
+func normalizeSearchField(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var result strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == ' ' {
+			result.WriteByte(c)
+		}
+	}
+	return result.String()
 }

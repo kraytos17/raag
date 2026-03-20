@@ -23,12 +23,8 @@ type libraryRepo struct {
 	cache *lru.Cache[string, *domain.Track]
 }
 
-func newLibraryRepo(db *DB, cacheSize int) (*libraryRepo, error) {
-	if cacheSize <= 0 {
-		cacheSize = defaultCacheSize
-	}
-
-	cache, err := lru.New[string, *domain.Track](cacheSize)
+func NewLibraryRepo(db *DB, paths []string) (app.LibraryRepository, error) {
+	cache, err := lru.New[string, *domain.Track](defaultCacheSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LRU cache: %w", err)
 	}

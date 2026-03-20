@@ -9,20 +9,12 @@ import (
 )
 
 type Resolver struct {
-	libraryRepo     LibraryRepository
-	peerTransport   PeerTransport
-	streamTransport StreamTransport
+	libraryRepo LibraryRepository
 }
 
-func NewResolver(
-	libraryRepo LibraryRepository,
-	peerTransport PeerTransport,
-	streamTransport StreamTransport,
-) *Resolver {
+func NewResolver(libraryRepo LibraryRepository) *Resolver {
 	return &Resolver{
-		libraryRepo:     libraryRepo,
-		peerTransport:   peerTransport,
-		streamTransport: streamTransport,
+		libraryRepo: libraryRepo,
 	}
 }
 
@@ -36,35 +28,5 @@ func (s *Resolver) Resolve(ctx context.Context, trackID domain.TrackID) (io.Read
 	if err != nil {
 		return nil, err
 	}
-
-	peerWithTrack := s.findPeerWithTrack(ctx, trackID)
-	if peerWithTrack == "" {
-		file.Close()
-		return nil, domain.ErrTrackNotFound
-	}
-
-	reader, err := s.streamTransport.Open(ctx, peerWithTrack, ChunkRequest{TrackID: trackID, Offset: 0, Length: 256 * 1024})
-	if err != nil {
-		file.Close()
-		return nil, err
-	}
-	return reader, nil
-}
-
-func (s *Resolver) findPeerWithTrack(ctx context.Context, trackID domain.TrackID) domain.PeerID {
-	peers := s.peerTransport.GetPeers()
-	for _, peerID := range peers {
-		manifest, err := s.getPeerManifest(ctx, peerID)
-		if err != nil {
-			continue
-		}
-		if manifest.HasTrack(trackID) {
-			return peerID
-		}
-	}
-	return ""
-}
-
-func (s *Resolver) getPeerManifest(ctx context.Context, peerID domain.PeerID) (*domain.LibraryManifest, error) {
-	return nil, nil
+	return file, nil
 }

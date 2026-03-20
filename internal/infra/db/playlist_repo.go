@@ -6,6 +6,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 
+	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 )
 
@@ -13,7 +14,7 @@ type playlistRepo struct {
 	db *DB
 }
 
-func newPlaylistRepo(db *DB) *playlistRepo {
+func NewPlaylistRepo(db *DB) app.PlaylistRepository {
 	return &playlistRepo{db: db}
 }
 

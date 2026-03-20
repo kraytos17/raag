@@ -92,7 +92,7 @@ func (m *LifecycleManager) StartAll(ctx context.Context) error {
 			Name:   name,
 			Status: app.StatusRunning,
 		}
-		
+
 		m.mu.Unlock()
 		slog.Info("component started", "name", name)
 	}
@@ -132,7 +132,7 @@ func (m *LifecycleManager) StopAll(ctx context.Context) error {
 			Name:   name,
 			Status: app.StatusStopped,
 		}
-		
+
 		m.mu.Unlock()
 		slog.Info("component stopped", "name", name)
 	}
