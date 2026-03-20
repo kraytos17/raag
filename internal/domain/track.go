@@ -25,32 +25,32 @@ func GenerateTrackID(path string) TrackID {
 }
 
 type Track struct {
-	ID              TrackID  `json:"id"`
-	Path            string   `json:"path"`
-	Title           string   `json:"title"`
-	Artist          string   `json:"artist"`
-	AlbumArtist     string   `json:"album_artist"`
-	Album           string   `json:"album"`
-	TrackNumber     uint32   `json:"track_number"`
-	DiscNumber      uint32   `json:"disc_number"`
-	Year            uint32   `json:"year"`
-	Genres          []string `json:"genres"`
-	DurationMs      uint64   `json:"duration_ms"`
-	SizeBytes       uint64   `json:"size_bytes"`
-	MimeType        string   `json:"mime_type"`
-	Codec           string   `json:"codec"`
-	Bitrate         uint32   `json:"bitrate"`
-	SampleRate      uint32   `json:"sample_rate"`
-	Channels        uint32   `json:"channels"`
-	Lyrics          string   `json:"lyrics"`
-	CoverArt        []byte   `json:"cover_art"`
-	AddedAt         int64    `json:"added_at"`
-	ModifiedAt      int64    `json:"modified_at"`
-	PlayCount       uint64   `json:"play_count"`
-	LastPlayed      int64    `json:"last_played"`
-	ReplayGainTrack float32  `json:"replay_gain_track"`
-	ReplayGainAlbum float32  `json:"replay_gain_album"`
-	ContentHash     string   `json:"content_hash"`
+	ID              TrackID
+	Path            string
+	Title           string
+	Artist          string
+	AlbumArtist     string
+	Album           string
+	TrackNumber     uint32
+	DiscNumber      uint32
+	Year            uint32
+	Genres          []string
+	DurationMs      uint64
+	SizeBytes       uint64
+	MimeType        string
+	Codec           string
+	Bitrate         uint32
+	SampleRate      uint32
+	Channels        uint32
+	Lyrics          string
+	CoverArt        []byte
+	AddedAt         int64
+	ModifiedAt      int64
+	PlayCount       uint64
+	LastPlayed      int64
+	ReplayGainTrack float32
+	ReplayGainAlbum float32
+	ContentHash     string
 }
 
 func NewTrack(path string) *Track {

@@ -10,11 +10,11 @@ import (
 type PeerID = peer.ID
 
 type PeerInfo struct {
-	ID             PeerID            `json:"id"`
-	Addrs          []string          `json:"addrs"`
-	LastSeen       time.Time         `json:"last_seen"`
-	LibrarySummary *LibraryManifest  `json:"library_summary"`
-	Capabilities   *PeerCapabilities `json:"capabilities"`
+	ID             PeerID
+	Addrs          []string
+	LastSeen       time.Time
+	LibrarySummary *LibraryManifest
+	Capabilities   *PeerCapabilities
 }
 
 func NewPeerInfo(id PeerID, addrs []string) *PeerInfo {
@@ -30,11 +30,11 @@ func (p *PeerInfo) UpdateLastSeen() {
 }
 
 type LibraryManifest struct {
-	PeerID        PeerID    `json:"peer_id"`
-	TrackIDs      []TrackID `json:"track_ids"`
-	TotalDuration uint64    `json:"total_duration"`
-	TotalSize     uint64    `json:"total_size"`
-	LastUpdated   time.Time `json:"last_updated"`
+	PeerID        PeerID
+	TrackIDs      []TrackID
+	TotalDuration uint64
+	TotalSize     uint64
+	LastUpdated   time.Time
 }
 
 func NewLibraryManifest(peerID PeerID) *LibraryManifest {
@@ -54,11 +54,11 @@ func (m *LibraryManifest) HasTrack(trackID TrackID) bool {
 }
 
 type PeerCapabilities struct {
-	SupportedCodecs   []string `json:"supported_codecs"`
-	SupportedBitrates []int32  `json:"supported_bitrates"`
-	CanTranscode      bool     `json:"can_transcode"`
-	UploadBandwidth   int64    `json:"upload_bandwidth"`
-	ProtocolVersion   string   `json:"protocol_version"`
+	SupportedCodecs   []string
+	SupportedBitrates []int32
+	CanTranscode      bool
+	UploadBandwidth   int64
+	ProtocolVersion   string
 }
 
 func NewPeerCapabilities() *PeerCapabilities {
@@ -72,14 +72,14 @@ func NewPeerCapabilities() *PeerCapabilities {
 }
 
 type PeerScore struct {
-	PeerID       PeerID        `json:"peer_id"`
-	AvgLatency   time.Duration `json:"avg_latency"`
-	AvgBandwidth int64         `json:"avg_bandwidth"`
-	FailureCount int           `json:"failure_count"`
-	SuccessCount int           `json:"success_count"`
-	LastSeen     time.Time     `json:"last_seen"`
-	TotalLatency int64         `json:"-"`
-	SampleCount  int           `json:"-"`
+	PeerID       PeerID
+	AvgLatency   time.Duration
+	AvgBandwidth int64
+	FailureCount int
+	SuccessCount int
+	LastSeen     time.Time
+	TotalLatency int64
+	SampleCount  int
 }
 
 func NewPeerScore(peerID PeerID) *PeerScore {
@@ -140,10 +140,10 @@ func (s *PeerScore) IsHealthy() bool {
 }
 
 type FileStat struct {
-	Path  string `json:"path"`
-	Mtime int64  `json:"mtime"`
-	Size  int64  `json:"size"`
-	Hash  string `json:"hash"`
+	Path  string
+	Mtime int64
+	Size  int64
+	Hash  string
 }
 
 func (s *FileStat) Changed(other *FileStat) bool {
