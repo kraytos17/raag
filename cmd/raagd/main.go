@@ -14,9 +14,9 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/infra/audio"
-	"github.com/p-society/raag/internal/infra/db"
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/ipc"
+	"github.com/p-society/raag/internal/infra/storage"
 )
 
 func main() {
@@ -86,7 +86,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: logLevel(cfg.Daemon.LogLevel),
 	}))
-	
+
 	slog.SetDefault(logger)
 	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
 	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)

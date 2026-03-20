@@ -1,13 +1,14 @@
-package domain
+package ipc
 
 import (
 	"time"
 
+	"github.com/p-society/raag/internal/domain"
 	pb "github.com/p-society/raag/proto/gen"
 	"google.golang.org/protobuf/proto"
 )
 
-func TrackToProto(t *Track) *pb.Track {
+func TrackToProto(t *domain.Track) *pb.Track {
 	if t == nil {
 		return nil
 	}
@@ -41,12 +42,12 @@ func TrackToProto(t *Track) *pb.Track {
 	}
 }
 
-func ProtoToTrack(p *pb.Track) *Track {
+func ProtoToTrack(p *pb.Track) *domain.Track {
 	if p == nil {
 		return nil
 	}
-	return &Track{
-		ID:              TrackID(p.Id),
+	return &domain.Track{
+		ID:              domain.TrackID(p.Id),
 		Path:            p.Path,
 		Title:           p.Title,
 		Artist:          p.Artist,
@@ -75,7 +76,7 @@ func ProtoToTrack(p *pb.Track) *Track {
 	}
 }
 
-func PlaylistToProto(p *Playlist) *pb.Playlist {
+func PlaylistToProto(p *domain.Playlist) *pb.Playlist {
 	if p == nil {
 		return nil
 	}
@@ -93,17 +94,17 @@ func PlaylistToProto(p *Playlist) *pb.Playlist {
 	}
 }
 
-func ProtoToPlaylist(p *pb.Playlist) *Playlist {
+func ProtoToPlaylist(p *pb.Playlist) *domain.Playlist {
 	if p == nil {
 		return nil
 	}
 
-	trackIDs := make([]TrackID, len(p.TrackIds))
+	trackIDs := make([]domain.TrackID, len(p.TrackIds))
 	for i, id := range p.TrackIds {
-		trackIDs[i] = TrackID(id)
+		trackIDs[i] = domain.TrackID(id)
 	}
-	return &Playlist{
-		ID:         PlaylistID(p.Id),
+	return &domain.Playlist{
+		ID:         domain.PlaylistID(p.Id),
 		Name:       p.Name,
 		TrackIDs:   trackIDs,
 		CreatedAt:  p.CreatedAt,
@@ -111,7 +112,7 @@ func ProtoToPlaylist(p *pb.Playlist) *Playlist {
 	}
 }
 
-func PeerInfoToProto(p *PeerInfo) *pb.Peer {
+func PeerInfoToProto(p *domain.PeerInfo) *pb.Peer {
 	if p == nil {
 		return nil
 	}
@@ -144,20 +145,20 @@ func PeerInfoToProto(p *PeerInfo) *pb.Peer {
 	}
 }
 
-func ProtoToPeerInfo(p *pb.Peer) *PeerInfo {
+func ProtoToPeerInfo(p *pb.Peer) *domain.PeerInfo {
 	if p == nil {
 		return nil
 	}
 
 	addrs := make([]string, len(p.Addrs))
 	copy(addrs, p.Addrs)
-	info := &PeerInfo{
-		ID:       PeerID(p.Id),
+	info := &domain.PeerInfo{
+		ID:       domain.PeerID(p.Id),
 		Addrs:    addrs,
 		LastSeen: time.Now(),
 	}
 	if p.Capabilities != nil {
-		info.Capabilities = &PeerCapabilities{
+		info.Capabilities = &domain.PeerCapabilities{
 			SupportedCodecs:   p.Capabilities.SupportedCodecs,
 			SupportedBitrates: p.Capabilities.SupportedBitrates,
 			CanTranscode:      p.Capabilities.CanTranscode,
@@ -168,7 +169,7 @@ func ProtoToPeerInfo(p *pb.Peer) *PeerInfo {
 	return info
 }
 
-func PeerScoreToProto(s *PeerScore) *pb.PeerScore {
+func PeerScoreToProto(s *domain.PeerScore) *pb.PeerScore {
 	if s == nil {
 		return nil
 	}
@@ -182,12 +183,12 @@ func PeerScoreToProto(s *PeerScore) *pb.PeerScore {
 	}
 }
 
-func ProtoToPeerScore(p *pb.PeerScore) *PeerScore {
+func ProtoToPeerScore(p *pb.PeerScore) *domain.PeerScore {
 	if p == nil {
 		return nil
 	}
-	return &PeerScore{
-		PeerID:       PeerID(p.PeerId),
+	return &domain.PeerScore{
+		PeerID:       domain.PeerID(p.PeerId),
 		AvgLatency:   time.Duration(p.AvgLatencyMs) * time.Millisecond,
 		AvgBandwidth: p.AvgBandwidth,
 		FailureCount: int(p.FailureCount),
@@ -196,7 +197,7 @@ func ProtoToPeerScore(p *pb.PeerScore) *PeerScore {
 	}
 }
 
-func FileStatToProto(f *FileStat) *pb.FileStat {
+func FileStatToProto(f *domain.FileStat) *pb.FileStat {
 	if f == nil {
 		return nil
 	}
@@ -207,22 +208,22 @@ func FileStatToProto(f *FileStat) *pb.FileStat {
 	}
 }
 
-func ProtoToFileStat(p *pb.FileStat) *FileStat {
+func ProtoToFileStat(p *pb.FileStat) *domain.FileStat {
 	if p == nil {
 		return nil
 	}
-	return &FileStat{
+	return &domain.FileStat{
 		Path:  p.Path,
 		Mtime: p.Mtime,
 		Size:  p.Size,
 	}
 }
 
-func MarshalTrack(t *Track) ([]byte, error) {
+func MarshalTrack(t *domain.Track) ([]byte, error) {
 	return proto.Marshal(TrackToProto(t))
 }
 
-func UnmarshalTrack(data []byte) (*Track, error) {
+func UnmarshalTrack(data []byte) (*domain.Track, error) {
 	p := &pb.Track{}
 	if err := proto.Unmarshal(data, p); err != nil {
 		return nil, err
@@ -230,11 +231,11 @@ func UnmarshalTrack(data []byte) (*Track, error) {
 	return ProtoToTrack(p), nil
 }
 
-func MarshalPlaylist(p *Playlist) ([]byte, error) {
+func MarshalPlaylist(p *domain.Playlist) ([]byte, error) {
 	return proto.Marshal(PlaylistToProto(p))
 }
 
-func UnmarshalPlaylist(data []byte) (*Playlist, error) {
+func UnmarshalPlaylist(data []byte) (*domain.Playlist, error) {
 	p := &pb.Playlist{}
 	if err := proto.Unmarshal(data, p); err != nil {
 		return nil, err
@@ -242,11 +243,11 @@ func UnmarshalPlaylist(data []byte) (*Playlist, error) {
 	return ProtoToPlaylist(p), nil
 }
 
-func MarshalPeerInfo(p *PeerInfo) ([]byte, error) {
+func MarshalPeerInfo(p *domain.PeerInfo) ([]byte, error) {
 	return proto.Marshal(PeerInfoToProto(p))
 }
 
-func UnmarshalPeerInfo(data []byte) (*PeerInfo, error) {
+func UnmarshalPeerInfo(data []byte) (*domain.PeerInfo, error) {
 	p := &pb.Peer{}
 	if err := proto.Unmarshal(data, p); err != nil {
 		return nil, err
@@ -254,11 +255,11 @@ func UnmarshalPeerInfo(data []byte) (*PeerInfo, error) {
 	return ProtoToPeerInfo(p), nil
 }
 
-func MarshalPeerScore(s *PeerScore) ([]byte, error) {
+func MarshalPeerScore(s *domain.PeerScore) ([]byte, error) {
 	return proto.Marshal(PeerScoreToProto(s))
 }
 
-func UnmarshalPeerScore(data []byte) (*PeerScore, error) {
+func UnmarshalPeerScore(data []byte) (*domain.PeerScore, error) {
 	p := &pb.PeerScore{}
 	if err := proto.Unmarshal(data, p); err != nil {
 		return nil, err
@@ -266,11 +267,11 @@ func UnmarshalPeerScore(data []byte) (*PeerScore, error) {
 	return ProtoToPeerScore(p), nil
 }
 
-func MarshalFileStat(f *FileStat) ([]byte, error) {
+func MarshalFileStat(f *domain.FileStat) ([]byte, error) {
 	return proto.Marshal(FileStatToProto(f))
 }
 
-func UnmarshalFileStat(data []byte) (*FileStat, error) {
+func UnmarshalFileStat(data []byte) (*domain.FileStat, error) {
 	p := &pb.FileStat{}
 	if err := proto.Unmarshal(data, p); err != nil {
 		return nil, err
@@ -278,11 +279,11 @@ func UnmarshalFileStat(data []byte) (*FileStat, error) {
 	return ProtoToFileStat(p), nil
 }
 
-func LibraryManifestToProto(m *LibraryManifest) *pb.LibraryManifest {
+func LibraryManifestToProto(m *domain.LibraryManifest) *pb.LibraryManifest {
 	if m == nil {
 		return nil
 	}
-	
+
 	trackIDs := make([]string, len(m.TrackIDs))
 	for i, id := range m.TrackIDs {
 		trackIDs[i] = string(id)
@@ -295,27 +296,27 @@ func LibraryManifestToProto(m *LibraryManifest) *pb.LibraryManifest {
 	}
 }
 
-func ProtoToLibraryManifest(p *pb.LibraryManifest) *LibraryManifest {
+func ProtoToLibraryManifest(p *pb.LibraryManifest) *domain.LibraryManifest {
 	if p == nil {
 		return nil
 	}
-	
-	trackIDs := make([]TrackID, len(p.TrackIds))
+
+	trackIDs := make([]domain.TrackID, len(p.TrackIds))
 	for i, id := range p.TrackIds {
-		trackIDs[i] = TrackID(id)
+		trackIDs[i] = domain.TrackID(id)
 	}
-	return &LibraryManifest{
-		PeerID:      PeerID(p.PeerId),
+	return &domain.LibraryManifest{
+		PeerID:      domain.PeerID(p.PeerId),
 		TrackIDs:    trackIDs,
 		LastUpdated: time.Unix(p.Timestamp, 0),
 	}
 }
 
-func MarshalLibraryManifest(m *LibraryManifest) ([]byte, error) {
+func MarshalLibraryManifest(m *domain.LibraryManifest) ([]byte, error) {
 	return proto.Marshal(LibraryManifestToProto(m))
 }
 
-func UnmarshalLibraryManifest(data []byte) (*LibraryManifest, error) {
+func UnmarshalLibraryManifest(data []byte) (*domain.LibraryManifest, error) {
 	p := &pb.LibraryManifest{}
 	if err := proto.Unmarshal(data, p); err != nil {
 		return nil, err

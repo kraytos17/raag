@@ -7,6 +7,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/ipc"
 )
 
 type playlistRepo struct {
@@ -18,7 +19,7 @@ func NewPlaylistRepo(db *DB) app.PlaylistRepository {
 }
 
 func (r *playlistRepo) Save(ctx context.Context, playlist *domain.Playlist) error {
-	data, err := domain.MarshalPlaylist(playlist)
+	data, err := ipc.MarshalPlaylist(playlist)
 	if err != nil {
 		return err
 	}
@@ -40,7 +41,7 @@ func (r *playlistRepo) FindByID(ctx context.Context, id domain.PlaylistID) (*dom
 			return err
 		}
 
-		p, err := domain.UnmarshalPlaylist(data)
+		p, err := ipc.UnmarshalPlaylist(data)
 		if err != nil {
 			return err
 		}
@@ -68,7 +69,7 @@ func (r *playlistRepo) ListAll(ctx context.Context) iter.Seq[*domain.Playlist] {
 					return err
 				}
 
-				p, err := domain.UnmarshalPlaylist(data)
+				p, err := ipc.UnmarshalPlaylist(data)
 				if err != nil {
 					return err
 				}
