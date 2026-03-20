@@ -11,6 +11,7 @@ import (
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/ipc"
 )
 
 const (
@@ -48,7 +49,7 @@ func (r *libraryRepo) saveTrack(txn *badger.Txn, track *domain.Track) error {
 
 		trackCopy := *track
 		trackCopy.CoverArt = nil
-		data, err := domain.MarshalTrack(&trackCopy)
+		data, err := ipc.MarshalTrack(&trackCopy)
 		if err != nil {
 			return fmt.Errorf("failed to marshal track: %w", err)
 		}
@@ -56,7 +57,7 @@ func (r *libraryRepo) saveTrack(txn *badger.Txn, track *domain.Track) error {
 			return fmt.Errorf("failed to save track: %w", err)
 		}
 	} else {
-		data, err := domain.MarshalTrack(track)
+		data, err := ipc.MarshalTrack(track)
 		if err != nil {
 			return fmt.Errorf("failed to marshal track: %w", err)
 		}
@@ -98,7 +99,7 @@ func (r *libraryRepo) FindByID(ctx context.Context, id domain.TrackID) (*domain.
 			return err
 		}
 
-		track, err := domain.UnmarshalTrack(data)
+		track, err := ipc.UnmarshalTrack(data)
 		if err != nil {
 			return fmt.Errorf("failed to unmarshal track: %w", err)
 		}
@@ -150,7 +151,7 @@ func (r *libraryRepo) FindByIDs(ctx context.Context, ids []domain.TrackID) ([]*d
 				continue
 			}
 
-			track, err := domain.UnmarshalTrack(data)
+			track, err := ipc.UnmarshalTrack(data)
 			if err != nil {
 				continue
 			}
@@ -221,7 +222,7 @@ func (r *libraryRepo) AllTracksIter(ctx context.Context) iter.Seq2[*domain.Track
 				var track *domain.Track
 				e := item.Value(func(val []byte) error {
 					var err error
-					track, err = domain.UnmarshalTrack(val)
+					track, err = ipc.UnmarshalTrack(val)
 					return err
 				})
 				if e != nil {
@@ -296,72 +297,55 @@ func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 }
 
 func (r *libraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) error {
-	// BulkSave uses BadgerDB WriteBatch with periodic Flush calls for performance.
-	// WARNING: WriteBatch is not transactional across Flush boundaries. If Flush
-	// succeeds for batch N and batch N+1 fails, the committed data from batch N
-	// is permanently written. Callers must handle partial completion by either:
+	// BulkSave uses BadgerDB WriteBatch for bulk writes.
+	// WriteBatch handles its own internal chunking when transactions grow too large
+	// (ErrTxnTooBig triggers auto-commit of sub-transactions). Earlier committed
+	// sub-transactions cannot be rolled back, so partial completion on error is
+	// possible. Callers should handle this by either:
 	// 1. Using unique IDs to detect duplicates on retry, or
 	// 2. Accepting that BulkSave may partially complete on error.
 	wb := r.db.NewWriteBatch()
-	for i, track := range tracks {
+	defer wb.Cancel()
+
+	for _, track := range tracks {
 		if len(track.CoverArt) > 0 {
 			if err := wb.Set(CoverArtKey(track.ID), track.CoverArt); err != nil {
-				wb.Cancel()
 				return fmt.Errorf("failed to save cover art: %w", err)
 			}
 
 			trackCopy := *track
 			trackCopy.CoverArt = nil
-			data, err := domain.MarshalTrack(&trackCopy)
+			data, err := ipc.MarshalTrack(&trackCopy)
 			if err != nil {
-				wb.Cancel()
 				return fmt.Errorf("failed to marshal track: %w", err)
 			}
 			if err := wb.Set(TrackKey(track.ID), data); err != nil {
-				wb.Cancel()
 				return fmt.Errorf("failed to save track: %w", err)
 			}
 		} else {
-			data, err := domain.MarshalTrack(track)
+			data, err := ipc.MarshalTrack(track)
 			if err != nil {
-				wb.Cancel()
 				return fmt.Errorf("failed to marshal track: %w", err)
 			}
 			if err := wb.Set(TrackKey(track.ID), data); err != nil {
-				wb.Cancel()
 				return fmt.Errorf("failed to save track: %w", err)
 			}
 		}
 		if err := wb.Set(PathKey(track.Path), []byte(track.ID)); err != nil {
-			wb.Cancel()
 			return fmt.Errorf("failed to save path index: %w", err)
 		}
 		if err := wb.Set(PathStrKey(track.Path), []byte(track.ID)); err != nil {
-			wb.Cancel()
 			return fmt.Errorf("failed to save path str index: %w", err)
 		}
 		if err := wb.Set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
-			wb.Cancel()
 			return fmt.Errorf("failed to save artist index: %w", err)
 		}
 		if err := wb.Set(AlbumIndexKey(track.Album, track.ID), nil); err != nil {
-			wb.Cancel()
 			return fmt.Errorf("failed to save album index: %w", err)
 		}
-
 		r.cache.Add(string(track.ID), track)
-		if (i+1)%batchSize == 0 {
-			if err := wb.Flush(); err != nil {
-				wb.Cancel()
-				return err
-			}
-		}
 	}
-	if err := wb.Flush(); err != nil {
-		wb.Cancel()
-		return err
-	}
-	return nil
+	return wb.Flush()
 }
 
 func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
@@ -376,7 +360,7 @@ func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
 			var track *domain.Track
 			e := item.Value(func(val []byte) error {
 				var err error
-				track, err = domain.UnmarshalTrack(val)
+				track, err = ipc.UnmarshalTrack(val)
 				return err
 			})
 			if e != nil {
@@ -416,7 +400,7 @@ func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {
 func (r *libraryRepo) SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error {
 	wb := r.db.NewWriteBatch()
 	for path, stat := range stats {
-		data, err := domain.MarshalFileStat(stat)
+		data, err := ipc.MarshalFileStat(stat)
 		if err != nil {
 			wb.Cancel()
 			return err
@@ -447,7 +431,7 @@ func (r *libraryRepo) LoadFileStats(ctx context.Context) (map[string]*domain.Fil
 				return err
 			}
 
-			stat, err := domain.UnmarshalFileStat(data)
+			stat, err := ipc.UnmarshalFileStat(data)
 			if err != nil {
 				return err
 			}

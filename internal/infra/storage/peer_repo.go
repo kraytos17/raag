@@ -7,6 +7,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/ipc"
 )
 
 type peerRepo struct {
@@ -18,7 +19,7 @@ func NewPeerRepo(db *DB) app.PeerRepository {
 }
 
 func (r *peerRepo) SavePeerInfo(ctx context.Context, info *domain.PeerInfo) error {
-	data, err := domain.MarshalPeerInfo(info)
+	data, err := ipc.MarshalPeerInfo(info)
 	if err != nil {
 		return err
 	}
@@ -40,7 +41,7 @@ func (r *peerRepo) GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.P
 			return err
 		}
 
-		p, err := domain.UnmarshalPeerInfo(data)
+		p, err := ipc.UnmarshalPeerInfo(data)
 		if err != nil {
 			return err
 		}
@@ -56,7 +57,7 @@ func (r *peerRepo) GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.P
 }
 
 func (r *peerRepo) SavePeerScore(ctx context.Context, id domain.PeerID, score *domain.PeerScore) error {
-	data, err := domain.MarshalPeerScore(score)
+	data, err := ipc.MarshalPeerScore(score)
 	if err != nil {
 		return err
 	}
@@ -78,7 +79,7 @@ func (r *peerRepo) GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.
 			return err
 		}
 
-		s, err := domain.UnmarshalPeerScore(data)
+		s, err := ipc.UnmarshalPeerScore(data)
 		if err != nil {
 			return err
 		}
@@ -94,7 +95,7 @@ func (r *peerRepo) GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.
 }
 
 func (r *peerRepo) SaveLibraryManifest(ctx context.Context, id domain.PeerID, manifest *domain.LibraryManifest) error {
-	data, err := domain.MarshalLibraryManifest(manifest)
+	data, err := ipc.MarshalLibraryManifest(manifest)
 	if err != nil {
 		return err
 	}
@@ -116,7 +117,7 @@ func (r *peerRepo) GetLibraryManifest(ctx context.Context, id domain.PeerID) (*d
 			return err
 		}
 
-		m, err := domain.UnmarshalLibraryManifest(data)
+		m, err := ipc.UnmarshalLibraryManifest(data)
 		if err != nil {
 			return err
 		}
@@ -156,7 +157,7 @@ func (r *peerRepo) ListAll(ctx context.Context) iter.Seq[*domain.PeerInfo] {
 					return err
 				}
 
-				p, err := domain.UnmarshalPeerInfo(data)
+				p, err := ipc.UnmarshalPeerInfo(data)
 				if err != nil {
 					iter.Next()
 					continue
