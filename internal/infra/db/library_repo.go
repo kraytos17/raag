@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -121,18 +122,43 @@ func (r *libraryRepo) FindByPath(ctx context.Context, path string) (*domain.Trac
 	return r.FindByID(ctx, trackID)
 }
 
-func (r *libraryRepo) Search(ctx context.Context, query app.SearchQuery) ([]*domain.Track, error) {
-	tracks, err := r.ListAll(ctx)
-	if err != nil {
-		return nil, err
-	}
+func (r *libraryRepo) AllTracksIter(ctx context.Context) iter.Seq[*domain.Track] {
+	return func(yield func(*domain.Track) bool) {
+		_ = r.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badger.DefaultIteratorOptions)
+			defer it.Close()
 
-	normalizedQuery := normalize(query.Query)
+			prefix := []byte(PrefixTrackData)
+			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+
+				item := it.Item()
+				var track domain.Track
+				err := item.Value(func(val []byte) error {
+					return json.Unmarshal(val, &track)
+				})
+				if err != nil {
+					continue
+				}
+				if !yield(&track) {
+					return nil
+				}
+			}
+			return nil
+		})
+	}
+}
+
+func (r *libraryRepo) Search(ctx context.Context, q app.SearchQuery) ([]*domain.Track, error) {
 	var results []*domain.Track
-	for _, track := range tracks {
-		if matchesQuery(normalizedQuery, track) {
+	query := strings.ToLower(strings.TrimSpace(q.Query))
+	for track := range r.AllTracksIter(ctx) {
+		if strings.Contains(strings.ToLower(track.Title), query) ||
+			strings.Contains(strings.ToLower(track.Artist), query) {
 			results = append(results, track)
-			if query.Limit > 0 && len(results) >= query.Limit {
+			if len(results) >= q.Limit {
 				break
 			}
 		}
@@ -166,34 +192,42 @@ func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 
 func (r *libraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) error {
 	wb := r.db.NewWriteBatch()
-	defer wb.Cancel()
-
 	for i, track := range tracks {
 		data, err := json.Marshal(track)
 		if err != nil {
+			wb.Cancel()
 			return fmt.Errorf("failed to marshal track: %w", err)
 		}
 		if err := wb.Set(TrackKey(track.ID), data); err != nil {
+			wb.Cancel()
 			return fmt.Errorf("failed to save track: %w", err)
 		}
 		if err := wb.Set(PathKey(track.Path), []byte(track.ID)); err != nil {
+			wb.Cancel()
 			return fmt.Errorf("failed to save path index: %w", err)
 		}
 		if err := wb.Set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
+			wb.Cancel()
 			return fmt.Errorf("failed to save artist index: %w", err)
 		}
 		if err := wb.Set(AlbumIndexKey(track.Album, track.ID), nil); err != nil {
+			wb.Cancel()
 			return fmt.Errorf("failed to save album index: %w", err)
 		}
 
 		r.cache.Add(string(track.ID), track)
 		if (i+1)%batchSize == 0 {
 			if err := wb.Flush(); err != nil {
+				wb.Cancel()
 				return err
 			}
 		}
 	}
-	return wb.Flush()
+	if err := wb.Flush(); err != nil {
+		wb.Cancel()
+		return err
+	}
+	return nil
 }
 
 func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
@@ -225,18 +259,22 @@ func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
 
 func (r *libraryRepo) SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error {
 	wb := r.db.NewWriteBatch()
-	defer wb.Cancel()
-
 	for path, stat := range stats {
 		data, err := json.Marshal(stat)
 		if err != nil {
+			wb.Cancel()
 			return err
 		}
 		if err := wb.Set(FileStatKey(path), data); err != nil {
+			wb.Cancel()
 			return err
 		}
 	}
-	return wb.Flush()
+	if err := wb.Flush(); err != nil {
+		wb.Cancel()
+		return err
+	}
+	return nil
 }
 
 func (r *libraryRepo) LoadFileStats(ctx context.Context) (map[string]*domain.FileStat, error) {
@@ -253,14 +291,12 @@ func (r *libraryRepo) LoadFileStats(ctx context.Context) (map[string]*domain.Fil
 				return err
 			}
 
-			key := string(item.Key()[len(PrefixFileStat):])
 			stat := &domain.FileStat{}
 			if err := json.Unmarshal(data, stat); err != nil {
 				return err
 			}
 
-			stat.Path = key
-			stats[key] = stat
+			stats[stat.Path] = stat
 			iter.Next()
 		}
 		return nil

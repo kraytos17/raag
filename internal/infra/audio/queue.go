@@ -2,6 +2,7 @@ package audio
 
 import (
 	"math/rand"
+	"slices"
 	"sync"
 
 	"github.com/p-society/raag/internal/app"
@@ -147,7 +148,7 @@ func (q *Queue) Remove(position int) {
 		return
 	}
 
-	q.tracks = append(q.tracks[:position], q.tracks[position+1:]...)
+	q.tracks = slices.Delete(q.tracks, position, position+1)
 	if q.pos > position {
 		q.pos--
 	} else if q.pos == position {

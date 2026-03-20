@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"runtime/debug"
 	"time"
@@ -83,7 +84,7 @@ func ValidationMiddleware(validate func(Command) error) Middleware {
 
 func RecoveryMiddleware() Middleware {
 	return func(next Handler) Handler {
-		return func(ctx context.Context, cmd Command) (Response, error) {
+		return func(ctx context.Context, cmd Command) (resp Response, err error) {
 			defer func() {
 				if r := recover(); r != nil {
 					slog.Error("panic recovered in command handler",
@@ -91,6 +92,8 @@ func RecoveryMiddleware() Middleware {
 						"panic", r,
 						"stack", string(debug.Stack()),
 					)
+					resp = Response{Status: "error", Error: "internal server error"}
+					err = nil
 				}
 			}()
 			return next(ctx, cmd)
@@ -114,10 +117,13 @@ func RetryMiddleware(maxRetries int, delay time.Duration) Middleware {
 			var lastErr error
 			for attempt := range maxRetries {
 				if attempt > 0 {
+					timer := time.NewTimer(delay * time.Duration(attempt))
 					select {
 					case <-ctx.Done():
+						timer.Stop()
 						return Response{}, ctx.Err()
-					case <-time.After(delay * time.Duration(attempt)):
+					case <-timer.C:
+						timer.Stop()
 					}
 				}
 
@@ -135,6 +141,9 @@ func RetryMiddleware(maxRetries int, delay time.Duration) Middleware {
 				)
 			}
 
+			if lastErr == nil {
+				return Response{Status: "error", Error: "max retries exceeded"}, errors.New("max retries exceeded")
+			}
 			return Response{
 				Status: "error",
 				Error:  lastErr.Error(),

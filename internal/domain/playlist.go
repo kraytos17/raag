@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -19,7 +20,9 @@ func (p PlaylistID) Validate() bool {
 
 func GeneratePlaylistID() PlaylistID {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return PlaylistID("")
+	}
 	return PlaylistID(hex.EncodeToString(b))
 }
 
@@ -79,10 +82,13 @@ func (p *Playlist) MoveTrack(from, to int) error {
 	if to < 0 || to >= len(p.TrackIDs) {
 		return errors.New("invalid to index")
 	}
+	if from == to {
+		return nil
+	}
 
 	track := p.TrackIDs[from]
-	p.TrackIDs = append(p.TrackIDs[:from], p.TrackIDs[from+1:]...)
-	p.TrackIDs = append(p.TrackIDs[:to], append([]TrackID{track}, p.TrackIDs[to:]...)...)
+	p.TrackIDs = slices.Delete(p.TrackIDs, from, from+1)
+	p.TrackIDs = slices.Insert(p.TrackIDs, to, track)
 	p.ModifiedAt = time.Now().Unix()
 	return nil
 }

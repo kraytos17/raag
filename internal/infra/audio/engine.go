@@ -21,22 +21,27 @@ import (
 )
 
 var (
-	speakerOnce   sync.Once
 	ErrNoStreamer = errors.New("audio: no active streamer")
 	ErrNotPlaying = errors.New("audio: not playing")
 	ErrNotPaused  = errors.New("audio: not paused")
 )
 
+var initSpeaker = sync.OnceValue(func() error {
+	bufferSize := beep.SampleRate(44100).N(time.Millisecond * 100)
+	return speaker.Init(beep.SampleRate(44100), bufferSize)
+})
+
 type Engine struct {
-	mu         sync.Mutex
-	sampleRate beep.SampleRate
-	ctrl       *beep.Ctrl
-	vol        *effects.Volume
-	streamer   beep.StreamSeekCloser
-	format     beep.Format
-	state      app.PlayerState
-	position   time.Duration
-	done       chan struct{}
+	mu            sync.Mutex
+	sampleRate    beep.SampleRate
+	ctrl          *beep.Ctrl
+	vol           *effects.Volume
+	streamer      beep.StreamSeekCloser
+	format        beep.Format
+	state         app.PlayerState
+	position      time.Duration
+	done          chan struct{}
+	desiredVolume int
 }
 
 func NewEngine(sampleRate int) *Engine {
@@ -55,7 +60,11 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 	defer e.mu.Unlock()
 
 	e.stopLocked()
-	rc := ensureReadSeekCloser(reader)
+	rc, err := ensureReadSeekCloser(reader)
+	if err != nil {
+		e.state = app.PlayerStateError
+		return fmt.Errorf("failed to read audio data: %w", err)
+	}
 	streamer, format, err := decode(rc, mimeType)
 	if err != nil {
 		e.state = app.PlayerStateError
@@ -80,6 +89,9 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 		Base:     2,
 		Volume:   0,
 		Silent:   false,
+	}
+	if e.desiredVolume > 0 {
+		e.setVolumeLocked(e.desiredVolume)
 	}
 
 	speaker.Clear()
@@ -145,7 +157,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 func (e *Engine) stopLocked() {
 	speaker.Clear()
 	if e.streamer != nil {
-		e.streamer.Close()
+		_ = e.streamer.Close()
 	}
 
 	e.streamer = nil
@@ -175,14 +187,7 @@ func (e *Engine) Seek(ctx context.Context, position time.Duration) error {
 	return nil
 }
 
-func (e *Engine) SetVolume(ctx context.Context, volume int) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.vol == nil {
-		return ErrNoStreamer
-	}
-
+func (e *Engine) setVolumeLocked(volume int) {
 	speaker.Lock()
 	if volume <= 0 {
 		e.vol.Silent = true
@@ -190,8 +195,18 @@ func (e *Engine) SetVolume(ctx context.Context, volume int) error {
 		e.vol.Silent = false
 		e.vol.Volume = (float64(volume)/100.0)*8.0 - 8.0
 	}
-
 	speaker.Unlock()
+}
+
+func (e *Engine) SetVolume(ctx context.Context, volume int) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.desiredVolume = volume
+	if e.vol == nil {
+		return nil
+	}
+	e.setVolumeLocked(volume)
 	return nil
 }
 
@@ -216,15 +231,7 @@ func (e *Engine) Done() <-chan struct{} {
 }
 
 func (e *Engine) initSpeaker() error {
-	var initErr error
-	speakerOnce.Do(func() {
-		bufferSize := e.sampleRate.N(time.Millisecond * 100)
-		initErr = speaker.Init(e.sampleRate, bufferSize)
-		if initErr != nil {
-			slog.Error("speaker init failed", "error", initErr)
-		}
-	})
-	return initErr
+	return initSpeaker()
 }
 
 func decode(rc io.ReadCloser, mimeType string) (beep.StreamSeekCloser, beep.Format, error) {
@@ -246,26 +253,26 @@ func decode(rc io.ReadCloser, mimeType string) (beep.StreamSeekCloser, beep.Form
 	default:
 		streamer, format, err = mp3.Decode(rc)
 		if err != nil {
-			rc.Close()
+			_ = rc.Close()
 			return nil, format, err
 		}
 	}
 	return streamer, format, err
 }
 
-func ensureReadSeekCloser(r io.Reader) io.ReadSeekCloser {
+func ensureReadSeekCloser(r io.Reader) (io.ReadSeekCloser, error) {
 	if rsc, ok := r.(io.ReadSeekCloser); ok {
-		return rsc
+		return rsc, nil
 	}
 	if rs, ok := r.(io.ReadSeeker); ok {
-		return nopCloser{rs}
+		return nopCloser{rs}, nil
 	}
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return &readCloserFromBytes{data: data}
+		return nil, err
 	}
-	return &readCloserFromBytes{data: data}
+	return &readCloserFromBytes{data: data}, nil
 }
 
 type nopCloser struct {

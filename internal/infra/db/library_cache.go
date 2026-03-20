@@ -2,12 +2,14 @@ package db
 
 import (
 	"context"
+	"sync"
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 )
 
 type cachedLibraryRepo struct {
+	mu     sync.RWMutex
 	source app.LibraryRepository
 	cache  map[domain.TrackID]*domain.Track
 }
@@ -20,18 +22,26 @@ func newCachedLibraryRepo(source app.LibraryRepository) *cachedLibraryRepo {
 }
 
 func (r *cachedLibraryRepo) Save(ctx context.Context, track *domain.Track) error {
+	r.mu.Lock()
 	r.cache[track.ID] = track
+	r.mu.Unlock()
 	return r.source.Save(ctx, track)
 }
 
 func (r *cachedLibraryRepo) FindByID(ctx context.Context, id domain.TrackID) (*domain.Track, error) {
-	if track, ok := r.cache[id]; ok {
+	r.mu.RLock()
+	track, ok := r.cache[id]
+	r.mu.RUnlock()
+
+	if ok {
 		return track, nil
 	}
 
 	track, err := r.source.FindByID(ctx, id)
 	if err == nil {
+		r.mu.Lock()
 		r.cache[id] = track
+		r.mu.Unlock()
 	}
 	return track, err
 }
@@ -45,14 +55,18 @@ func (r *cachedLibraryRepo) Search(ctx context.Context, query app.SearchQuery) (
 }
 
 func (r *cachedLibraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
+	r.mu.Lock()
 	delete(r.cache, id)
+	r.mu.Unlock()
 	return r.source.Delete(ctx, id)
 }
 
 func (r *cachedLibraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) error {
+	r.mu.Lock()
 	for _, track := range tracks {
 		r.cache[track.ID] = track
 	}
+	r.mu.Unlock()
 	return r.source.BulkSave(ctx, tracks)
 }
 
@@ -69,5 +83,7 @@ func (r *cachedLibraryRepo) LoadFileStats(ctx context.Context) (map[string]*doma
 }
 
 func (r *cachedLibraryRepo) Invalidate() {
+	r.mu.Lock()
 	r.cache = make(map[domain.TrackID]*domain.Track)
+	r.mu.Unlock()
 }

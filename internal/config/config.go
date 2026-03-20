@@ -101,7 +101,11 @@ func ExpandHome(path string) string {
 }
 
 func GetConfigDir() string {
-	return filepath.Join(os.Getenv("HOME"), ".config", "raag")
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".config", "raag")
 }
 
 func GetDataDir() string {
@@ -112,6 +116,65 @@ func GetDataDir() string {
 	return filepath.Join(home, ".local", "share", "raag")
 }
 
+var commonMusicPaths = []string{
+	"Music",
+	"music",
+	"Music Library",
+	"My Music",
+}
+
+func detectMusicDirectory() string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return ""
+	}
+	for _, name := range commonMusicPaths {
+		path := filepath.Join(home, name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func promptDirectory(reader *bufio.Reader, defaultPath string) (string, error) {
+	for {
+		fmt.Printf("Music directory path [%s]: ", defaultPath)
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "" {
+			return defaultPath, nil
+		}
+
+		path := ExpandHome(input)
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Printf("Directory '%s' does not exist.\n", path)
+				fmt.Print("Create it? [Y/n]: ")
+				answer, _ := reader.ReadString('\n')
+				answer = strings.TrimSpace(strings.ToLower(answer))
+				if answer == "" || answer == "y" || answer == "yes" {
+					if err := os.MkdirAll(path, 0o755); err != nil {
+						fmt.Printf("Error creating directory: %v\n", err)
+						continue
+					}
+					return path, nil
+				}
+				fmt.Println("Please enter a valid path.")
+				continue
+			}
+			fmt.Printf("Error accessing path: %v\n", err)
+			continue
+		}
+		if !info.IsDir() {
+			fmt.Printf("Error: '%s' is not a directory.\n", path)
+			continue
+		}
+		return path, nil
+	}
+}
+
 func RunSetup() error {
 	configDir := GetConfigDir()
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -119,29 +182,24 @@ func RunSetup() error {
 	}
 
 	fmt.Println("Welcome to Raag!")
+	fmt.Println("This tool will help you configure Raag for first-time use.")
 	fmt.Println()
 
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Music directory path: ")
-	musicPath, _ := reader.ReadString('\n')
-	musicPath = strings.TrimSpace(musicPath)
-	if musicPath == "" {
-		return fmt.Errorf("music path cannot be empty")
+	detectedPath := detectMusicDirectory()
+	defaultPath := detectedPath
+	if defaultPath == "" {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			defaultPath = filepath.Join(home, "Music")
+		} else {
+			defaultPath = ""
+		}
 	}
 
-	musicPath = ExpandHome(musicPath)
-	if _, err := os.Stat(musicPath); os.IsNotExist(err) {
-		fmt.Printf("Warning: directory '%s' does not exist\n", musicPath)
-		fmt.Print("Create it? [y/N]: ")
-		answer, _ := reader.ReadString('\n')
-		answer = strings.TrimSpace(strings.ToLower(answer))
-		if answer != "y" && answer != "yes" {
-			fmt.Println("Setup cancelled")
-			return nil
-		}
-		if err := os.MkdirAll(musicPath, 0o755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
+	reader := bufio.NewReader(os.Stdin)
+	musicPath, err := promptDirectory(reader, defaultPath)
+	if err != nil {
+		return err
 	}
 
 	dataDir := GetDataDir()
@@ -205,8 +263,12 @@ path = "/metrics"
 	fmt.Println()
 	fmt.Println("Configuration saved to:", configPath)
 	fmt.Println()
-	fmt.Println("Run 'raagd' to start the daemon")
-	fmt.Println("Run 'raag lib scan' to scan your music library")
+	fmt.Printf("Music directory: %s\n", musicPath)
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  - Run 'raagd' to start the daemon")
+	fmt.Println("  - Run 'raag lib scan' to scan your music library")
+	fmt.Println("  - Run 'raag play <query>' to play music")
 	return nil
 }
 

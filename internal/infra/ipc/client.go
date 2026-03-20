@@ -54,17 +54,25 @@ func (c *Client) Send(ctx context.Context, cmd commands.Command) (commands.Respo
 		Payload:         cmd.Payload,
 	}
 
-	c.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if err := c.conn.SetWriteDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+		return commands.Response{Status: "error", Error: err.Error()}, err
+	}
 	if err := WriteRequest(c.conn, req); err != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 		return commands.Response{Status: "error", Error: err.Error()}, err
 	}
 
-	c.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := c.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+		return commands.Response{Status: "error", Error: err.Error()}, err
+	}
 	resp, err := ReadResponse(c.conn)
 	if err != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 		return commands.Response{Status: "error", Error: err.Error()}, err
 	}
@@ -104,6 +112,8 @@ func commandTypeFromString(cmdType commands.CommandType) (pb.CommandType, error)
 		commands.CmdStatus:         pb.CommandType_STATUS,
 		commands.CmdSubscribe:      pb.CommandType_SUBSCRIBE,
 		commands.CmdCreatePlaylist: pb.CommandType_CREATE_PLAYLIST,
+		// TODO: Add QUEUE_MOVE and DELETE_PLAYLIST to protobuf enum
+		// These commands are not yet implemented and have no protobuf mapping
 		commands.CmdQueueMove:      pb.CommandType_UNKNOWN,
 		commands.CmdDeletePlaylist: pb.CommandType_UNKNOWN,
 	}

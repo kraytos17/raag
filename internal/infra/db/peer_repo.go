@@ -138,9 +138,21 @@ func (r *peerRepo) ListAllPeers(ctx context.Context) ([]*domain.PeerInfo, error)
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer iter.Close()
 
-		iter.Seek([]byte(PrefixPeer))
-		for iter.ValidForPrefix([]byte(PrefixPeer)) {
+		prefix := []byte(PrefixPeer)
+		iter.Seek(prefix)
+		for iter.ValidForPrefix(prefix) {
 			item := iter.Item()
+			key := item.Key()
+			keyStr := string(key)
+			if len(keyStr) >= len(PrefixPeerLib) && keyStr[:len(PrefixPeerLib)] == PrefixPeerLib {
+				iter.Next()
+				continue
+			}
+			if len(keyStr) >= len(PrefixPeerScore) && keyStr[:len(PrefixPeerScore)] == PrefixPeerScore {
+				iter.Next()
+				continue
+			}
+
 			data, err := item.ValueCopy(nil)
 			if err != nil {
 				return err
@@ -148,9 +160,9 @@ func (r *peerRepo) ListAllPeers(ctx context.Context) ([]*domain.PeerInfo, error)
 
 			p := &domain.PeerInfo{}
 			if err := json.Unmarshal(data, p); err != nil {
-				return err
+				iter.Next()
+				continue
 			}
-
 			peers = append(peers, p)
 			iter.Next()
 		}

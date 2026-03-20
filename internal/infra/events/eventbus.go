@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -25,12 +26,15 @@ func New() *EventBus {
 func (eb *EventBus) Publish(ctx context.Context, event domain.Event) {
 	eb.mu.RLock()
 	handlers, ok := eb.subscribers[event.Type]
-	eb.mu.RUnlock()
-
 	if !ok || len(handlers) == 0 {
+		eb.mu.RUnlock()
 		return
 	}
-	for id, handler := range handlers {
+
+	handlersCopy := make(map[uint64]domain.EventHandler, len(handlers))
+	maps.Copy(handlersCopy, handlers)
+	eb.mu.RUnlock()
+	for id, handler := range handlersCopy {
 		go func(h domain.EventHandler, subscriptionID uint64) {
 			defer func() {
 				if r := recover(); r != nil {

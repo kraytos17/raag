@@ -65,7 +65,7 @@ func TestScanner_OnError(t *testing.T) {
 
 func TestScanner_Scan_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	scanner := NewScanner([]string{dir})
 	ctx := context.Background()
@@ -80,7 +80,7 @@ func TestScanner_Scan_EmptyDir(t *testing.T) {
 
 func TestScanner_Scan_WithFiles(t *testing.T) {
 	dir := t.TempDir()
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	musicDir := filepath.Join(dir, "music")
 	_ = os.MkdirAll(musicDir, 0o755)
@@ -101,7 +101,7 @@ func TestScanner_Scan_WithFiles(t *testing.T) {
 
 func TestScanner_Scan_WithProgress(t *testing.T) {
 	dir := t.TempDir()
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	_ = os.WriteFile(filepath.Join(dir, "song.mp3"), []byte("fake"), 0o644)
 	progressCalls := 0
@@ -119,7 +119,7 @@ func TestScanner_Scan_WithProgress(t *testing.T) {
 
 func TestScanner_Scan_Cancel(t *testing.T) {
 	dir := t.TempDir()
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	_ = os.WriteFile(filepath.Join(dir, "song.mp3"), []byte("fake"), 0o644)
 	scanner := NewScanner([]string{dir})
@@ -131,13 +131,13 @@ func TestScanner_Scan_Cancel(t *testing.T) {
 		t.Errorf("Scan() error = %v", err)
 	}
 	if len(files) > 0 {
-		t.Errorf("Scan() should return empty files when cancelled, got %d", len(files))
+		t.Errorf("Scan() should return empty files when canceled, got %d", len(files))
 	}
 }
 
 func TestScanner_Scan_NestedDirs(t *testing.T) {
 	dir := t.TempDir()
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	nested := filepath.Join(dir, "artist", "album")
 	_ = os.MkdirAll(nested, 0o755)
@@ -156,7 +156,7 @@ func TestScanner_Scan_NestedDirs(t *testing.T) {
 
 func TestScanner_Scan_UnsupportedExt(t *testing.T) {
 	dir := t.TempDir()
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	_ = os.WriteFile(filepath.Join(dir, "video.mp4"), []byte("fake"), 0o644)
 	_ = os.WriteFile(filepath.Join(dir, "image.jpg"), []byte("fake"), 0o644)

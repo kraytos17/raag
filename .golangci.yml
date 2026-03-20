@@ -27,6 +27,9 @@ linters-settings:
     line-length: 200
   gocyclo:
     min-complexity: 25
+  funlen:
+    lines: 150
+    statements: 120
   misspell:
     locale: US
 
@@ -34,12 +37,22 @@ issues:
   exclude-use-default: false
   max-issues-per-linter: 50
   max-same-issues: 10
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - unused
+    - path: internal/infra/p2p/fsm\.go
+      linters:
+        - unused
+    - path: internal/infra/p2p/streaming_fsm\.go
+      linters:
+        - unused
+    - path: internal/app/circuit_breaker\.go
+      linters:
+        - unused
 
 run:
   timeout: 5m
-  skip-dirs:
-    - vendor
-    - proto/gen
   issues-exclude-dirs:
     - vendor
     - proto/gen

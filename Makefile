@@ -1,4 +1,4 @@
-.PHONY: build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-fix lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean ci release help
+.PHONY: build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-fix lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release help
 
 BIN := bin
 RAAG := $(BIN)/raag
@@ -32,6 +32,7 @@ help:
 	@echo "  deps              - Tidy and verify dependencies"
 	@echo "  install           - Install dev tools"
 	@echo "  clean             - Remove build artifacts"
+	@echo "  clean-all         - Remove build artifacts and user data (config/db)"
 	@echo "  ci                - Full CI pipeline"
 	@echo "  release           - Build release binaries"
 
@@ -96,10 +97,14 @@ daemon-start:
 	./bin/raagd
 
 daemon-start-detach:
-	nohup ./bin/raagd > raagd.log 2>&1 & echo $$! > raagd.pid
+	@nohup ./bin/raagd > raagd.log 2>&1 & echo $$! > raagd.pid && echo "Daemon started with PID $$(cat raagd.pid)"
 
 daemon-stop:
-	pkill raagd || true
+	@if [ -f raagd.pid ]; then \
+		kill $$(cat raagd.pid) 2>/dev/null && rm raagd.pid && echo "Daemon stopped"; \
+	else \
+		pkill raagd && echo "Daemon stopped (no PID file)" || echo "No daemon running"; \
+	fi
 
 daemon-status:
 	./bin/raag status || echo "Daemon not running"
@@ -133,6 +138,11 @@ install:
 
 clean:
 	rm -rf bin/ coverage.out coverage.html raagd.log raagd.pid
+
+clean-all: clean
+	@echo "Removing user data (config and database)..."
+	rm -rf ~/.config/raag ~/.local/share/raag
+	@echo "All data cleaned"
 
 ci:
 	go vet ./...

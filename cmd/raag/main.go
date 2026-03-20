@@ -62,7 +62,7 @@ func getClient() (*ipc.Client, func(), error) {
 	if err := client.Connect(ctx); err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to daemon: %w (is raagd running?)", err)
 	}
-	return client, func() { client.Close() }, nil
+	return client, func() { _ = client.Close() }, nil
 }
 
 func sendCommand(cmd commands.Command) (commands.Response, error) {
@@ -245,7 +245,7 @@ func newVolumeCmd() *cobra.Command {
 					Volume int `json:"volume"`
 				}
 
-				json.Unmarshal(resp.Data, &status)
+				_ = json.Unmarshal(resp.Data, &status)
 				slog.Info("volume", "level", status.Volume)
 				return nil
 			}

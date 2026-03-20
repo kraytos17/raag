@@ -56,17 +56,18 @@ func (p *PlaybackFSM) CurrentState() PlaybackState {
 
 func (p *PlaybackFSM) Send(event PlaybackEvent) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	prev := p.state
 	next, ok := transitions[prev][event]
 	if !ok {
+		p.mu.Unlock()
 		slog.Warn("playback FSM: invalid transition", "event", event, "from", prev)
 		return nil
 	}
 
 	p.state = next
 	slog.Debug("playback FSM transition", "from", prev, "to", next, "event", event)
+	p.mu.Unlock()
+
 	switch next {
 	case StatePlaying:
 		p.bus.Publish(context.Background(), domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{}))
@@ -90,6 +91,8 @@ var transitions = map[PlaybackState]map[PlaybackEvent]PlaybackState{
 }
 
 func (p *PlaybackFSM) CanTransition(event PlaybackEvent) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	_, ok := transitions[p.state][event]
 	return ok
 }

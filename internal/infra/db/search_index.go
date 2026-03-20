@@ -44,27 +44,32 @@ func (idx *searchIndex) Index(ctx context.Context, track *domain.Track) error {
 
 func (idx *searchIndex) IndexBatch(ctx context.Context, tracks []*domain.Track) error {
 	wb := idx.db.NewWriteBatch()
-	defer wb.Cancel()
-
 	for _, track := range tracks {
 		tokens := idx.tokenize(track.Title + " " + track.Artist + " " + track.Album)
 		for _, token := range tokens {
 			if err := wb.Set(TermIndexKey(token, track.ID), nil); err != nil {
+				wb.Cancel()
 				return err
 			}
 		}
 		for _, tri := range trigrams(track.Title) {
 			if err := wb.Set(TrigramIndexKey(tri, track.ID), nil); err != nil {
+				wb.Cancel()
 				return err
 			}
 		}
 		for _, tri := range trigrams(track.Artist) {
 			if err := wb.Set(TrigramIndexKey(tri, track.ID), nil); err != nil {
+				wb.Cancel()
 				return err
 			}
 		}
 	}
-	return wb.Flush()
+	if err := wb.Flush(); err != nil {
+		wb.Cancel()
+		return err
+	}
+	return nil
 }
 
 func (idx *searchIndex) Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
@@ -76,18 +81,20 @@ func (idx *searchIndex) Search(ctx context.Context, query string, limit int) ([]
 	postingLists := make([]map[domain.TrackID]bool, len(tokens))
 	err := idx.db.View(func(txn *badger.Txn) error {
 		for i, token := range tokens {
-			postingLists[i] = make(map[domain.TrackID]bool)
-			prefix := []byte(PrefixIdxTerm + token + ":")
-			iter := txn.NewIterator(badger.DefaultIteratorOptions)
-			defer iter.Close()
+			func() {
+				postingLists[i] = make(map[domain.TrackID]bool)
+				prefix := []byte(PrefixIdxTerm + token + ":")
+				iter := txn.NewIterator(badger.DefaultIteratorOptions)
+				defer iter.Close()
 
-			iter.Seek(prefix)
-			for iter.ValidForPrefix(prefix) {
-				key := iter.Item().Key()
-				id := domain.TrackID(key[len(prefix):])
-				postingLists[i][id] = true
-				iter.Next()
-			}
+				iter.Seek(prefix)
+				for iter.ValidForPrefix(prefix) {
+					key := iter.Item().Key()
+					id := domain.TrackID(key[len(prefix):])
+					postingLists[i][id] = true
+					iter.Next()
+				}
+			}()
 		}
 		return nil
 	})
@@ -129,20 +136,21 @@ func (idx *searchIndex) SearchFuzzy(ctx context.Context, query string, limit int
 	var maxCount int
 	err := idx.db.View(func(txn *badger.Txn) error {
 		for _, tri := range queryTrigrams {
-			prefix := []byte(PrefixIdxTrigram + tri + ":")
-			iter := txn.NewIterator(badger.DefaultIteratorOptions)
-			defer iter.Close()
+			func() {
+				prefix := []byte(PrefixIdxTrigram + tri + ":")
+				iter := txn.NewIterator(badger.DefaultIteratorOptions)
+				defer iter.Close()
 
-			iter.Seek(prefix)
-			for iter.ValidForPrefix(prefix) {
-				key := iter.Item().Key()
-				id := domain.TrackID(key[len(PrefixIdxTrigram)+len(tri)+1:])
-				trigramCounts[id]++
-				if trigramCounts[id] > maxCount {
-					maxCount = trigramCounts[id]
+				iter.Seek(prefix)
+				for iter.ValidForPrefix(prefix) {
+					key := iter.Item().Key()
+					id := domain.TrackID(key[len(PrefixIdxTrigram)+len(tri)+1:])
+					trigramCounts[id]++
+					if trigramCounts[id] > maxCount {
+						maxCount = trigramCounts[id]
+					}
 				}
-				iter.Next()
-			}
+			}()
 		}
 		return nil
 	})
@@ -179,17 +187,18 @@ func (idx *searchIndex) Delete(ctx context.Context, id domain.TrackID) error {
 	return idx.db.Update(func(txn *badger.Txn) error {
 		prefix := []byte(PrefixIdxTerm)
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer iter.Close()
 
 		var keysToDelete [][]byte
 		iter.Seek(prefix)
 		for iter.ValidForPrefix(prefix) {
 			key := iter.Item().Key()
 			if strings.HasSuffix(string(key), ":"+string(id)) {
-				keysToDelete = append(keysToDelete, key)
+				keysToDelete = append(keysToDelete, append([]byte(nil), key...))
 			}
 			iter.Next()
 		}
+
+		iter.Close()
 		for _, key := range keysToDelete {
 			if err := txn.Delete(key); err != nil {
 				return err
@@ -197,14 +206,17 @@ func (idx *searchIndex) Delete(ctx context.Context, id domain.TrackID) error {
 		}
 
 		prefix2 := []byte(PrefixIdxTrigram)
+		iter2 := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer iter2.Close()
+
 		keysToDelete = nil
-		iter.Seek(prefix2)
-		for iter.ValidForPrefix(prefix2) {
-			key := iter.Item().Key()
+		iter2.Seek(prefix2)
+		for iter2.ValidForPrefix(prefix2) {
+			key := iter2.Item().Key()
 			if strings.HasSuffix(string(key), ":"+string(id)) {
-				keysToDelete = append(keysToDelete, key)
+				keysToDelete = append(keysToDelete, append([]byte(nil), key...))
 			}
-			iter.Next()
+			iter2.Next()
 		}
 		for _, key := range keysToDelete {
 			if err := txn.Delete(key); err != nil {

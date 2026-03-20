@@ -17,6 +17,7 @@ const (
 	EventPeerDisconnected EventType = "peer.disconnected"
 	EventPeerScoreUpdated EventType = "peer.score_updated"
 	EventScanStarted      EventType = "scan.started"
+	EventScanProgress     EventType = "scan.progress"
 	EventScanComplete     EventType = "scan.complete"
 	EventVolumeChanged    EventType = "volume.changed"
 	EventQueueUpdated     EventType = "queue.updated"

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/config"
@@ -23,17 +24,8 @@ func main() {
 	socketPath := flag.String("socket", "", "IPC socket path (overrides config)")
 	dataDir := flag.String("data-dir", "", "Data directory (overrides config)")
 	noScan := flag.Bool("no-scan", false, "Skip library scan on startup")
-	setup := flag.Bool("setup", false, "Run first-time setup wizard")
 	flag.Usage = usage
 	flag.Parse()
-
-	if *setup {
-		if err := config.RunSetup(); err != nil {
-			slog.Error("setup failed", "error", err)
-			os.Exit(1)
-		}
-		return
-	}
 
 	var cfg *config.Config
 	var err error
@@ -43,20 +35,47 @@ func main() {
 		cfg, err = config.Load()
 	}
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
 		if isPathNotConfiguredError(err) {
-			slog.Error("hint: run 'raagd --setup' for first-time setup")
-			slog.Error("or specify --music-path: raagd --music-path ~/Music")
+			slog.Info("No configuration found. Running first-time setup...")
+			if err := config.RunSetup(); err != nil {
+				slog.Error("setup failed", "error", err)
+				os.Exit(1)
+			}
+
+			cfg, err = config.Load()
+			if err != nil {
+				slog.Error("failed to load config after setup", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			slog.Error("failed to load config", "error", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
 	}
 	if err := cfg.ValidateForStart(); err != nil {
-		slog.Error("configuration invalid", "error", err)
-		slog.Error("hint: run 'raagd --setup' for first-time setup")
-		slog.Error("or specify --music-path: raagd --music-path ~/Music")
-		os.Exit(1)
-	}
+		if isPathNotConfiguredError(err) {
+			slog.Info("No configuration found. Running first-time setup...")
+			if err := config.RunSetup(); err != nil {
+				slog.Error("setup failed", "error", err)
+				os.Exit(1)
+			}
 
+			cfg, err = config.Load()
+			if err != nil {
+				slog.Error("failed to load config after setup", "error", err)
+				os.Exit(1)
+			}
+			if err := cfg.ValidateForStart(); err != nil {
+				slog.Error("configuration still invalid after setup", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			slog.Error("configuration invalid", "error", err)
+			slog.Error("hint: run 'raagd --setup' to reconfigure")
+			slog.Error("or specify --music-path: raagd --music-path ~/Music")
+			os.Exit(1)
+		}
+	}
 	if *socketPath != "" {
 		cfg.Daemon.SocketPath = config.ExpandHome(*socketPath)
 	}
@@ -75,12 +94,12 @@ func main() {
 		slog.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
-	defer database.Close()
 
 	bus := events.New()
 	libraryRepo, err := db.NewLibraryRepo(database, cfg.Library.Paths)
 	if err != nil {
 		slog.Error("failed to create library repo", "error", err)
+		_ = database.Close()
 		os.Exit(1)
 	}
 
@@ -102,6 +121,7 @@ func main() {
 	ipcServer := ipc.NewServer(cfg.Daemon.SocketPath, router)
 	if err := ipcServer.Start(context.Background()); err != nil {
 		slog.Error("failed to start IPC server", "error", err)
+		_ = database.Close()
 		os.Exit(1)
 	}
 	if cfg.Library.ScanOnStart && !*noScan {
@@ -124,13 +144,15 @@ func main() {
 	<-sig
 
 	slog.Info("shutting down")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*1e9)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	ipcServer.Stop(ctx)
+	_ = ipcServer.Stop(ctx)
 	if err := player.Stop(ctx); err != nil {
 		slog.Warn("player stop error", "error", err)
 	}
+
+	_ = database.Close()
 	slog.Info("raag daemon stopped")
 }
 
@@ -140,17 +162,19 @@ func usage() {
 Usage: raagd [flags]
 
 Flags:
-  --music-path path   Music directory path (required on first run)
+  --music-path path   Music directory path (overrides config)
   --socket path       IPC socket path (default ~/.local/share/raag/raag.sock)
   --data-dir path     Data directory (default ~/.local/share/raag)
   --no-scan           Skip library scan on startup
-  --setup             Run first-time setup wizard
   -h, --help          Show this help
 
+On First Run:
+  Simply run 'raagd' and you'll be guided through setup automatically.
+
 Examples:
-  raagd --setup                    # First-time setup
-  raagd --music-path ~/Music      # Run with specified music path
-  raagd                            # Run with config file
+  raagd                            # First run: automatic setup wizard
+  raagd                            # Subsequent runs: start daemon
+  raagd --music-path ~/Music      # Override music path
 
 `)
 }
