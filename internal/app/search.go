@@ -96,15 +96,15 @@ func (s *SearchService) calculateRankScore(query string, track *domain.Track) fl
 }
 
 func (s *SearchService) calculateMatchScore(query string, track *domain.Track) float64 {
-	normalizedQuery := normalizeSearchQuery(query)
+	normalizedQuery := domain.Normalize(query)
 	score := 0.0
-	if strings.Contains(normalizeSearchField(track.Title), normalizedQuery) {
+	if strings.Contains(domain.Normalize(track.Title), normalizedQuery) {
 		score += BoostTitle
 	}
-	if strings.Contains(normalizeSearchField(track.Artist), normalizedQuery) {
+	if strings.Contains(domain.Normalize(track.Artist), normalizedQuery) {
 		score += BoostArtist
 	}
-	if strings.Contains(normalizeSearchField(track.Album), normalizedQuery) {
+	if strings.Contains(domain.Normalize(track.Album), normalizedQuery) {
 		score += BoostAlbum
 	}
 	return score
@@ -123,26 +123,4 @@ func (s *SearchService) calculateRecencyScore(track *domain.Track) float64 {
 	}
 	hoursSince := time.Since(time.Unix(track.LastPlayed, 0)).Hours()
 	return 1.0 / (1.0 + hoursSince/24.0)
-}
-
-func normalizeSearchQuery(q string) string {
-	q = strings.ToLower(strings.TrimSpace(q))
-	var result strings.Builder
-	for _, r := range q {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
-func normalizeSearchField(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	var result strings.Builder
-	for _, r := range s {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
 }

@@ -27,12 +27,12 @@ func GeneratePlaylistID() PlaylistID {
 }
 
 type Playlist struct {
-	ID          PlaylistID `json:"id"`
-	Name        string     `json:"name"`
-	TrackIDs    []TrackID  `json:"track_ids"`
-	CreatedAt   int64      `json:"created_at"`
-	ModifiedAt  int64      `json:"modified_at"`
-	Description string     `json:"description"`
+	ID          PlaylistID
+	Name        string
+	TrackIDs    []TrackID
+	CreatedAt   int64
+	ModifiedAt  int64
+	Description string
 }
 
 func NewPlaylist(name string) (*Playlist, error) {
