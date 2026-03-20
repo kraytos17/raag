@@ -14,6 +14,11 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+var (
+	zstdEnc, _ = zstd.NewWriter(nil)
+	zstdDec, _ = zstd.NewReader(nil)
+)
+
 type Options struct {
 	GCInterval       time.Duration
 	ValueLogFileSize int64
@@ -135,29 +140,28 @@ func (d *DB) RunValueLogGC(discardRatio float64) error {
 
 func (d *DB) Size() (int64, error) {
 	var size int64
-	_ = filepath.Walk(d.path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	err := filepath.Walk(d.path, func(_ string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
 		if !info.IsDir() {
 			size += info.Size()
 		}
 		return nil
 	})
-	return size, nil
+	return size, err
 }
 
 func (d *DB) Backup(writeFn func([]byte) error) error {
-	var err error
-	_ = d.db.View(func(txn *badger.Txn) error {
+	return d.db.View(func(txn *badger.Txn) error {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer iter.Close()
 
 		for iter.Rewind(); iter.Valid(); iter.Next() {
 			item := iter.Item()
-			val, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
+			val, e := item.ValueCopy(nil)
+			if e != nil {
+				return e
 			}
 
 			key := make([]byte, len(item.Key()))
@@ -171,21 +175,12 @@ func (d *DB) Backup(writeFn func([]byte) error) error {
 		}
 		return nil
 	})
-	return err
 }
 
 func Compress(data []byte) ([]byte, error) {
-	encoder, err := zstd.NewWriter(nil)
-	if err != nil {
-		return nil, err
-	}
-	return encoder.EncodeAll(data, nil), nil
+	return zstdEnc.EncodeAll(data, nil), nil
 }
 
 func Decompress(data []byte) ([]byte, error) {
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, err
-	}
-	return decoder.DecodeAll(data, nil)
+	return zstdDec.DecodeAll(data, nil)
 }

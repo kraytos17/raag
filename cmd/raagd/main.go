@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -16,7 +17,6 @@ import (
 	"github.com/p-society/raag/internal/infra/db"
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/ipc"
-	"github.com/p-society/raag/internal/infra/ipc/commands"
 )
 
 func main() {
@@ -86,8 +86,8 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: logLevel(cfg.Daemon.LogLevel),
 	}))
+	
 	slog.SetDefault(logger)
-
 	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
 	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
 	if err != nil {
@@ -103,7 +103,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	searchIndex := db.NewSearchIndex(database)
+	searchIndex := app.NewSearchIndex(libraryRepo)
 	peerRepo := db.NewPeerRepo(database)
 
 	scanner := app.NewLibraryScanner(libraryRepo, searchIndex, bus, cfg.Library.Paths)
@@ -114,11 +114,13 @@ func main() {
 	queue := audio.NewQueue()
 
 	playback := app.NewPlaybackController(libraryRepo, searchIndex, player, resolver, bus)
-	cmdHandlers := commands.NewHandlers(playback, scanner, searchService, libraryRepo, peerRepo, queue)
-	router := commands.NewRouter()
-	cmdHandlers.RegisterAll(router)
-
-	ipcServer := ipc.NewServer(cfg.Daemon.SocketPath, router)
+	ipcServer := ipc.NewServer(cfg.Daemon.SocketPath)
+	ipcServer.SetPlaybackHandler(playback)
+	ipcServer.SetScannerHandler(scanner)
+	ipcServer.SetSearchHandler(searchService)
+	ipcServer.SetLibraryRepoHandler(libraryRepo)
+	ipcServer.SetPeerRepoHandler(peerRepo)
+	ipcServer.SetQueueHandler(queue)
 	if err := ipcServer.Start(context.Background()); err != nil {
 		slog.Error("failed to start IPC server", "error", err)
 		_ = database.Close()
@@ -139,16 +141,16 @@ func main() {
 		"volume", cfg.Playback.Volume,
 	)
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-sigCtx.Done()
 
-	slog.Info("shutting down")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	slog.Info("shutting down", "reason", context.Cause(sigCtx))
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_ = ipcServer.Stop(ctx)
-	if err := player.Stop(ctx); err != nil {
+	_ = ipcServer.Stop(shutdownCtx)
+	if err := player.Stop(shutdownCtx); err != nil {
 		slog.Warn("player stop error", "error", err)
 	}
 
@@ -180,8 +182,7 @@ Examples:
 }
 
 func isPathNotConfiguredError(err error) bool {
-	return err != nil && (err.Error() == "no music path configured" ||
-		err.Error() == "config validation failed: no music path configured")
+	return errors.Is(err, config.ErrNoMusicPath)
 }
 
 func logLevel(level string) slog.Level {

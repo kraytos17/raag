@@ -105,52 +105,89 @@ message ChunkResponse {
 }
 
 enum CommandType {
-  UNKNOWN = 0;
-  STATUS = 1;
-  PLAY = 2;
-  PAUSE = 3;
-  RESUME = 4;
-  STOP = 5;
-  NEXT = 6;
-  PREV = 7;
-  SEEK_TO = 8;
-  SET_VOLUME = 9;
-  QUEUE_ADD = 10;
-  QUEUE_REMOVE = 11;
-  QUEUE_LIST = 12;
-  QUEUE_CLEAR = 13;
-  SEARCH = 14;
-  LIB_SCAN = 15;
-  LIST_PEERS = 16;
-  STREAM_FROM = 17;
-  DEBUG_PEERS = 18;
-  DEBUG_STREAMS = 19;
-  HEALTH_CHECK = 20;
-  SUBSCRIBE = 21;
-  CREATE_PLAYLIST = 22;
-  GET_PLAYLIST = 23;
-  LIST_PLAYLISTS = 24;
-  ADD_TO_PLAYLIST = 25;
-  GET_TRACK = 26;
-  GET_TRACK_BY_PATH = 27;
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  COMMAND_TYPE_STATUS = 1;
+  COMMAND_TYPE_PLAY = 2;
+  COMMAND_TYPE_PAUSE = 3;
+  COMMAND_TYPE_RESUME = 4;
+  COMMAND_TYPE_STOP = 5;
+  COMMAND_TYPE_NEXT = 6;
+  COMMAND_TYPE_PREV = 7;
+  COMMAND_TYPE_SEEK_TO = 8;
+  COMMAND_TYPE_SET_VOLUME = 9;
+  COMMAND_TYPE_QUEUE_ADD = 10;
+  COMMAND_TYPE_QUEUE_REMOVE = 11;
+  COMMAND_TYPE_QUEUE_LIST = 12;
+  COMMAND_TYPE_QUEUE_CLEAR = 13;
+  COMMAND_TYPE_SEARCH = 14;
+  COMMAND_TYPE_LIB_SCAN = 15;
+  COMMAND_TYPE_LIST_PEERS = 16;
+  COMMAND_TYPE_STREAM_FROM = 17;
+  COMMAND_TYPE_DEBUG_PEERS = 18;
+  COMMAND_TYPE_DEBUG_STREAMS = 19;
+  COMMAND_TYPE_HEALTH_CHECK = 20;
+  COMMAND_TYPE_SUBSCRIBE = 21;
+  COMMAND_TYPE_CREATE_PLAYLIST = 22;
+  COMMAND_TYPE_GET_PLAYLIST = 23;
+  COMMAND_TYPE_LIST_PLAYLISTS = 24;
+  COMMAND_TYPE_ADD_TO_PLAYLIST = 25;
+  COMMAND_TYPE_GET_TRACK = 26;
+  COMMAND_TYPE_GET_TRACK_BY_PATH = 27;
 }
 
 enum SyncRequestType {
-  SYNC_UNKNOWN = 0;
-  MANIFEST = 1;
-  TRACK_DETAIL = 2;
+  SYNC_REQUEST_TYPE_UNSPECIFIED = 0;
+  SYNC_REQUEST_TYPE_MANIFEST = 1;
+  SYNC_REQUEST_TYPE_TRACK_DETAIL = 2;
 }
+
+message Empty {}
 
 message Request {
   int32 protocol_version = 1;
-  CommandType type = 2;
-  bytes payload = 3;
+  oneof payload {
+    Empty empty = 2;
+    PlayRequest play = 3;
+    PauseRequest pause = 4;
+    ResumeRequest resume = 5;
+    StopRequest stop = 6;
+    NextRequest next = 7;
+    PrevRequest prev = 8;
+    SeekRequest seek = 9;
+    SetVolumeRequest set_volume = 10;
+    QueueAddRequest queue_add = 11;
+    QueueRemoveRequest queue_remove = 12;
+    QueueClearRequest queue_clear = 13;
+    SearchRequest search = 14;
+    LibScanRequest lib_scan = 15;
+    ListPeersRequest list_peers = 16;
+    StatusRequest status = 17;
+    HealthCheckRequest health_check = 18;
+    CreatePlaylistRequest create_playlist = 19;
+    GetPlaylistRequest get_playlist = 20;
+    ListPlaylistsRequest list_playlists = 21;
+    AddToPlaylistRequest add_to_playlist = 22;
+    GetTrackRequest get_track = 23;
+    GetTrackByPathRequest get_track_by_path = 24;
+  }
 }
 
 message Response {
   bool success = 1;
   string error = 2;
-  bytes payload = 3;
+  oneof payload {
+    Empty empty = 3;
+    SearchResponse search = 4;
+    ListPeersResponse list_peers = 5;
+    StatusResponse status = 6;
+    HealthCheckResponse health_check = 7;
+    QueueResponse queue = 8;
+    LibScanResponse lib_scan = 9;
+    CreatePlaylistResponse create_playlist = 10;
+    GetPlaylistResponse get_playlist = 11;
+    ListPlaylistsResponse list_playlists = 12;
+    GetTrackResponse get_track = 13;
+  }
 }
 
 message PlayRequest {
@@ -202,6 +239,8 @@ message QueueRemoveRequest {
   int32 position = 1;
 }
 
+message QueueClearRequest {}
+
 message QueueResponse {
   repeated Track tracks = 1;
 }
@@ -233,6 +272,8 @@ message Peer {
   PeerScore score = 4;
   PeerCapabilities capabilities = 5;
 }
+
+message ListPeersRequest {}
 
 message ListPeersResponse {
   repeated Peer peers = 1;
@@ -273,6 +314,8 @@ message StreamDebugInfo {
   int64 bytes_transferred = 8;
 }
 
+message HealthCheckRequest {}
+
 message HealthCheckResponse {
   bool healthy = 1;
   repeated ComponentHealth components = 2;
@@ -295,18 +338,19 @@ message EventMessage {
 }
 
 enum EventType {
-  TRACK_STARTED = 0;
-  TRACK_FINISHED = 1;
-  TRACK_PROGRESS = 2;
-  TRACK_ERROR = 3;
-  PLAYBACK_STATE_CHANGED = 4;
-  PEER_CONNECTED = 5;
-  PEER_DISCONNECTED = 6;
-  PEER_SCORE_UPDATED = 7;
-  SCAN_STARTED = 8;
-  SCAN_PROGRESS = 9;
-  SCAN_COMPLETE = 10;
-  QUEUE_UPDATED = 11;
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_TRACK_STARTED = 1;
+  EVENT_TYPE_TRACK_FINISHED = 2;
+  EVENT_TYPE_TRACK_PROGRESS = 3;
+  EVENT_TYPE_TRACK_ERROR = 4;
+  EVENT_TYPE_PLAYBACK_STATE_CHANGED = 5;
+  EVENT_TYPE_PEER_CONNECTED = 6;
+  EVENT_TYPE_PEER_DISCONNECTED = 7;
+  EVENT_TYPE_PEER_SCORE_UPDATED = 8;
+  EVENT_TYPE_SCAN_STARTED = 9;
+  EVENT_TYPE_SCAN_PROGRESS = 10;
+  EVENT_TYPE_SCAN_COMPLETE = 11;
+  EVENT_TYPE_QUEUE_UPDATED = 12;
 }
 
 message TrackStartedPayload {
@@ -373,6 +417,8 @@ message GetPlaylistResponse {
   Playlist playlist = 1;
   repeated Track tracks = 2;
 }
+
+message ListPlaylistsRequest {}
 
 message ListPlaylistsResponse {
   repeated Playlist playlists = 1;

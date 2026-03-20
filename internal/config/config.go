@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/spf13/viper"
 )
+
+var ErrNoMusicPath = errors.New("no music path configured")
 
 type Config struct {
 	Library    LibraryConfig    `mapstructure:"library"`
@@ -76,7 +79,7 @@ func (c *Config) ValidateForStart() error {
 		return err
 	}
 	if len(c.Library.Paths) == 0 {
-		return fmt.Errorf("no music path configured")
+		return ErrNoMusicPath
 	}
 	return nil
 }

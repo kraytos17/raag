@@ -9,6 +9,12 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
+var prefetchBufferPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 256*1024)
+	},
+}
+
 type Prefetcher struct {
 	mu              sync.Mutex
 	resolver        *Resolver
@@ -94,7 +100,8 @@ func (p *Prefetcher) prefetch() {
 		defer func() { _ = closer.Close() }()
 	}
 
-	data := make([]byte, 256*1024)
+	data := prefetchBufferPool.Get().([]byte)
+	defer prefetchBufferPool.Put(data)
 	n, err := reader.Read(data)
 	if n == 0 {
 		if err != nil {
@@ -123,7 +130,7 @@ func (p *Prefetcher) peekNext() domain.TrackID {
 		return ""
 	}
 
-	next := p.queue.Next()
+	next := p.queue.Peek()
 	if next == nil {
 		return ""
 	}

@@ -83,7 +83,7 @@ func (p *Playlist) MoveTrack(from, to int) error {
 		return errors.New("invalid to index")
 	}
 	if from == to {
-		return nil
+		return nil // No-op: moving to same position doesn't modify playlist
 	}
 
 	track := p.TrackIDs[from]

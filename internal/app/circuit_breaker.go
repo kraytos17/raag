@@ -152,10 +152,14 @@ func (r *cbRegistry) Remove(peerID domain.PeerID) {
 }
 
 func (r *cbRegistry) ResetAll() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	r.mu.RLock()
+	breakers := make([]*circuitBreaker, 0, len(r.breakers))
 	for _, cb := range r.breakers {
+		breakers = append(breakers, cb)
+	}
+
+	r.mu.RUnlock()
+	for _, cb := range breakers {
 		cb.Reset()
 	}
 }

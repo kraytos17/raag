@@ -134,7 +134,7 @@ func (q *Queue) Insert(position int, track *domain.Track) {
 		position = len(q.tracks)
 	}
 
-	q.tracks = append(q.tracks[:position], append([]*domain.Track{track}, q.tracks[position:]...)...)
+	q.tracks = slices.Insert(q.tracks, position, track)
 	if q.pos >= position {
 		q.pos++
 	}

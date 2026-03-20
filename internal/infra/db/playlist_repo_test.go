@@ -58,12 +58,12 @@ func TestPlaylistRepo_List(t *testing.T) {
 		}
 	}
 
-	result, err := repo.List(ctx)
-	if err != nil {
-		t.Errorf("List() error = %v", err)
+	var result []*domain.Playlist
+	for pl := range repo.ListAll(ctx) {
+		result = append(result, pl)
 	}
 	if len(result) != 2 {
-		t.Errorf("List() returned %d playlists, want 2", len(result))
+		t.Errorf("ListAll() returned %d playlists, want 2", len(result))
 	}
 }
 

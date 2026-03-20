@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"io"
+	"iter"
 	"time"
 
 	"github.com/p-society/raag/internal/domain"
@@ -24,11 +25,14 @@ type IndexStats struct {
 type LibraryRepository interface {
 	Save(ctx context.Context, track *domain.Track) error
 	FindByID(ctx context.Context, id domain.TrackID) (*domain.Track, error)
+	FindByIDs(ctx context.Context, ids []domain.TrackID) ([]*domain.Track, error)
 	FindByPath(ctx context.Context, path string) (*domain.Track, error)
+	GetCoverArt(ctx context.Context, id domain.TrackID) ([]byte, error)
 	Search(ctx context.Context, query SearchQuery) ([]*domain.Track, error)
 	Delete(ctx context.Context, id domain.TrackID) error
 	BulkSave(ctx context.Context, tracks []*domain.Track) error
 	ListAll(ctx context.Context) ([]*domain.Track, error)
+	ListAllPaths(ctx context.Context) ([]string, error)
 	SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error
 	LoadFileStats(ctx context.Context) (map[string]*domain.FileStat, error)
 }
@@ -36,7 +40,7 @@ type LibraryRepository interface {
 type PlaylistRepository interface {
 	Save(ctx context.Context, playlist *domain.Playlist) error
 	FindByID(ctx context.Context, id domain.PlaylistID) (*domain.Playlist, error)
-	List(ctx context.Context) ([]*domain.Playlist, error)
+	ListAll(ctx context.Context) iter.Seq[*domain.Playlist]
 	Delete(ctx context.Context, id domain.PlaylistID) error
 }
 
@@ -47,7 +51,7 @@ type PeerRepository interface {
 	GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.PeerScore, error)
 	SaveLibraryManifest(ctx context.Context, id domain.PeerID, manifest *domain.LibraryManifest) error
 	GetLibraryManifest(ctx context.Context, id domain.PeerID) (*domain.LibraryManifest, error)
-	ListAllPeers(ctx context.Context) ([]*domain.PeerInfo, error)
+	ListAll(ctx context.Context) iter.Seq[*domain.PeerInfo]
 }
 
 type SearchIndex interface {
@@ -57,7 +61,7 @@ type SearchIndex interface {
 	SearchFuzzy(ctx context.Context, query string, limit int) ([]domain.TrackID, error)
 	Delete(ctx context.Context, id domain.TrackID) error
 	Stats(ctx context.Context) (IndexStats, error)
-	Rebuild(ctx context.Context) error
+	Rebuild(ctx context.Context, repo LibraryRepository) error
 }
 
 type ChunkRequest struct {

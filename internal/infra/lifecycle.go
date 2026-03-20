@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"sync"
 
 	"github.com/p-society/raag/internal/app"
@@ -64,16 +65,19 @@ func (m *LifecycleManager) Deregister(name string) {
 
 func (m *LifecycleManager) StartAll(ctx context.Context) error {
 	m.mu.Lock()
-	for _, name := range m.startOrder {
+	order := append([]string(nil), m.startOrder...)
+	comps := make(map[string]app.Component, len(m.components))
+	maps.Copy(comps, m.components)
+	for _, name := range order {
 		m.states[name] = app.ComponentState{
 			Name:   name,
 			Status: app.StatusStarting,
 		}
 	}
-	m.mu.Unlock()
 
-	for _, name := range m.startOrder {
-		component := m.components[name]
+	m.mu.Unlock()
+	for _, name := range order {
+		component := comps[name]
 		slog.Info("starting component", "name", name)
 		if err := component.Start(ctx); err != nil {
 			slog.Error("component start failed", "name", name, "error", err)
@@ -101,7 +105,10 @@ func (m *LifecycleManager) StartAll(ctx context.Context) error {
 
 func (m *LifecycleManager) StopAll(ctx context.Context) error {
 	m.mu.Lock()
-	for _, name := range m.startOrder {
+	order := append([]string(nil), m.startOrder...)
+	comps := make(map[string]app.Component, len(m.components))
+	maps.Copy(comps, m.components)
+	for _, name := range order {
 		m.states[name] = app.ComponentState{
 			Name:   name,
 			Status: app.StatusStopping,
@@ -110,9 +117,9 @@ func (m *LifecycleManager) StopAll(ctx context.Context) error {
 	m.mu.Unlock()
 
 	var errs []error
-	for i := len(m.startOrder) - 1; i >= 0; i-- {
-		name := m.startOrder[i]
-		component := m.components[name]
+	for i := len(order) - 1; i >= 0; i-- {
+		name := order[i]
+		component := comps[name]
 		slog.Info("stopping component", "name", name)
 		if err := component.Stop(ctx); err != nil {
 			slog.Error("component stop failed", "name", name, "error", err)
@@ -137,7 +144,7 @@ func (m *LifecycleManager) StopAll(ctx context.Context) error {
 		slog.Info("component stopped", "name", name)
 	}
 	if len(errs) > 0 {
-		return errors.Join(ErrShutdownFailed, errs[0])
+		return errors.Join(append([]error{ErrShutdownFailed}, errs...)...)
 	}
 	return nil
 }
