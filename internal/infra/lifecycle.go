@@ -53,7 +53,6 @@ func (m *LifecycleManager) Deregister(name string) {
 
 	delete(m.components, name)
 	delete(m.states, name)
-
 	newOrder := make([]string, 0, len(m.startOrder))
 	for _, n := range m.startOrder {
 		if n != name {
@@ -75,9 +74,7 @@ func (m *LifecycleManager) StartAll(ctx context.Context) error {
 
 	for _, name := range m.startOrder {
 		component := m.components[name]
-
 		slog.Info("starting component", "name", name)
-
 		if err := component.Start(ctx); err != nil {
 			slog.Error("component start failed", "name", name, "error", err)
 			m.mu.Lock()
@@ -95,11 +92,10 @@ func (m *LifecycleManager) StartAll(ctx context.Context) error {
 			Name:   name,
 			Status: app.StatusRunning,
 		}
+		
 		m.mu.Unlock()
-
 		slog.Info("component started", "name", name)
 	}
-
 	return nil
 }
 
@@ -114,13 +110,10 @@ func (m *LifecycleManager) StopAll(ctx context.Context) error {
 	m.mu.Unlock()
 
 	var errs []error
-
 	for i := len(m.startOrder) - 1; i >= 0; i-- {
 		name := m.startOrder[i]
 		component := m.components[name]
-
 		slog.Info("stopping component", "name", name)
-
 		if err := component.Stop(ctx); err != nil {
 			slog.Error("component stop failed", "name", name, "error", err)
 			errs = append(errs, err)
@@ -139,15 +132,13 @@ func (m *LifecycleManager) StopAll(ctx context.Context) error {
 			Name:   name,
 			Status: app.StatusStopped,
 		}
+		
 		m.mu.Unlock()
-
 		slog.Info("component stopped", "name", name)
 	}
-
 	if len(errs) > 0 {
 		return errors.Join(ErrShutdownFailed, errs[0])
 	}
-
 	return nil
 }
 

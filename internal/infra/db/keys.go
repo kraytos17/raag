@@ -29,8 +29,7 @@ func TrackKey(id domain.TrackID) []byte {
 }
 
 func PathKey(path string) []byte {
-	hash := sha256.Sum256([]byte(path))
-	return []byte(PrefixTrackPath + hex.EncodeToString(hash[:]))
+	return []byte(PrefixTrackPath + pathHash(path))
 }
 
 func ArtistIndexKey(artist string, id domain.TrackID) []byte {
@@ -50,8 +49,7 @@ func TrigramIndexKey(trigram string, id domain.TrackID) []byte {
 }
 
 func FileStatKey(path string) []byte {
-	hash := sha256.Sum256([]byte(path))
-	return []byte(PrefixFileStat + hex.EncodeToString(hash[:]))
+	return []byte(PrefixFileStat + pathHash(path))
 }
 
 func PlaylistKey(id domain.PlaylistID) []byte {

@@ -27,7 +27,6 @@ func TestTrackID_Validate(t *testing.T) {
 func TestGenerateTrackID(t *testing.T) {
 	id1 := GenerateTrackID("/path/to/song.mp3")
 	id2 := GenerateTrackID("/path/to/song.mp3")
-
 	if id1 != id2 {
 		t.Errorf("GenerateTrackID() should return same ID for same path")
 	}
@@ -36,7 +35,6 @@ func TestGenerateTrackID(t *testing.T) {
 	if id1 == id3 {
 		t.Errorf("GenerateTrackID() should return different IDs for different paths")
 	}
-
 	if !id1.Validate() {
 		t.Errorf("GenerateTrackID() should return valid TrackID")
 	}
@@ -44,19 +42,15 @@ func TestGenerateTrackID(t *testing.T) {
 
 func TestNewTrack(t *testing.T) {
 	track := NewTrack("/path/to/song.mp3")
-
 	if track.ID == "" {
 		t.Errorf("NewTrack() should generate TrackID")
 	}
-
 	if track.Path != "/path/to/song.mp3" {
 		t.Errorf("NewTrack() Path = %v, want %v", track.Path, "/path/to/song.mp3")
 	}
-
 	if track.AddedAt == 0 {
 		t.Errorf("NewTrack() should set AddedAt")
 	}
-
 	if track.Genres == nil {
 		t.Errorf("NewTrack() should initialize Genres slice")
 	}
@@ -110,17 +104,14 @@ func TestTrack_Validate(t *testing.T) {
 func TestTrack_IncrementPlayCount(t *testing.T) {
 	track := NewTrack("/path/to/song.mp3")
 	track.DurationMs = 180000
-
 	if track.PlayCount != 0 {
 		t.Errorf("Initial PlayCount should be 0")
 	}
 
 	track.IncrementPlayCount()
-
 	if track.PlayCount != 1 {
 		t.Errorf("After IncrementPlayCount(), PlayCount = %v, want 1", track.PlayCount)
 	}
-
 	if track.LastPlayed == 0 {
 		t.Errorf("After IncrementPlayCount(), LastPlayed should be set")
 	}
@@ -131,7 +122,6 @@ func TestTrack_Duration(t *testing.T) {
 	track.DurationMs = 180000
 
 	duration := track.Duration()
-
 	if duration.Seconds() != 180 {
 		t.Errorf("Track.Duration() = %v, want 180s", duration)
 	}
@@ -139,13 +129,11 @@ func TestTrack_Duration(t *testing.T) {
 
 func TestTrack_HasCoverArt(t *testing.T) {
 	track := NewTrack("/path/to/song.mp3")
-
 	if track.HasCoverArt() {
 		t.Errorf("Track with no cover art should return false")
 	}
 
 	track.CoverArt = []byte{0xFF, 0xD8}
-
 	if !track.HasCoverArt() {
 		t.Errorf("Track with cover art should return true")
 	}

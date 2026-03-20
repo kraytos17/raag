@@ -178,7 +178,6 @@ func TestCachedRepo_Invalidate(t *testing.T) {
 	repo.cache[track.ID] = track
 
 	repo.Invalidate()
-
 	if len(repo.cache) != 0 {
 		t.Error("Invalidate() should clear the cache")
 	}
@@ -187,7 +186,6 @@ func TestCachedRepo_Invalidate(t *testing.T) {
 func TestCachedRepo_BulkSave(t *testing.T) {
 	mock := newMockLibraryRepository()
 	repo := newCachedLibraryRepo(mock)
-
 	tracks := []*domain.Track{
 		{ID: domain.GenerateTrackID("/music/song1.mp3"), Path: "/music/song1.mp3", Title: "Song 1", DurationMs: 180000},
 		{ID: domain.GenerateTrackID("/music/song2.mp3"), Path: "/music/song2.mp3", Title: "Song 2", DurationMs: 200000},
@@ -197,7 +195,6 @@ func TestCachedRepo_BulkSave(t *testing.T) {
 	if err := repo.BulkSave(ctx, tracks); err != nil {
 		t.Errorf("BulkSave() error = %v", err)
 	}
-
 	if len(repo.cache) != 2 {
 		t.Errorf("BulkSave() should cache all tracks, got %d, want 2", len(repo.cache))
 	}
@@ -206,7 +203,6 @@ func TestCachedRepo_BulkSave(t *testing.T) {
 func TestCachedRepo_ListAll(t *testing.T) {
 	mock := newMockLibraryRepository()
 	repo := newCachedLibraryRepo(mock)
-
 	tracks := []*domain.Track{
 		{ID: domain.GenerateTrackID("/music/song1.mp3"), Path: "/music/song1.mp3", Title: "Song 1", DurationMs: 180000},
 		{ID: domain.GenerateTrackID("/music/song2.mp3"), Path: "/music/song2.mp3", Title: "Song 2", DurationMs: 200000},
@@ -220,7 +216,6 @@ func TestCachedRepo_ListAll(t *testing.T) {
 	if err != nil {
 		t.Errorf("ListAll() error = %v", err)
 	}
-
 	if len(result) != 2 {
 		t.Errorf("ListAll() returned %d tracks, want 2", len(result))
 	}
@@ -229,7 +224,6 @@ func TestCachedRepo_ListAll(t *testing.T) {
 func TestCachedRepo_SaveFileStats(t *testing.T) {
 	mock := newMockLibraryRepository()
 	repo := newCachedLibraryRepo(mock)
-
 	stats := map[string]*domain.FileStat{
 		"/music/song1.mp3": {Path: "/music/song1.mp3", Size: 5000},
 	}
@@ -249,7 +243,6 @@ func TestCachedRepo_LoadFileStats(t *testing.T) {
 	if err != nil {
 		t.Errorf("LoadFileStats() error = %v", err)
 	}
-
 	if stats == nil {
 		t.Error("LoadFileStats() should return empty map, not nil")
 	}

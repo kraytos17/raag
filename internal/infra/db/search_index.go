@@ -246,8 +246,6 @@ func (idx *searchIndex) Stats(ctx context.Context) (app.IndexStats, error) {
 			stats.TotalTracks++
 			iter.Next()
 		}
-
-		_ = termSet
 		return nil
 	})
 	return stats, err
