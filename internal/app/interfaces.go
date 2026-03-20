@@ -111,3 +111,19 @@ const (
 	PlayerStateBuffering PlayerState = "buffering"
 	PlayerStateError     PlayerState = "error"
 )
+
+type Queue interface {
+	Peek() *domain.Track
+	Next() *domain.Track
+	Previous() *domain.Track
+	Current() *domain.Track
+	Length() int
+}
+
+type RepeatMode string
+
+const (
+	RepeatModeNone RepeatMode = "none"
+	RepeatModeOne  RepeatMode = "one"
+	RepeatModeAll  RepeatMode = "all"
+)

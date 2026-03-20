@@ -1,8 +1,9 @@
 package db
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -11,17 +12,11 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-const (
-	BoostTitle  = 3.0
-	BoostArtist = 2.0
-	BoostAlbum  = 1.5
-)
-
 type searchIndex struct {
 	db *DB
 }
 
-func newSearchIndex(db *DB) *searchIndex {
+func NewSearchIndex(db *DB) app.SearchIndex {
 	return &searchIndex{db: db}
 }
 
@@ -114,8 +109,8 @@ func (idx *searchIndex) Search(ctx context.Context, query string, limit int) ([]
 		result = append(result, id)
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		return string(result[i]) < string(result[j])
+	slices.SortFunc(result, func(a, b domain.TrackID) int {
+		return cmp.Compare(string(a), string(b))
 	})
 
 	if limit > 0 && len(result) > limit {
@@ -166,8 +161,8 @@ func (idx *searchIndex) SearchFuzzy(ctx context.Context, query string, limit int
 		scored = append(scored, scoredID{id, score})
 	}
 
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].score > scored[j].score
+	slices.SortFunc(scored, func(a, b scoredID) int {
+		return cmp.Compare(b.score, a.score)
 	})
 
 	result := make([]domain.TrackID, 0, len(scored))
@@ -285,19 +280,4 @@ func trigrams(s string) []string {
 		result = append(result, s[i:i+3])
 	}
 	return result
-}
-
-func rank(query string, track *domain.Track, playCount int, lastPlayed int64) float64 {
-	matchScore := 0.0
-	q := strings.ToLower(query)
-	if strings.Contains(strings.ToLower(track.Title), q) {
-		matchScore += BoostTitle
-	}
-	if strings.Contains(strings.ToLower(track.Artist), q) {
-		matchScore += BoostArtist
-	}
-	if strings.Contains(strings.ToLower(track.Album), q) {
-		matchScore += BoostAlbum
-	}
-	return matchScore
 }

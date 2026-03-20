@@ -3,9 +3,11 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/audio"
 )
 
 type handlers struct {
@@ -14,15 +16,16 @@ type handlers struct {
 	search      *app.SearchService
 	libraryRepo app.LibraryRepository
 	peerRepo    app.PeerRepository
-	queue       *queue
+	queue       *audio.Queue
 }
 
-func newHandlers(
+func NewHandlers(
 	playback *app.PlaybackController,
 	scanner *app.LibraryScanner,
 	search *app.SearchService,
 	libraryRepo app.LibraryRepository,
 	peerRepo app.PeerRepository,
+	queue *audio.Queue,
 ) *handlers {
 	return &handlers{
 		playback:    playback,
@@ -30,8 +33,27 @@ func newHandlers(
 		search:      search,
 		libraryRepo: libraryRepo,
 		peerRepo:    peerRepo,
-		queue:       newQueue(),
+		queue:       queue,
 	}
+}
+
+func (h *handlers) RegisterAll(router *CommandRouter) {
+	router.Register(CmdPlay, h.handlePlay)
+	router.Register(CmdPause, h.handlePause)
+	router.Register(CmdResume, h.handleResume)
+	router.Register(CmdStop, h.handleStop)
+	router.Register(CmdNext, h.handleNext)
+	router.Register(CmdPrev, h.handlePrev)
+	router.Register(CmdSeekTo, h.handleSeek)
+	router.Register(CmdSetVolume, h.handleSetVolume)
+	router.Register(CmdQueueAdd, h.handleQueueAdd)
+	router.Register(CmdQueueRemove, h.handleQueueRemove)
+	router.Register(CmdQueueClear, h.handleQueueClear)
+	router.Register(CmdSearch, h.handleSearch)
+	router.Register(CmdLibScan, h.handleLibScan)
+	router.Register(CmdListPeers, h.handleListPeers)
+	router.Register(CmdStatus, h.handleStatus)
+	router.Register(CmdHealthCheck, h.handleHealthCheck)
 }
 
 type playRequest struct {
@@ -39,11 +61,7 @@ type playRequest struct {
 	TrackID string `json:"track_id,omitempty"`
 }
 
-type playHandler struct {
-	*handlers
-}
-
-func (h *playHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handlePlay(ctx context.Context, cmd Command) (Response, error) {
 	var req playRequest
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &req); err != nil {
@@ -67,21 +85,117 @@ func (h *playHandler) Handle(ctx context.Context, cmd Command) (Response, error)
 	return Response{Status: "ok"}, nil
 }
 
-type pauseHandler struct{}
-
-func (h *pauseHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handlePause(ctx context.Context, cmd Command) (Response, error) {
+	if err := h.playback.Pause(ctx); err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
 	return Response{Status: "ok"}, nil
 }
 
-type resumeHandler struct{}
-
-func (h *resumeHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handleResume(ctx context.Context, cmd Command) (Response, error) {
+	if err := h.playback.Resume(ctx); err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
 	return Response{Status: "ok"}, nil
 }
 
-type stopHandler struct{}
+func (h *handlers) handleStop(ctx context.Context, cmd Command) (Response, error) {
+	if err := h.playback.Stop(ctx); err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
+	return Response{Status: "ok"}, nil
+}
 
-func (h *stopHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handleNext(ctx context.Context, cmd Command) (Response, error) {
+	next := h.queue.Next()
+	if next == nil {
+		return Response{Status: "error", Error: "no next track"}, nil
+	}
+	if err := h.playback.Play(ctx, next.ID); err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
+	return Response{Status: "ok"}, nil
+}
+
+func (h *handlers) handlePrev(ctx context.Context, cmd Command) (Response, error) {
+	prev := h.queue.Previous()
+	if prev == nil {
+		return Response{Status: "error", Error: "no previous track"}, nil
+	}
+	if err := h.playback.Play(ctx, prev.ID); err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
+	return Response{Status: "ok"}, nil
+}
+
+type seekRequest struct {
+	OffsetMs int64 `json:"offset_ms"`
+}
+
+func (h *handlers) handleSeek(ctx context.Context, cmd Command) (Response, error) {
+	var req seekRequest
+	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
+		return Response{Status: "error", Error: err.Error()}, nil
+	}
+	if err := h.playback.Seek(ctx, time.Duration(req.OffsetMs)*time.Millisecond); err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
+	return Response{Status: "ok"}, nil
+}
+
+type volumeRequest struct {
+	Volume int `json:"volume"`
+}
+
+func (h *handlers) handleSetVolume(ctx context.Context, cmd Command) (Response, error) {
+	var req volumeRequest
+	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
+		return Response{Status: "error", Error: err.Error()}, nil
+	}
+	if err := h.playback.SetVolume(ctx, req.Volume); err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
+	return Response{Status: "ok"}, nil
+}
+
+type queueAddRequest struct {
+	TrackID  string `json:"track_id"`
+	Position int    `json:"position"`
+}
+
+func (h *handlers) handleQueueAdd(ctx context.Context, cmd Command) (Response, error) {
+	var req queueAddRequest
+	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
+		return Response{Status: "error", Error: err.Error()}, nil
+	}
+
+	track, err := h.libraryRepo.FindByID(ctx, domain.TrackID(req.TrackID))
+	if err != nil {
+		return Response{Status: "error", Error: err.Error()}, err
+	}
+	if req.Position >= 0 {
+		h.queue.Insert(req.Position, track)
+	} else {
+		h.queue.Add(track)
+	}
+	return Response{Status: "ok"}, nil
+}
+
+type queueRemoveRequest struct {
+	Position int `json:"position"`
+}
+
+func (h *handlers) handleQueueRemove(ctx context.Context, cmd Command) (Response, error) {
+	var req queueRemoveRequest
+	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
+		return Response{Status: "error", Error: err.Error()}, nil
+	}
+	h.queue.Remove(req.Position)
+	return Response{Status: "ok"}, nil
+}
+
+func (h *handlers) handleQueueClear(ctx context.Context, cmd Command) (Response, error) {
+	h.queue.Clear()
 	return Response{Status: "ok"}, nil
 }
 
@@ -90,11 +204,7 @@ type searchRequest struct {
 	Limit int    `json:"limit"`
 }
 
-type searchHandler struct {
-	*handlers
-}
-
-func (h *searchHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handleSearch(ctx context.Context, cmd Command) (Response, error) {
 	var req searchRequest
 	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
 		return Response{Status: "error", Error: err.Error()}, nil
@@ -112,11 +222,7 @@ func (h *searchHandler) Handle(ctx context.Context, cmd Command) (Response, erro
 	return Response{Status: "ok", Data: data}, nil
 }
 
-type libScanHandler struct {
-	*handlers
-}
-
-func (h *libScanHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handleLibScan(ctx context.Context, cmd Command) (Response, error) {
 	_, err := h.scanner.Scan(ctx)
 	if err != nil {
 		return Response{Status: "error", Error: err.Error()}, err
@@ -124,11 +230,7 @@ func (h *libScanHandler) Handle(ctx context.Context, cmd Command) (Response, err
 	return Response{Status: "ok"}, nil
 }
 
-type listPeersHandler struct {
-	*handlers
-}
-
-func (h *listPeersHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handleListPeers(ctx context.Context, cmd Command) (Response, error) {
 	peers, err := h.peerRepo.ListAllPeers(ctx)
 	if err != nil {
 		return Response{Status: "error", Error: err.Error()}, err
@@ -138,91 +240,34 @@ func (h *listPeersHandler) Handle(ctx context.Context, cmd Command) (Response, e
 	return Response{Status: "ok", Data: data}, nil
 }
 
-type statusHandler struct {
-	*handlers
-}
-
-func (h *statusHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handleStatus(ctx context.Context, cmd Command) (Response, error) {
 	status := struct {
-		State     app.PlayerState `json:"state"`
-		Volume    int             `json:"volume"`
-		QueueSize int             `json:"queue_size"`
+		State        app.PlayerState `json:"state"`
+		CurrentTrack *domain.Track   `json:"current_track"`
+		Position     string          `json:"position"`
+		Volume       int             `json:"volume"`
+		QueueSize    int             `json:"queue_size"`
+		QueuePos     int             `json:"queue_position"`
 	}{
 		State:     h.playback.GetState(),
+		QueueSize: h.queue.Length(),
+		QueuePos:  h.queue.Position(),
 		Volume:    80,
-		QueueSize: h.queue.Len(),
+	}
+
+	if track := h.playback.GetCurrentTrack(); track != nil {
+		status.CurrentTrack = track
 	}
 
 	data, _ := json.Marshal(status)
 	return Response{Status: "ok", Data: data}, nil
 }
 
-type healthCheckHandler struct{}
-
-func (h *healthCheckHandler) Handle(ctx context.Context, cmd Command) (Response, error) {
+func (h *handlers) handleHealthCheck(ctx context.Context, cmd Command) (Response, error) {
 	health := struct {
 		Status string `json:"status"`
-	}{"healthy"}
+	}{Status: "healthy"}
 
 	data, _ := json.Marshal(health)
 	return Response{Status: "ok", Data: data}, nil
-}
-
-type queue struct {
-	tracks []domain.TrackID
-	pos    int
-}
-
-func newQueue() *queue {
-	return &queue{
-		tracks: make([]domain.TrackID, 0),
-		pos:    -1,
-	}
-}
-
-func (q *queue) Add(trackID domain.TrackID) {
-	q.tracks = append(q.tracks, trackID)
-}
-
-func (q *queue) Next() *domain.TrackID {
-	if len(q.tracks) == 0 {
-		return nil
-	}
-
-	q.pos++
-	if q.pos >= len(q.tracks) {
-		q.pos = len(q.tracks) - 1
-		return nil
-	}
-	return &q.tracks[q.pos]
-}
-
-func (q *queue) Prev() *domain.TrackID {
-	if len(q.tracks) == 0 || q.pos <= 0 {
-		return nil
-	}
-
-	q.pos--
-	return &q.tracks[q.pos]
-}
-
-func (q *queue) Len() int {
-	return len(q.tracks)
-}
-
-func (q *queue) Clear() {
-	q.tracks = make([]domain.TrackID, 0)
-	q.pos = -1
-}
-
-func registerAll(router *CommandRouter, h *handlers) {
-	router.Register(CmdPlay, (&playHandler{handlers: h}).Handle)
-	router.Register(CmdPause, (&pauseHandler{}).Handle)
-	router.Register(CmdResume, (&resumeHandler{}).Handle)
-	router.Register(CmdStop, (&stopHandler{}).Handle)
-	router.Register(CmdSearch, (&searchHandler{handlers: h}).Handle)
-	router.Register(CmdLibScan, (&libScanHandler{handlers: h}).Handle)
-	router.Register(CmdListPeers, (&listPeersHandler{handlers: h}).Handle)
-	router.Register(CmdStatus, (&statusHandler{handlers: h}).Handle)
-	router.Register(CmdHealthCheck, (&healthCheckHandler{}).Handle)
 }

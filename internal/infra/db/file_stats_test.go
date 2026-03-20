@@ -13,7 +13,7 @@ func TestDiffFileStats_AllAdded(t *testing.T) {
 		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
 		"/music/song2.mp3": {Path: "/music/song2.mp3", Mtime: 1000, Size: 6000},
 	}
-	
+
 	previous := map[string]*domain.FileStat{}
 	result := diffFileStats(current, previous)
 	if len(result.Added) != 2 {

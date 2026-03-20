@@ -11,7 +11,7 @@ func TestPlaylistRepo_CRUD(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := newPlaylistRepo(db)
+	repo := NewPlaylistRepo(db)
 	ctx := context.Background()
 	playlist, err := domain.NewPlaylist("Test Playlist")
 	if err != nil {
@@ -34,7 +34,7 @@ func TestPlaylistRepo_NotFound(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := newPlaylistRepo(db)
+	repo := NewPlaylistRepo(db)
 	ctx := context.Background()
 	_, err := repo.FindByID(ctx, domain.GeneratePlaylistID())
 	if err != domain.ErrPlaylistNotFound {
@@ -46,7 +46,7 @@ func TestPlaylistRepo_List(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := newPlaylistRepo(db)
+	repo := NewPlaylistRepo(db)
 	ctx := context.Background()
 	playlists := []*domain.Playlist{
 		{ID: domain.GeneratePlaylistID(), Name: "Playlist 1"},
@@ -71,7 +71,7 @@ func TestPlaylistRepo_Delete(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := newPlaylistRepo(db)
+	repo := NewPlaylistRepo(db)
 	ctx := context.Background()
 	playlist, err := domain.NewPlaylist("Test Playlist")
 	if err != nil {
@@ -94,7 +94,7 @@ func TestPlaylistRepo_AddTrack(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := newPlaylistRepo(db)
+	repo := NewPlaylistRepo(db)
 	ctx := context.Background()
 	playlist, err := domain.NewPlaylist("Test Playlist")
 	if err != nil {

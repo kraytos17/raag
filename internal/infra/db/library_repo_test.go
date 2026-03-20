@@ -29,9 +29,9 @@ func TestLibraryRepo_CRUD(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 100)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
+		t.Fatalf("NewLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -66,9 +66,9 @@ func TestLibraryRepo_NotFound(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 100)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
+		t.Fatalf("NewLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -82,9 +82,9 @@ func TestLibraryRepo_ListAll(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 100)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
+		t.Fatalf("NewLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -111,9 +111,9 @@ func TestLibraryRepo_Search(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 100)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
+		t.Fatalf("NewLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -140,9 +140,9 @@ func TestLibraryRepo_Delete(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 100)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
+		t.Fatalf("NewLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -165,9 +165,9 @@ func TestLibraryRepo_BulkSave(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 100)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
+		t.Fatalf("NewLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -193,9 +193,9 @@ func TestLibraryRepo_FileStats(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 100)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
+		t.Fatalf("NewLibraryRepo() error = %v", err)
 	}
 
 	ctx := context.Background()
@@ -216,27 +216,16 @@ func TestLibraryRepo_FileStats(t *testing.T) {
 	}
 }
 
-func TestLibraryRepo_InvalidateCache(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	repo, err := newLibraryRepo(db, 100)
-	if err != nil {
-		t.Fatalf("newLibraryRepo() error = %v", err)
-	}
-	repo.InvalidateCache()
-}
-
 func TestLibraryRepo_DefaultCacheSize(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo, err := newLibraryRepo(db, 0)
+	repo, err := NewLibraryRepo(db, nil)
 	if err != nil {
-		t.Fatalf("newLibraryRepo() with 0 cacheSize error = %v", err)
+		t.Fatalf("NewLibraryRepo() with 0 cacheSize error = %v", err)
 	}
 	if repo == nil {
-		t.Error("newLibraryRepo() should not return nil")
+		t.Error("NewLibraryRepo() should not return nil")
 	}
 }
 
