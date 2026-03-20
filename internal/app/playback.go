@@ -59,7 +59,6 @@ func (u *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	}
 
 	_ = u.fsm.Send(EventBufferReady)
-	_ = u.libraryRepo.Save(ctx, track)
 	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
 		TrackID:  track.ID,
 		Title:    track.Title,
@@ -89,8 +88,12 @@ func (u *PlaybackController) Pause(ctx context.Context) error {
 		return err
 	}
 
+	var trackID domain.TrackID
+	if u.currentTrack != nil {
+		trackID = u.currentTrack.ID
+	}
 	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackPaused, domain.TrackPausedPayload{
-		TrackID:  u.currentTrack.ID,
+		TrackID:  trackID,
 		Position: u.player.GetPosition(),
 	}))
 	return nil
@@ -104,8 +107,12 @@ func (u *PlaybackController) Resume(ctx context.Context) error {
 		return err
 	}
 
+	var trackID domain.TrackID
+	if u.currentTrack != nil {
+		trackID = u.currentTrack.ID
+	}
 	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackResumed, domain.TrackResumedPayload{
-		TrackID:  u.currentTrack.ID,
+		TrackID:  trackID,
 		Position: u.player.GetPosition(),
 	}))
 	return nil
@@ -135,8 +142,12 @@ func (u *PlaybackController) Seek(ctx context.Context, position time.Duration) e
 		return err
 	}
 
+	var trackID domain.TrackID
+	if u.currentTrack != nil {
+		trackID = u.currentTrack.ID
+	}
 	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackSeeked, domain.TrackSeekedPayload{
-		TrackID: u.currentTrack.ID,
+		TrackID: trackID,
 		From:    prevPos,
 		To:      position,
 	}))

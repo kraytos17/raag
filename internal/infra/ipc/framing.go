@@ -9,23 +9,24 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const MaxMessageSize = 16 * 1024 * 1024 // 16MB
+const MaxMessageSize = 16 * 1024 * 1024
 
 var ErrMessageTooLarge = errors.New("ipc: message exceeds max size")
 
 func WriteMsg(w io.Writer, msg proto.Message) error {
-	data, err := proto.Marshal(msg)
+	size := proto.Size(msg)
+	if uint32(size) > MaxMessageSize {
+		return ErrMessageTooLarge
+	}
+
+	buf := make([]byte, 4, 4+size)
+	binary.BigEndian.PutUint32(buf[:4], uint32(size))
+	buf, err := proto.MarshalOptions{}.MarshalAppend(buf, msg)
 	if err != nil {
 		return err
 	}
 
-	var header [4]byte
-	binary.BigEndian.PutUint32(header[:], uint32(len(data)))
-	if _, err := w.Write(header[:]); err != nil {
-		return err
-	}
-
-	_, err = w.Write(data)
+	_, err = w.Write(buf)
 	return err
 }
 

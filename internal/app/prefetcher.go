@@ -75,6 +75,8 @@ func (p *Prefetcher) prefetch() {
 		p.mu.Unlock()
 		return
 	}
+
+	currentTrackID := p.currentTrack.ID
 	p.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -102,6 +104,15 @@ func (p *Prefetcher) prefetch() {
 	}
 
 	p.mu.Lock()
+	if ctx.Err() != nil {
+		p.mu.Unlock()
+		return
+	}
+	if p.currentTrack == nil || p.currentTrack.ID != currentTrackID {
+		p.mu.Unlock()
+		return
+	}
+
 	p.prefetchedData[nextTrackID] = data[:n]
 	p.mu.Unlock()
 	slog.Debug("prefetch completed", "track", nextTrackID, "bytes", n)

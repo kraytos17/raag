@@ -5,15 +5,23 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/dhowden/tag"
 	"github.com/p-society/raag/internal/domain"
 )
+
+var audioExtensions = []string{".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma"}
+
+func isAudioExt(ext string) bool {
+	return slices.Contains(audioExtensions, ext)
+}
 
 type Scanner struct {
 	paths         []string
@@ -25,7 +33,7 @@ type Scanner struct {
 
 func NewScanner(paths []string) *Scanner {
 	exts := make(map[string]bool)
-	for _, ext := range []string{".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma"} {
+	for _, ext := range audioExtensions {
 		exts[ext] = true
 	}
 	return &Scanner{
@@ -55,7 +63,7 @@ func (s *Scanner) OnError(fn func(error)) {
 func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
 	var files []string
 	for _, path := range s.paths {
-		if err := filepath.Walk(path, func(walkPath string, info os.FileInfo, err error) error {
+		if err := filepath.WalkDir(path, func(walkPath string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
@@ -66,7 +74,7 @@ func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
 			default:
 			}
 
-			if info.IsDir() {
+			if d.IsDir() {
 				return nil
 			}
 
@@ -176,6 +184,9 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 		if _, err := s.Scan(ctx); err != nil {
 			return 0, 0, 0, err
 		}
+		if err := s.libraryRepo.SaveFileStats(ctx, currentStats); err != nil {
+			return 0, 0, 0, err
+		}
 	}
 	return added, modified, removed, nil
 }
@@ -191,7 +202,7 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string) (int
 		default:
 		}
 
-		s.bus.Publish(ctx, domain.NewEvent(domain.EventScanComplete, ScanProgressPayload{
+		s.bus.Publish(ctx, domain.NewEvent(domain.EventScanProgress, ScanProgressPayload{
 			Scanned:     i + 1,
 			Total:       len(files),
 			CurrentFile: file,
@@ -219,20 +230,22 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string) (int
 
 func (s *LibraryScanner) walkDirectory(dirPath string) []string {
 	var files []string
-	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext == ".mp3" || ext == ".flac" || ext == ".ogg" || ext == ".wav" || ext == ".m4a" {
+		if isAudioExt(ext) {
 			files = append(files, path)
 		}
 		return nil
-	})
+	}); err != nil {
+		_ = err
+	}
 	return files
 }
 
@@ -241,7 +254,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -335,7 +348,7 @@ func computeContentHash(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
@@ -362,6 +375,13 @@ func extractCoverArt(m tag.Metadata) []byte {
 }
 
 func resizeCoverArt(data []byte) []byte {
+	// TODO: Implement proper image resizing using an image processing library
+	// For now, truncate to max size to prevent memory bloat
+	// This is not ideal as it corrupts the image, but prevents unbounded memory usage
+	maxSize := 256 * 1024
+	if len(data) > maxSize {
+		return data[:maxSize]
+	}
 	return data
 }
 
@@ -370,7 +390,7 @@ func (s *LibraryScanner) getFileStat(path string) (*domain.FileStat, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {

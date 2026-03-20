@@ -6,6 +6,8 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
+const testPath = "/music/song.mp3"
+
 func TestTrackKey(t *testing.T) {
 	id := domain.TrackID("abc123def456abc123def456abc123def456abc123def456abc123def456abcd")
 	key := TrackKey(id)
@@ -16,7 +18,7 @@ func TestTrackKey(t *testing.T) {
 }
 
 func TestPathKey(t *testing.T) {
-	path := "/music/song.mp3"
+	path := testPath
 	key := PathKey(path)
 	if len(key) == 0 {
 		t.Error("PathKey() returned empty key")
@@ -29,7 +31,7 @@ func TestPathKey(t *testing.T) {
 }
 
 func TestPathKey_Deterministic(t *testing.T) {
-	path := "/music/song.mp3"
+	path := testPath
 	key1 := PathKey(path)
 	key2 := PathKey(path)
 	if string(key1) != string(key2) {
@@ -76,7 +78,7 @@ func TestTrigramIndexKey(t *testing.T) {
 }
 
 func TestFileStatKey(t *testing.T) {
-	path := "/music/song.mp3"
+	path := testPath
 	key := FileStatKey(path)
 	if len(key) == 0 {
 		t.Error("FileStatKey() returned empty key")
@@ -151,7 +153,7 @@ func TestNormalizeKey(t *testing.T) {
 }
 
 func TestPathHash(t *testing.T) {
-	path := "/music/song.mp3"
+	path := testPath
 	hash1 := pathHash(path)
 	hash2 := pathHash(path)
 	if hash1 != hash2 {

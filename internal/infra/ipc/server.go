@@ -2,9 +2,12 @@ package ipc
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,9 +19,13 @@ type Server struct {
 	socketPath string
 	listener   net.Listener
 	router     *commands.CommandRouter
-	mu         sync.Mutex
-	conns      []net.Conn
-	done       chan struct{}
+
+	mu    sync.Mutex
+	conns []net.Conn
+
+	done      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup // Tracks running background loops
 }
 
 func NewServer(socketPath string, router *commands.CommandRouter) *Server {
@@ -41,30 +48,32 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.listener = lis
 	if err := os.Chmod(s.socketPath, 0o600); err != nil {
+		_ = s.listener.Close()
 		return err
 	}
 
 	slog.Info("IPC server listening", "path", s.socketPath)
+	s.wg.Add(1)
 	go s.acceptLoop(ctx)
 	return nil
 }
 
 func (s *Server) acceptLoop(ctx context.Context) {
-	defer close(s.done)
+	defer s.wg.Done()
 
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-s.done:
 			return
 		default:
 		}
 
 		conn, err := s.listener.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
+			if s.isListenerClosed(err) {
 				return
-			default:
 			}
 			slog.Warn("accept failed", "error", err)
 			continue
@@ -73,13 +82,16 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		s.mu.Lock()
 		s.conns = append(s.conns, conn)
 		s.mu.Unlock()
+
+		s.wg.Add(1)
 		go s.handleConn(ctx, conn)
 	}
 }
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
+	defer s.wg.Done()
 	defer func() {
-		conn.Close()
+		_ = conn.Close()
 		s.removeConn(conn)
 	}()
 
@@ -87,10 +99,15 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.done:
+			return
 		default:
 		}
 
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			return
+		}
+
 		req, err := ReadRequest(conn)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -99,7 +116,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			return
 		}
 
-		cmdType := commands.CommandType(req.Type.String())
+		cmdType := commands.CommandType(strings.ToLower(req.Type.String()))
 		cmd := commands.Command{
 			Type:    cmdType,
 			Payload: req.Payload,
@@ -107,7 +124,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 		resp, _ := s.router.Dispatch(ctx, cmd)
 		pbResp := convertResponse(resp)
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+
+		if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			return
+		}
 		if err := WriteResponse(conn, pbResp); err != nil {
 			slog.Warn("write response failed", "error", err)
 			return
@@ -119,28 +139,39 @@ func (s *Server) removeConn(conn net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, c := range s.conns {
-		if c == conn {
-			s.conns = append(s.conns[:i], s.conns[i+1:]...)
-			return
-		}
+	if i := slices.Index(s.conns, conn); i != -1 {
+		s.conns = slices.Delete(s.conns, i, i+1)
 	}
 }
 
 func (s *Server) Stop(ctx context.Context) error {
+	s.closeOnce.Do(func() {
+		close(s.done)
+	})
+
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 	}
 
-	<-s.done
 	s.mu.Lock()
 	for _, conn := range s.conns {
-		conn.Close()
+		_ = conn.Close()
 	}
-
 	s.conns = nil
 	s.mu.Unlock()
+
+	s.wg.Wait()
 	return os.Remove(s.socketPath)
+}
+
+func (s *Server) isListenerClosed(err error) bool {
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if opErr, ok := errors.AsType[*net.OpError](err); ok {
+		return strings.Contains(opErr.Error(), "closed")
+	}
+	return false
 }
 
 func convertResponse(resp commands.Response) *pb.Response {

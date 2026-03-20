@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"math"
 	"time"
 )
 
@@ -30,19 +31,11 @@ func (r *RetryPolicy) ShouldRetry(attempt int, err error) bool {
 }
 
 func (r *RetryPolicy) NextDelay(attempt int) time.Duration {
-	delay := time.Duration(float64(r.InitialDelay) * pow(r.Multiplier, float64(attempt)))
+	delay := time.Duration(float64(r.InitialDelay) * math.Pow(r.Multiplier, float64(attempt)))
 	if delay > r.MaxDelay {
 		return r.MaxDelay
 	}
 	return delay
-}
-
-func pow(base, exp float64) float64 {
-	result := 1.0
-	for i := 0; i < int(exp); i++ {
-		result *= base
-	}
-	return result
 }
 
 func DoWithRetry(ctx context.Context, policy *RetryPolicy, fn func() error) error {
@@ -70,10 +63,12 @@ func DoWithRetry(ctx context.Context, policy *RetryPolicy, fn func() error) erro
 			"error", lastErr,
 		)
 
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-time.After(delay):
+		case <-timer.C:
 		}
 	}
 	return lastErr
