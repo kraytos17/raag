@@ -68,16 +68,6 @@ func (p *PlaybackFSM) Send(ctx context.Context, event PlaybackEvent) error {
 	slog.Debug("playback FSM transition", "from", prev, "to", next, "event", event)
 	p.mu.Unlock()
 
-	switch next {
-	case StatePlaying:
-		p.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{}))
-	case StatePaused:
-		p.bus.Publish(ctx, domain.NewEvent(domain.EventTrackPaused, domain.TrackPausedPayload{}))
-	case StateIdle:
-		if prev == StatePlaying || prev == StatePaused {
-			p.bus.Publish(ctx, domain.NewEvent(domain.EventTrackFinished, domain.TrackFinishedPayload{Completed: true}))
-		}
-	}
 	return nil
 }
 

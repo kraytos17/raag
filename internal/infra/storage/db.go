@@ -22,7 +22,6 @@ var (
 type Options struct {
 	GCInterval       time.Duration
 	ValueLogFileSize int64
-	MaxTableSize     int64
 	Compression      bool
 }
 
@@ -30,7 +29,6 @@ func DefaultOptions(dir string) Options {
 	return Options{
 		GCInterval:       10 * time.Minute,
 		ValueLogFileSize: 1 << 30,
-		MaxTableSize:     64 << 20,
 		Compression:      true,
 	}
 }

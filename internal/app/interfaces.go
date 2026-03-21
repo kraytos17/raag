@@ -127,6 +127,10 @@ type Queue interface {
 	Length() int
 }
 
+type SearchHandler interface {
+	Search(ctx context.Context, query string, limit int) ([]*domain.Track, error)
+}
+
 type RepeatMode string
 
 const (

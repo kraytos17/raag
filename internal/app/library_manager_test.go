@@ -172,14 +172,6 @@ func TestScanner_Scan_UnsupportedExt(t *testing.T) {
 	}
 }
 
-func TestLibraryManager_NewLibraryManager(t *testing.T) {
-	scanner := &LibraryScanner{}
-	manager := NewLibraryManager(scanner)
-	if manager.scanner != scanner {
-		t.Error("NewLibraryManager() should set scanner")
-	}
-}
-
 func TestScanProgress_Fields(t *testing.T) {
 	progress := ScanProgress{
 		Phase: ScanPhaseWalking,

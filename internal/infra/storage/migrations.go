@@ -136,3 +136,10 @@ func migration5Up(txn *badger.Txn) error {
 func migration5Down(txn *badger.Txn) error {
 	return nil
 }
+
+// Migration notes:
+// - migration1 (v1): initial schema - no data transformation needed
+// - migration2 (v2): add play_count field - proto3 default zero value is sufficient for additive field
+// - migration3 (v3): add gain values - proto3 default zero value is sufficient for additive fields
+// - migration4 (v4): add inverted index - index is built on-demand from existing track data
+// - migration5 (v5): add peer score cache - cache is populated on-demand, no migration needed

@@ -36,6 +36,7 @@ func NewFileWatcher(paths []string, scanner *LibraryScanner) (*FileWatcher, erro
 		paths:     paths,
 		scanner:   scanner,
 		statCache: make(map[string]*domain.FileStat),
+		pending:   make(map[string]fsnotify.Event),
 	}
 	for _, path := range paths {
 		if err := filepath.WalkDir(path, func(walkPath string, d fs.DirEntry, err error) error {
@@ -47,7 +48,7 @@ func NewFileWatcher(paths []string, scanner *LibraryScanner) (*FileWatcher, erro
 			}
 			return nil
 		}); err != nil {
-			watcher.Close()
+			_ = watcher.Close()
 			return nil, err
 		}
 	}
@@ -65,7 +66,7 @@ func (fw *FileWatcher) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fw.watcher.Close()
+			_ = fw.watcher.Close()
 			fw.flushPending(ctx)
 			return
 		case event, ok := <-fw.watcher.Events:
@@ -93,9 +94,6 @@ func (fw *FileWatcher) queueEvent(event fsnotify.Event) {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
 
-	if fw.pending == nil {
-		fw.pending = make(map[string]fsnotify.Event)
-	}
 	if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 		delete(fw.pending, path)
 		delete(fw.statCache, path)

@@ -526,6 +526,7 @@ func extractCoverArt(m tag.Metadata) []byte {
 }
 
 func resizeCoverArt(data []byte) []byte {
+	slog.Warn("cover art exceeds 256KB, discarding", "size", len(data))
 	return nil
 }
 

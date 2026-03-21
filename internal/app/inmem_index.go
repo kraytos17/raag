@@ -32,21 +32,7 @@ func NewSearchIndex(repo LibraryRepository) SearchIndex {
 func (idx *inmemoryIndex) Index(ctx context.Context, track *domain.Track) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-
-	tokens := tokenize(track.Title + " " + track.Artist + " " + track.Album)
-	for _, token := range tokens {
-		idx.terms[token] = idx.insertSorted(idx.terms[token], track.ID)
-	}
-
-	idx.trackToks[track.ID] = tokens
-	titleTris := trigramsFromString(track.Title)
-	artistTris := trigramsFromString(track.Artist)
-	tris := append(titleTris, artistTris...)
-	for _, tri := range tris {
-		idx.trigram[tri] = idx.insertSorted(idx.trigram[tri], track.ID)
-	}
-
-	idx.trackTris[track.ID] = tris
+	idx.indexOneLocked(track)
 	return nil
 }
 
@@ -55,24 +41,28 @@ func (idx *inmemoryIndex) insertSorted(list []domain.TrackID, id domain.TrackID)
 	return slices.Insert(list, pos, id)
 }
 
+func (idx *inmemoryIndex) indexOneLocked(track *domain.Track) {
+	tokens := tokenize(track.Title + " " + track.Artist + " " + track.Album)
+	for _, token := range tokens {
+		idx.terms[token] = idx.insertSorted(idx.terms[token], track.ID)
+	}
+
+	idx.trackToks[track.ID] = tokens
+	titleTris := trigramsFromString(track.Title)
+	artistTris := trigramsFromString(track.Artist)
+	tris := slices.Concat(titleTris, artistTris)
+	for _, tri := range tris {
+		idx.trigram[tri] = idx.insertSorted(idx.trigram[tri], track.ID)
+	}
+	idx.trackTris[track.ID] = tris
+}
+
 func (idx *inmemoryIndex) IndexBatch(ctx context.Context, tracks []*domain.Track) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	for _, track := range tracks {
-		tokens := tokenize(track.Title + " " + track.Artist + " " + track.Album)
-		for _, token := range tokens {
-			idx.terms[token] = idx.insertSorted(idx.terms[token], track.ID)
-		}
-
-		idx.trackToks[track.ID] = tokens
-		titleTris := trigramsFromString(track.Title)
-		artistTris := trigramsFromString(track.Artist)
-		tris := append(titleTris, artistTris...)
-		for _, tri := range tris {
-			idx.trigram[tri] = idx.insertSorted(idx.trigram[tri], track.ID)
-		}
-		idx.trackTris[track.ID] = tris
+		idx.indexOneLocked(track)
 	}
 	return nil
 }
@@ -153,10 +143,10 @@ func (idx *inmemoryIndex) SearchFuzzy(ctx context.Context, query string, limit i
 
 	result := make([]domain.TrackID, 0, len(scored))
 	for i, s := range scored {
-		result = append(result, s.id)
 		if limit > 0 && i >= limit {
 			break
 		}
+		result = append(result, s.id)
 	}
 	return result, nil
 }

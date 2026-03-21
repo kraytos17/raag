@@ -177,7 +177,7 @@ func (c *Client) send(req *pb.Request) (*pb.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetWriteDeadline(time.Now().Add(ipcTimeout)); err != nil {
 		return nil, err

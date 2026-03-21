@@ -71,7 +71,7 @@ func (t *Track) Validate() error {
 		return ErrInvalidTrack
 	}
 	if t.DurationMs == 0 {
-		return ErrInvalidTrack
+		return ErrZeroDuration
 	}
 	return nil
 }

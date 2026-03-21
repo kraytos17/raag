@@ -1188,6 +1188,8 @@ type Response struct {
 	//	*Response_HealthCheck
 	//	*Response_Queue
 	//	*Response_GetTrack
+	//	*Response_GetPlaylist
+	//	*Response_ListPlaylists
 	Payload       isResponse_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1307,6 +1309,24 @@ func (x *Response) GetGetTrack() *GetTrackResponse {
 	return nil
 }
 
+func (x *Response) GetGetPlaylist() *GetPlaylistResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*Response_GetPlaylist); ok {
+			return x.GetPlaylist
+		}
+	}
+	return nil
+}
+
+func (x *Response) GetListPlaylists() *ListPlaylistsResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*Response_ListPlaylists); ok {
+			return x.ListPlaylists
+		}
+	}
+	return nil
+}
+
 type isResponse_Payload interface {
 	isResponse_Payload()
 }
@@ -1339,6 +1359,14 @@ type Response_GetTrack struct {
 	GetTrack *GetTrackResponse `protobuf:"bytes,9,opt,name=get_track,json=getTrack,proto3,oneof"`
 }
 
+type Response_GetPlaylist struct {
+	GetPlaylist *GetPlaylistResponse `protobuf:"bytes,10,opt,name=get_playlist,json=getPlaylist,proto3,oneof"`
+}
+
+type Response_ListPlaylists struct {
+	ListPlaylists *ListPlaylistsResponse `protobuf:"bytes,11,opt,name=list_playlists,json=listPlaylists,proto3,oneof"`
+}
+
 func (*Response_Empty) isResponse_Payload() {}
 
 func (*Response_Search) isResponse_Payload() {}
@@ -1352,6 +1380,10 @@ func (*Response_HealthCheck) isResponse_Payload() {}
 func (*Response_Queue) isResponse_Payload() {}
 
 func (*Response_GetTrack) isResponse_Payload() {}
+
+func (*Response_GetPlaylist) isResponse_Payload() {}
+
+func (*Response_ListPlaylists) isResponse_Payload() {}
 
 type PlayRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2874,7 +2906,7 @@ const file_raag_proto_rawDesc = "" +
 	"\x0fadd_to_playlist\x18\x16 \x01(\v2\x1a.raag.AddToPlaylistRequestH\x00R\raddToPlaylist\x124\n" +
 	"\tget_track\x18\x17 \x01(\v2\x15.raag.GetTrackRequestH\x00R\bgetTrack\x12H\n" +
 	"\x11get_track_by_path\x18\x18 \x01(\v2\x1b.raag.GetTrackByPathRequestH\x00R\x0egetTrackByPathB\t\n" +
-	"\apayload\"\xa8\x03\n" +
+	"\apayload\"\xae\x04\n" +
 	"\bResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12#\n" +
@@ -2885,7 +2917,10 @@ const file_raag_proto_rawDesc = "" +
 	"\x06status\x18\x06 \x01(\v2\x14.raag.StatusResponseH\x00R\x06status\x12>\n" +
 	"\fhealth_check\x18\a \x01(\v2\x19.raag.HealthCheckResponseH\x00R\vhealthCheck\x12+\n" +
 	"\x05queue\x18\b \x01(\v2\x13.raag.QueueResponseH\x00R\x05queue\x125\n" +
-	"\tget_track\x18\t \x01(\v2\x16.raag.GetTrackResponseH\x00R\bgetTrackB\t\n" +
+	"\tget_track\x18\t \x01(\v2\x16.raag.GetTrackResponseH\x00R\bgetTrack\x12>\n" +
+	"\fget_playlist\x18\n" +
+	" \x01(\v2\x19.raag.GetPlaylistResponseH\x00R\vgetPlaylist\x12D\n" +
+	"\x0elist_playlists\x18\v \x01(\v2\x1b.raag.ListPlaylistsResponseH\x00R\rlistPlaylistsB\t\n" +
 	"\apayload\">\n" +
 	"\vPlayRequest\x12\x19\n" +
 	"\btrack_id\x18\x01 \x01(\tR\atrackId\x12\x14\n" +
@@ -3047,21 +3082,23 @@ var file_raag_proto_depIdxs = []int32{
 	31, // 27: raag.Response.health_check:type_name -> raag.HealthCheckResponse
 	23, // 28: raag.Response.queue:type_name -> raag.QueueResponse
 	40, // 29: raag.Response.get_track:type_name -> raag.GetTrackResponse
-	0,  // 30: raag.StatusResponse.current_track:type_name -> raag.Track
-	0,  // 31: raag.QueueResponse.tracks:type_name -> raag.Track
-	0,  // 32: raag.SearchResponse.tracks:type_name -> raag.Track
-	4,  // 33: raag.Peer.score:type_name -> raag.PeerScore
-	3,  // 34: raag.Peer.capabilities:type_name -> raag.PeerCapabilities
-	27, // 35: raag.ListPeersResponse.peers:type_name -> raag.Peer
-	1,  // 36: raag.GetPlaylistResponse.playlist:type_name -> raag.Playlist
-	0,  // 37: raag.GetPlaylistResponse.tracks:type_name -> raag.Track
-	1,  // 38: raag.ListPlaylistsResponse.playlists:type_name -> raag.Playlist
-	0,  // 39: raag.GetTrackResponse.track:type_name -> raag.Track
-	40, // [40:40] is the sub-list for method output_type
-	40, // [40:40] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	34, // 30: raag.Response.get_playlist:type_name -> raag.GetPlaylistResponse
+	36, // 31: raag.Response.list_playlists:type_name -> raag.ListPlaylistsResponse
+	0,  // 32: raag.StatusResponse.current_track:type_name -> raag.Track
+	0,  // 33: raag.QueueResponse.tracks:type_name -> raag.Track
+	0,  // 34: raag.SearchResponse.tracks:type_name -> raag.Track
+	4,  // 35: raag.Peer.score:type_name -> raag.PeerScore
+	3,  // 36: raag.Peer.capabilities:type_name -> raag.PeerCapabilities
+	27, // 37: raag.ListPeersResponse.peers:type_name -> raag.Peer
+	1,  // 38: raag.GetPlaylistResponse.playlist:type_name -> raag.Playlist
+	0,  // 39: raag.GetPlaylistResponse.tracks:type_name -> raag.Track
+	1,  // 40: raag.ListPlaylistsResponse.playlists:type_name -> raag.Playlist
+	0,  // 41: raag.GetTrackResponse.track:type_name -> raag.Track
+	42, // [42:42] is the sub-list for method output_type
+	42, // [42:42] is the sub-list for method input_type
+	42, // [42:42] is the sub-list for extension type_name
+	42, // [42:42] is the sub-list for extension extendee
+	0,  // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_raag_proto_init() }
@@ -3102,6 +3139,8 @@ func file_raag_proto_init() {
 		(*Response_HealthCheck)(nil),
 		(*Response_Queue)(nil),
 		(*Response_GetTrack)(nil),
+		(*Response_GetPlaylist)(nil),
+		(*Response_ListPlaylists)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 
-	pb "github.com/p-society/raag/proto/gen"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -46,28 +45,4 @@ func ReadMsg(r io.Reader, msg proto.Message) error {
 		return err
 	}
 	return proto.Unmarshal(data, msg)
-}
-
-func WriteRequest(w io.Writer, req *pb.Request) error {
-	return WriteMsg(w, req)
-}
-
-func ReadRequest(r io.Reader) (*pb.Request, error) {
-	var req pb.Request
-	if err := ReadMsg(r, &req); err != nil {
-		return nil, err
-	}
-	return &req, nil
-}
-
-func WriteResponse(w io.Writer, resp *pb.Response) error {
-	return WriteMsg(w, resp)
-}
-
-func ReadResponse(r io.Reader) (*pb.Response, error) {
-	var resp pb.Response
-	if err := ReadMsg(r, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
 }

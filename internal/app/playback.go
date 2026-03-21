@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -11,32 +10,32 @@ import (
 )
 
 type PlaybackController struct {
-	mu           sync.Mutex
-	libraryRepo  LibraryRepository
-	index        SearchIndex
-	player       Player
-	resolver     *Resolver
-	bus          domain.EventBus
-	fsm          *PlaybackFSM
-	currentTrack *domain.Track
-	volume       int
+	mu            sync.Mutex
+	libraryRepo   LibraryRepository
+	searchHandler SearchHandler
+	player        Player
+	resolve       ResolveFunc
+	bus           domain.EventBus
+	fsm           *PlaybackFSM
+	currentTrack  *domain.Track
+	volume        int
 }
 
 func NewPlaybackController(
 	libraryRepo LibraryRepository,
-	index SearchIndex,
+	searchHandler SearchHandler,
 	player Player,
-	resolver *Resolver,
+	resolve ResolveFunc,
 	bus domain.EventBus,
 ) *PlaybackController {
 	return &PlaybackController{
-		libraryRepo: libraryRepo,
-		index:       index,
-		player:      player,
-		resolver:    resolver,
-		bus:         bus,
-		fsm:         NewPlaybackFSM(bus),
-		volume:      80,
+		libraryRepo:   libraryRepo,
+		searchHandler: searchHandler,
+		player:        player,
+		resolve:       resolve,
+		bus:           bus,
+		fsm:           NewPlaybackFSM(bus),
+		volume:        80,
 	}
 }
 
@@ -45,7 +44,6 @@ func (u *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	if err != nil {
 		return err
 	}
-
 	if err := u.fsm.Send(ctx, EventPlay); err != nil {
 		return err
 	}
@@ -54,7 +52,7 @@ func (u *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	u.currentTrack = track
 	u.mu.Unlock()
 
-	reader, err := u.resolver.Resolve(ctx, trackID)
+	reader, err := u.resolve(ctx, trackID)
 	if err != nil {
 		_ = u.fsm.Send(ctx, EventBufferFail)
 		return err
@@ -208,19 +206,5 @@ func (u *PlaybackController) GetCurrentTrack() *domain.Track {
 }
 
 func (u *PlaybackController) search(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
-	trackIDs, err := u.index.Search(ctx, query, limit)
-	if err != nil {
-		slog.Warn("search failed, falling back to library search", "error", err)
-		return u.libraryRepo.Search(ctx, SearchQuery{Query: query, Limit: limit})
-	}
-
-	tracks := make([]*domain.Track, 0, len(trackIDs))
-	for _, id := range trackIDs {
-		track, err := u.libraryRepo.FindByID(ctx, id)
-		if err != nil {
-			continue
-		}
-		tracks = append(tracks, track)
-	}
-	return tracks, nil
+	return u.searchHandler.Search(ctx, query, limit)
 }

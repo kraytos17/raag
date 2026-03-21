@@ -30,13 +30,6 @@ const (
 )
 
 const (
-	DefaultRetryMaxAttempts  = 3
-	DefaultRetryInitialDelay = 100 * time.Millisecond
-	DefaultRetryMaxDelay     = 5 * time.Second
-	DefaultRetryMultiplier   = 2.0
-)
-
-const (
 	DefaultCircuitBreakerThreshold = 5
 	DefaultCircuitBreakerCooldown  = 30 * time.Second
 )

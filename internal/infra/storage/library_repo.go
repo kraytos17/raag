@@ -137,30 +137,27 @@ func (r *libraryRepo) FindByIDs(ctx context.Context, ids []domain.TrackID) ([]*d
 	}
 
 	err := r.db.View(func(txn *badger.Txn) error {
-		iter := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer iter.Close()
-
-		prefix := []byte(PrefixTrackData)
-		for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-			item := iter.Item()
-			key := string(item.Key())
-			trackID := domain.TrackID(key[len(PrefixTrackData):])
-			if !idSet[trackID] {
-				continue
+		for id := range idSet {
+			item, err := txn.Get(TrackKey(id))
+			if err != nil {
+				if err == badger.ErrKeyNotFound {
+					continue
+				}
+				return err
 			}
 
 			data, err := item.ValueCopy(nil)
 			if err != nil {
-				continue
+				return err
 			}
 
 			track, err := ipc.UnmarshalTrack(data)
 			if err != nil {
-				continue
+				return fmt.Errorf("failed to unmarshal track %s: %w", id, err)
 			}
 
 			results = append(results, track)
-			r.cache.Add(string(trackID), track)
+			r.cache.Add(string(id), track)
 		}
 		return nil
 	})
@@ -319,7 +316,7 @@ func (r *libraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) erro
 }
 
 func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
-	return collectAll(r.db, []byte(PrefixTrackData), ipc.UnmarshalTrack)
+	return collectAll(r.db, []byte(PrefixTrackData), ipc.UnmarshalTrack), nil
 }
 
 func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {

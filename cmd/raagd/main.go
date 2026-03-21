@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -34,45 +33,20 @@ func main() {
 	} else {
 		cfg, err = config.Load()
 	}
-	if err != nil {
-		if isPathNotConfiguredError(err) {
-			slog.Info("No configuration found. Running first-time setup...")
-			if err := config.RunSetup(); err != nil {
-				slog.Error("setup failed", "error", err)
-				os.Exit(1)
-			}
-
-			cfg, err = config.Load()
-			if err != nil {
-				slog.Error("failed to load config after setup", "error", err)
-				os.Exit(1)
-			}
-		} else {
-			slog.Error("failed to load config", "error", err)
+	if err != nil || len(cfg.Library.Paths) == 0 {
+		slog.Info("No configuration found. Running first-time setup...")
+		if err := config.RunSetup(); err != nil {
+			slog.Error("setup failed", "error", err)
 			os.Exit(1)
 		}
-	}
-	if err := cfg.ValidateForStart(); err != nil {
-		if isPathNotConfiguredError(err) {
-			slog.Info("No configuration found. Running first-time setup...")
-			if err := config.RunSetup(); err != nil {
-				slog.Error("setup failed", "error", err)
-				os.Exit(1)
-			}
 
-			cfg, err = config.Load()
-			if err != nil {
-				slog.Error("failed to load config after setup", "error", err)
-				os.Exit(1)
-			}
-			if err := cfg.ValidateForStart(); err != nil {
-				slog.Error("configuration still invalid after setup", "error", err)
-				os.Exit(1)
-			}
-		} else {
-			slog.Error("configuration invalid", "error", err)
-			slog.Error("hint: run 'raagd --setup' to reconfigure")
-			slog.Error("or specify --music-path: raagd --music-path ~/Music")
+		cfg, err = config.Load()
+		if err != nil {
+			slog.Error("failed to load config after setup", "error", err)
+			os.Exit(1)
+		}
+		if err := cfg.ValidateForStart(); err != nil {
+			slog.Error("configuration still invalid after setup", "error", err)
 			os.Exit(1)
 		}
 	}
@@ -109,18 +83,26 @@ func main() {
 	scanner := app.NewLibraryScanner(libraryRepo, libraryRepo, searchIndex, bus, cfg.Library.Paths)
 	searchService := app.NewSearchService(searchIndex, libraryRepo)
 
-	resolver := app.NewResolver(libraryRepo)
+	resolve := app.NewResolveFunc(libraryRepo)
 	player := audio.NewEngine(cfg.Playback.SampleRate)
 	queue := audio.NewQueue()
 
-	playback := app.NewPlaybackController(libraryRepo, searchIndex, player, resolver, bus)
-	ipcServer := ipc.NewServer(cfg.Daemon.SocketPath)
-	ipcServer.SetPlaybackHandler(playback)
-	ipcServer.SetScannerHandler(scanner)
-	ipcServer.SetSearchHandler(searchService)
-	ipcServer.SetLibraryRepoHandler(libraryRepo)
-	ipcServer.SetPeerRepoHandler(peerRepo)
-	ipcServer.SetQueueHandler(queue)
+	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolve, bus)
+	cbRegistry := app.NewCBRegistry(cfg.P2P.MaxPeers, 30*time.Second)
+	ipcServer, err := ipc.NewServer(cfg.Daemon.SocketPath, ipc.ServerConfig{
+		Playback:    playback,
+		Scanner:     scanner,
+		Search:      searchService,
+		LibraryRepo: libraryRepo,
+		PeerRepo:    peerRepo,
+		Queue:       queue,
+		CBRegistry:  cbRegistry,
+	})
+	if err != nil {
+		slog.Error("failed to create IPC server", "error", err)
+		_ = database.Close()
+		os.Exit(1)
+	}
 
 	lc := app.NewLifecycleManager()
 	lc.Register(ipc.AsComponent(ipcServer))
@@ -182,10 +164,6 @@ Examples:
   raagd --music-path ~/Music      # Override music path
 
 `)
-}
-
-func isPathNotConfiguredError(err error) bool {
-	return errors.Is(err, config.ErrNoMusicPath)
 }
 
 func logLevel(level string) slog.Level {

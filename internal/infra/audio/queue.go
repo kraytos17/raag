@@ -1,7 +1,7 @@
 package audio
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"slices"
 	"sync"
 
@@ -52,6 +52,9 @@ func (q *Queue) Next() *domain.Track {
 		return nil
 	}
 	if q.repeat == app.RepeatModeOne {
+		if q.pos < 0 {
+			return nil
+		}
 		return q.tracks[q.pos]
 	}
 
@@ -118,7 +121,7 @@ func (q *Queue) Add(track *domain.Track) {
 	q.tracks = append(q.tracks, track)
 	if q.shuffle {
 		last := len(q.tracks) - 1
-		j := rand.Intn(last + 1)
+		j := rand.IntN(last + 1)
 		q.tracks[last], q.tracks[j] = q.tracks[j], q.tracks[last]
 	}
 }

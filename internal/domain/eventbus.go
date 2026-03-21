@@ -51,7 +51,6 @@ type TrackStartedPayload struct {
 	Artist   string
 	Album    string
 	Duration time.Duration
-	Position time.Duration
 }
 
 type TrackFinishedPayload struct {

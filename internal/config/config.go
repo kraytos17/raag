@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -66,10 +67,13 @@ func loadWithOptions(musicPath string) (*Config, error) {
 
 func (c *Config) Validate() error {
 	if c.P2P.MaxPeers <= 0 {
-		c.P2P.MaxPeers = 20
+		return fmt.Errorf("P2P max peers must be positive, got %d", c.P2P.MaxPeers)
 	}
-	if c.Playback.Volume < 0 || c.Playback.Volume > 100 {
-		c.Playback.Volume = 80
+	if c.Playback.Volume < 0 {
+		return fmt.Errorf("playback volume must be non-negative, got %d", c.Playback.Volume)
+	}
+	if c.Playback.Volume > 100 {
+		return fmt.Errorf("playback volume must be at most 100, got %d", c.Playback.Volume)
 	}
 	return nil
 }
@@ -143,7 +147,11 @@ func detectMusicDirectory() string {
 func promptDirectory(reader *bufio.Reader, defaultPath string) (string, error) {
 	for {
 		fmt.Printf("Music directory path [%s]: ", defaultPath)
-		input, _ := reader.ReadString('\n')
+		input, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "", fmt.Errorf("failed to read input: %w", err)
+		}
+
 		input = strings.TrimSpace(input)
 		if input == "" {
 			return defaultPath, nil

@@ -19,26 +19,22 @@ func NewPlaylistRepo(db *DB) app.PlaylistRepository {
 	return &playlistRepo{
 		BaseRepository: NewBaseRepository(
 			db,
-			func(id domain.PlaylistID) []byte { return PlaylistKey(id) },
+			PlaylistKey,
 			[]byte(PrefixPlaylist),
-			func(p *domain.Playlist) ([]byte, error) { return ipc.MarshalPlaylist(p) },
-			func(data []byte) (*domain.Playlist, error) { return ipc.UnmarshalPlaylist(data) },
+			ipc.MarshalPlaylist,
+			ipc.UnmarshalPlaylist,
 			func() error { return domain.ErrPlaylistNotFound },
 		),
 	}
 }
 
 func (r *playlistRepo) ListAll(ctx context.Context) iter.Seq[*domain.Playlist] {
-	return listAll(r.DB, []byte(PrefixPlaylist), func(data []byte) (*domain.Playlist, error) {
-		return ipc.UnmarshalPlaylist(data)
-	})
+	return listAll(r.DB, []byte(PrefixPlaylist), ipc.UnmarshalPlaylist)
 }
 
 func (r *playlistRepo) FindByID(ctx context.Context, id domain.PlaylistID) (*domain.Playlist, error) {
 	var zero *domain.Playlist
-	val, err := view(r.DB, PlaylistKey(id), func(data []byte) (*domain.Playlist, error) {
-		return ipc.UnmarshalPlaylist(data)
-	})
+	val, err := view(r.DB, PlaylistKey(id), ipc.UnmarshalPlaylist)
 	if errors.Is(err, errNotFound) {
 		return zero, domain.ErrPlaylistNotFound
 	}

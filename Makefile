@@ -3,6 +3,7 @@
 BIN := bin
 RAAG := $(BIN)/raag
 RAAGD := $(BIN)/raagd
+GOLANGCI_LINT := $(shell go env GOPATH)/bin/golangci-lint
 
 help:
 	@echo "Available targets:"
@@ -74,18 +75,42 @@ test-bench:
 lint:
 	go fmt ./...
 	go vet ./...
-	golangci-lint run ./...
+	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
+		echo "Installing golangci-lint..."; \
+		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+	fi
+	$(GOLANGCI_LINT) run ./...
 
 lint-fix:
 	go fmt ./...
-	golangci-lint run --fix ./...
+	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
+		echo "Installing golangci-lint..."; \
+		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+	fi
+	$(GOLANGCI_LINT) run --fix ./...
 
 lint-ci:
-	golangci-lint run --out-format=github-actions ./...
+	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
+		echo "Installing golangci-lint..."; \
+		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+	fi
+	$(GOLANGCI_LINT) run --out-format=github-actions ./...
 
 sec:
+	@if ! command -v gosec >/dev/null 2>&1; then \
+		echo "Installing gosec..."; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
+	fi
 	gosec ./...
+	@if ! command -v govulncheck >/dev/null 2>&1; then \
+		echo "Installing govulncheck..."; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+	fi
 	govulncheck ./...
+	@if ! command -v trivy >/dev/null 2>&1; then \
+		echo "Installing Trivy..."; \
+		curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $$(go env GOPATH)/bin v0.69.3; \
+	fi
 	trivy fs --security-checks vuln,config ./
 
 generate: $(BIN)
@@ -147,7 +172,11 @@ clean-all: clean
 ci:
 	go vet ./...
 	go test -race ./...
-	golangci-lint run --out-format=github-actions ./...
+	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
+		echo "Installing golangci-lint..."; \
+		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+	fi
+	$(GOLANGCI_LINT) run --out-format=github-actions ./...
 	mkdir -p bin && go build -o bin/raag ./cmd/raag && go build -o bin/raagd ./cmd/raagd
 
 release:
