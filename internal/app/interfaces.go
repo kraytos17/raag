@@ -33,6 +33,9 @@ type LibraryRepository interface {
 	BulkSave(ctx context.Context, tracks []*domain.Track) error
 	ListAll(ctx context.Context) ([]*domain.Track, error)
 	ListAllPaths(ctx context.Context) ([]string, error)
+}
+
+type FileStatStore interface {
 	SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error
 	LoadFileStats(ctx context.Context) (map[string]*domain.FileStat, error)
 }

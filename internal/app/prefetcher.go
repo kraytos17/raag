@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -100,11 +101,11 @@ func (p *Prefetcher) prefetch() {
 		defer func() { _ = closer.Close() }()
 	}
 
-	data := prefetchBufferPool.Get().([]byte)
-	defer prefetchBufferPool.Put(data)
-	n, err := reader.Read(data)
+	buf := prefetchBufferPool.Get().([]byte)
+	defer prefetchBufferPool.Put(buf)
+	n, err := io.ReadFull(reader, buf)
 	if n == 0 {
-		if err != nil {
+		if err != nil && err != io.EOF {
 			slog.Warn("prefetch read failed", "track", nextTrackID, "error", err)
 		}
 		return
@@ -120,7 +121,9 @@ func (p *Prefetcher) prefetch() {
 		return
 	}
 
-	p.prefetchedData[nextTrackID] = data[:n]
+	result := make([]byte, n)
+	copy(result, buf[:n])
+	p.prefetchedData[nextTrackID] = result
 	p.mu.Unlock()
 	slog.Debug("prefetch completed", "track", nextTrackID, "bytes", n)
 }

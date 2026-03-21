@@ -3,8 +3,6 @@ package db
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"strings"
-	"unicode"
 
 	"github.com/p-society/raag/internal/domain"
 )
@@ -81,14 +79,7 @@ func CoverArtKey(id domain.TrackID) []byte {
 }
 
 func normalizeKey(s string) string {
-	var result strings.Builder
-	for _, r := range s {
-		lower := unicode.ToLower(r)
-		if unicode.IsLetter(lower) || r >= '0' && r <= '9' {
-			result.WriteRune(lower)
-		}
-	}
-	return result.String()
+	return domain.NormalizeKey(s)
 }
 
 func pathHash(path string) string {

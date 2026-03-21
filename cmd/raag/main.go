@@ -7,6 +7,7 @@ import (
 
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/infra/ipc"
+	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
 
@@ -54,6 +55,23 @@ func getClient() (*ipc.Client, func(), error) {
 	return client, func() {}, nil
 }
 
+func call(fn func(*ipc.Client) (*pb.Response, error)) error {
+	client, cleanup, err := getClient()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	resp, err := fn(client)
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	return nil
+}
+
 func newPlayCmd() *cobra.Command {
 	var byID bool
 	cmd := &cobra.Command{
@@ -62,26 +80,17 @@ func newPlayCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
 			trackID, q := "", ""
 			if byID {
 				trackID = query
 			} else {
 				q = query
 			}
-			resp, err := client.Play(trackID, q)
-			if err != nil {
+			if err := call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.Play(trackID, q)
+			}); err != nil {
 				return err
 			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
 			slog.Info("playing")
 			return nil
 		},
@@ -95,22 +104,9 @@ func newPauseCmd() *cobra.Command {
 		Use:   "pause",
 		Short: "Pause playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.Pause()
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("paused")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.Pause()
+			}), "paused")
 		},
 	}
 }
@@ -120,22 +116,9 @@ func newResumeCmd() *cobra.Command {
 		Use:   "resume",
 		Short: "Resume playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.Resume()
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("resumed")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.Resume()
+			}), "resumed")
 		},
 	}
 }
@@ -145,22 +128,9 @@ func newStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.Stop()
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("stopped")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.Stop()
+			}), "stopped")
 		},
 	}
 }
@@ -170,22 +140,9 @@ func newNextCmd() *cobra.Command {
 		Use:   "next",
 		Short: "Skip to next track",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.Next()
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("next track")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.Next()
+			}), "next track")
 		},
 	}
 }
@@ -195,24 +152,18 @@ func newPrevCmd() *cobra.Command {
 		Use:   "prev",
 		Short: "Go to previous track",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.Prev()
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("previous track")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.Prev()
+			}), "previous track")
 		},
 	}
+}
+
+func withSuccess(err error, msg string) error {
+	if err == nil {
+		slog.Info(msg)
+	}
+	return err
 }
 
 func newSeekCmd() *cobra.Command {
@@ -232,13 +183,7 @@ func newSeekCmd() *cobra.Command {
 			}
 			defer cleanup()
 
-			err = client.SeekTo(int64(seconds) * 1000)
-			if err != nil {
-				return err
-			}
-
-			slog.Info("seeked", "seconds", seconds)
-			return nil
+			return withSuccess(client.SeekTo(int64(seconds)*1000), fmt.Sprintf("seeked %ds", seconds))
 		},
 	}
 }
@@ -277,16 +222,9 @@ func newVolumeCmd() *cobra.Command {
 				return fmt.Errorf("volume must be 0-100")
 			}
 
-			resp, err := client.SetVolume(int32(volume))
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("volume set", "level", volume)
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.SetVolume(int32(volume))
+			}), fmt.Sprintf("volume set to %d", volume))
 		},
 	}
 }
@@ -366,22 +304,9 @@ func newQueueCmd() *cobra.Command {
 		Short: "Add track to queue",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.QueueAdd(args[0], -1)
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("added to queue")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.QueueAdd(args[0], -1)
+			}), "added to queue")
 		},
 	})
 
@@ -389,22 +314,9 @@ func newQueueCmd() *cobra.Command {
 		Use:   "clear",
 		Short: "Clear queue",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.QueueClear()
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("queue cleared")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.QueueClear()
+			}), "queue cleared")
 		},
 	})
 	return cmd
@@ -420,22 +332,9 @@ func newLibCmd() *cobra.Command {
 		Use:   "scan",
 		Short: "Scan library for new tracks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			resp, err := client.LibScan(false)
-			if err != nil {
-				return err
-			}
-			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
-			}
-
-			slog.Info("library scan complete")
-			return nil
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.LibScan(false)
+			}), "library scan complete")
 		},
 	})
 	return cmd

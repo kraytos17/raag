@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -62,6 +63,35 @@ func (s *Scanner) OnError(fn func(error)) {
 	s.onError = fn
 }
 
+func (s *Scanner) WalkDir(ctx context.Context, dirPath string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(dirPath, func(walkPath string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(walkPath))
+		if s.supportedExts[ext] {
+			files = append(files, walkPath)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
 func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
 	var files []string
 	for _, path := range s.paths {
@@ -102,22 +132,27 @@ func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
 
 type LibraryScanner struct {
 	libraryRepo LibraryRepository
+	statStore   FileStatStore
 	index       SearchIndex
 	bus         domain.EventBus
 	paths       []string
+	scanner     *Scanner
 }
 
 func NewLibraryScanner(
 	libraryRepo LibraryRepository,
+	statStore FileStatStore,
 	index SearchIndex,
 	bus domain.EventBus,
 	paths []string,
 ) *LibraryScanner {
 	return &LibraryScanner{
 		libraryRepo: libraryRepo,
+		statStore:   statStore,
 		index:       index,
 		bus:         bus,
 		paths:       paths,
+		scanner:     NewScanner(paths),
 	}
 }
 
@@ -127,6 +162,31 @@ func (s *LibraryScanner) LibraryRepo() LibraryRepository {
 
 func (s *LibraryScanner) Index() SearchIndex {
 	return s.index
+}
+
+func (s *LibraryScanner) AddFile(ctx context.Context, path string) error {
+	track, err := s.processFile(path)
+	if err != nil {
+		return err
+	}
+	return s.indexTrack(ctx, track)
+}
+
+func (s *LibraryScanner) RemoveFile(ctx context.Context, path string) error {
+	track, err := s.libraryRepo.FindByPath(ctx, path)
+	if err != nil {
+		if err == domain.ErrTrackNotFound {
+			return nil
+		}
+		return err
+	}
+	if err := s.libraryRepo.Delete(ctx, track.ID); err != nil {
+		return err
+	}
+	if err := s.index.Delete(ctx, track.ID); err != nil {
+		slog.Warn("failed to delete track from index", "id", track.ID, "error", err)
+	}
+	return nil
 }
 
 func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
@@ -175,7 +235,11 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modified int, removed int, err error) {
 	currentStats := make(map[string]*domain.FileStat)
 	for _, scanPath := range s.paths {
-		files := s.walkDirectory(scanPath)
+		files, err := s.scanner.WalkDir(ctx, scanPath)
+		if err != nil {
+			slog.Warn("failed to walk directory", "path", scanPath, "error", err)
+			continue
+		}
 		for _, file := range files {
 			stat, err := s.getFileStat(file)
 			if err != nil {
@@ -185,7 +249,7 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 		}
 	}
 
-	prevStats, err := s.libraryRepo.LoadFileStats(ctx)
+	prevStats, err := s.statStore.LoadFileStats(ctx)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -202,21 +266,18 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 	for path, current := range currentStats {
 		previous, exists := prevStats[path]
 		if !exists {
-			track, err := s.parseFile(path)
+			track, err := s.processFile(path)
 			if err != nil {
 				slog.Warn("failed to parse new file", "path", path, "error", err)
 				continue
 			}
-			if err := s.libraryRepo.Save(ctx, track); err != nil {
+			if err := s.indexTrack(ctx, track); err != nil {
 				slog.Warn("failed to save new track", "path", path, "error", err)
-			} else {
-				if err := s.index.Index(ctx, track); err != nil {
-					slog.Warn("failed to index new track", "path", path, "error", err)
-				}
-				added++
+				continue
 			}
+			added++
 		} else if current.Changed(previous) {
-			track, err := s.parseFile(path)
+			track, err := s.processFile(path)
 			if err != nil {
 				slog.Warn("failed to parse modified file", "path", path, "error", err)
 				continue
@@ -226,17 +287,11 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 			if existing != nil {
 				track.ID = existing.ID
 			}
-			if err := s.libraryRepo.Save(ctx, track); err != nil {
+			if err := s.updateTrack(ctx, track); err != nil {
 				slog.Warn("failed to save modified track", "path", path, "error", err)
-			} else {
-				if err := s.index.Delete(ctx, track.ID); err != nil {
-					slog.Warn("failed to delete old index entry", "path", path, "error", err)
-				}
-				if err := s.index.Index(ctx, track); err != nil {
-					slog.Warn("failed to re-index track", "path", path, "error", err)
-				}
-				modified++
+				continue
 			}
+			modified++
 		}
 	}
 	for path, track := range trackByPath {
@@ -250,7 +305,7 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 			}
 		}
 	}
-	if err := s.libraryRepo.SaveFileStats(ctx, currentStats); err != nil {
+	if err := s.statStore.SaveFileStats(ctx, currentStats); err != nil {
 		return 0, 0, 0, err
 	}
 	return added, modified, removed, nil
@@ -261,7 +316,11 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 	var added int
 	var removed int
 
-	files := s.walkDirectory(dirPath)
+	files, err := s.scanner.WalkDir(ctx, dirPath)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("walk directory: %w", err)
+	}
+
 	foundPaths := make(map[string]bool)
 	newFiles := make([]string, 0, len(files))
 	for _, file := range files {
@@ -294,7 +353,7 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 				Phase:       ScanPhaseParsing,
 			}))
 
-			track, err := s.parseFile(file)
+			track, err := s.processFile(file)
 			if err != nil {
 				slog.Warn("failed to parse file", "file", file, "error", err)
 				return nil
@@ -310,12 +369,9 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 		slog.Warn("scan directory errgroup failed", "path", dirPath, "error", err)
 	}
 	for _, track := range parsedTracks {
-		if err := s.libraryRepo.Save(ctx, track); err != nil {
+		if err := s.indexTrack(ctx, track); err != nil {
 			slog.Warn("failed to save track", "track", track.ID, "error", err)
 			continue
-		}
-		if err := s.index.Index(ctx, track); err != nil {
-			slog.Warn("failed to index track", "track", track.ID, "error", err)
 		}
 
 		scanned++
@@ -327,28 +383,6 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 		}
 	}
 	return scanned, added, removed, nil
-}
-
-func (s *LibraryScanner) walkDirectory(dirPath string) []string {
-	var files []string
-	if err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			slog.Error("walk directory error", "path", path, "error", err)
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		ext := strings.ToLower(filepath.Ext(path))
-		if isAudioExt(ext) {
-			files = append(files, path)
-		}
-		return nil
-	}); err != nil {
-		slog.Error("walk directory failed", "path", dirPath, "error", err)
-	}
-	return files
 }
 
 func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
@@ -403,6 +437,33 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 		track.CoverArt = cover
 	}
 	return track, nil
+}
+
+func (s *LibraryScanner) processFile(path string) (*domain.Track, error) {
+	return s.parseFile(path)
+}
+
+func (s *LibraryScanner) indexTrack(ctx context.Context, track *domain.Track) error {
+	if err := s.libraryRepo.Save(ctx, track); err != nil {
+		return err
+	}
+	if err := s.index.Index(ctx, track); err != nil {
+		slog.Warn("failed to index track", "track", track.ID, "error", err)
+	}
+	return nil
+}
+
+func (s *LibraryScanner) updateTrack(ctx context.Context, track *domain.Track) error {
+	if err := s.libraryRepo.Save(ctx, track); err != nil {
+		return err
+	}
+	if err := s.index.Delete(ctx, track.ID); err != nil {
+		slog.Warn("failed to delete old index entry", "id", track.ID, "error", err)
+	}
+	if err := s.index.Index(ctx, track); err != nil {
+		slog.Warn("failed to re-index track", "id", track.ID, "error", err)
+	}
+	return nil
 }
 
 func mimeType(ext string) string {

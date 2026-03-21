@@ -96,3 +96,9 @@ func (p *PlaybackFSM) CanTransition(event PlaybackEvent) bool {
 	_, ok := transitions[p.state][event]
 	return ok
 }
+
+func (p *PlaybackFSM) State() PlayerState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return PlayerState(p.state)
+}
