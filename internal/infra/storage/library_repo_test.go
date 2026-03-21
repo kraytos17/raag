@@ -242,7 +242,7 @@ func TestNormalize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := normalize(tt.input)
+		result := domain.Normalize(tt.input)
 		if result != tt.expected {
 			t.Errorf("normalize(%q) = %q, want %q", tt.input, result, tt.expected)
 		}

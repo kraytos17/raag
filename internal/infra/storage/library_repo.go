@@ -16,7 +16,6 @@ import (
 
 const (
 	defaultCacheSize = 10000
-	batchSize        = 500
 )
 
 type libraryRepo struct {
@@ -24,7 +23,12 @@ type libraryRepo struct {
 	cache *lru.Cache[string, *domain.Track]
 }
 
-func NewLibraryRepo(db *DB, paths []string) (app.LibraryRepository, error) {
+type LibraryRepo interface {
+	app.LibraryRepository
+	app.FileStatStore
+}
+
+func NewLibraryRepo(db *DB, paths []string) (LibraryRepo, error) {
 	cache, err := lru.New[string, *domain.Track](defaultCacheSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LRU cache: %w", err)
@@ -37,13 +41,13 @@ func NewLibraryRepo(db *DB, paths []string) (app.LibraryRepository, error) {
 
 func (r *libraryRepo) Save(ctx context.Context, track *domain.Track) error {
 	return r.db.Update(func(txn *badger.Txn) error {
-		return r.saveTrack(txn, track)
+		return r.setTrackEntry(txn.Set, track)
 	})
 }
 
-func (r *libraryRepo) saveTrack(txn *badger.Txn, track *domain.Track) error {
+func (r *libraryRepo) setTrackEntry(set func([]byte, []byte) error, track *domain.Track) error {
 	if len(track.CoverArt) > 0 {
-		if err := txn.Set(CoverArtKey(track.ID), track.CoverArt); err != nil {
+		if err := set(CoverArtKey(track.ID), track.CoverArt); err != nil {
 			return fmt.Errorf("failed to save cover art: %w", err)
 		}
 
@@ -53,7 +57,7 @@ func (r *libraryRepo) saveTrack(txn *badger.Txn, track *domain.Track) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal track: %w", err)
 		}
-		if err := txn.Set(TrackKey(track.ID), data); err != nil {
+		if err := set(TrackKey(track.ID), data); err != nil {
 			return fmt.Errorf("failed to save track: %w", err)
 		}
 	} else {
@@ -61,23 +65,22 @@ func (r *libraryRepo) saveTrack(txn *badger.Txn, track *domain.Track) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal track: %w", err)
 		}
-		if err := txn.Set(TrackKey(track.ID), data); err != nil {
+		if err := set(TrackKey(track.ID), data); err != nil {
 			return fmt.Errorf("failed to save track: %w", err)
 		}
 	}
-	if err := txn.Set(PathKey(track.Path), []byte(track.ID)); err != nil {
+	if err := set(PathKey(track.Path), []byte(track.ID)); err != nil {
 		return fmt.Errorf("failed to save path index: %w", err)
 	}
-	if err := txn.Set(PathStrKey(track.Path), []byte(track.ID)); err != nil {
+	if err := set(PathStrKey(track.Path), []byte(track.ID)); err != nil {
 		return fmt.Errorf("failed to save path str index: %w", err)
 	}
-	if err := txn.Set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
+	if err := set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
 		return fmt.Errorf("failed to save artist index: %w", err)
 	}
-	if err := txn.Set(AlbumIndexKey(track.Album, track.ID), nil); err != nil {
+	if err := set(AlbumIndexKey(track.Album, track.ID), nil); err != nil {
 		return fmt.Errorf("failed to save album index: %w", err)
 	}
-
 	r.cache.Add(string(track.ID), track)
 	return nil
 }
@@ -308,70 +311,15 @@ func (r *libraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) erro
 	defer wb.Cancel()
 
 	for _, track := range tracks {
-		if len(track.CoverArt) > 0 {
-			if err := wb.Set(CoverArtKey(track.ID), track.CoverArt); err != nil {
-				return fmt.Errorf("failed to save cover art: %w", err)
-			}
-
-			trackCopy := *track
-			trackCopy.CoverArt = nil
-			data, err := ipc.MarshalTrack(&trackCopy)
-			if err != nil {
-				return fmt.Errorf("failed to marshal track: %w", err)
-			}
-			if err := wb.Set(TrackKey(track.ID), data); err != nil {
-				return fmt.Errorf("failed to save track: %w", err)
-			}
-		} else {
-			data, err := ipc.MarshalTrack(track)
-			if err != nil {
-				return fmt.Errorf("failed to marshal track: %w", err)
-			}
-			if err := wb.Set(TrackKey(track.ID), data); err != nil {
-				return fmt.Errorf("failed to save track: %w", err)
-			}
+		if err := r.setTrackEntry(wb.Set, track); err != nil {
+			return err
 		}
-		if err := wb.Set(PathKey(track.Path), []byte(track.ID)); err != nil {
-			return fmt.Errorf("failed to save path index: %w", err)
-		}
-		if err := wb.Set(PathStrKey(track.Path), []byte(track.ID)); err != nil {
-			return fmt.Errorf("failed to save path str index: %w", err)
-		}
-		if err := wb.Set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
-			return fmt.Errorf("failed to save artist index: %w", err)
-		}
-		if err := wb.Set(AlbumIndexKey(track.Album, track.ID), nil); err != nil {
-			return fmt.Errorf("failed to save album index: %w", err)
-		}
-		r.cache.Add(string(track.ID), track)
 	}
 	return wb.Flush()
 }
 
 func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
-	var tracks []*domain.Track
-	err := r.db.View(func(txn *badger.Txn) error {
-		iter := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer iter.Close()
-
-		iter.Seek([]byte(PrefixTrackData))
-		for iter.ValidForPrefix([]byte(PrefixTrackData)) {
-			item := iter.Item()
-			var track *domain.Track
-			e := item.Value(func(val []byte) error {
-				var err error
-				track, err = ipc.UnmarshalTrack(val)
-				return err
-			})
-			if e != nil {
-				return e
-			}
-			tracks = append(tracks, track)
-			iter.Next()
-		}
-		return nil
-	})
-	return tracks, err
+	return collectAll(r.db, []byte(PrefixTrackData), ipc.UnmarshalTrack)
 }
 
 func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {
@@ -448,21 +396,9 @@ func (r *libraryRepo) InvalidateCache() {
 	r.cache.Purge()
 }
 
-func normalize(s string) string {
-	s = strings.ToLower(s)
-	s = strings.TrimSpace(s)
-	var result strings.Builder
-	for _, r := range s {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
-}
-
 func matchesQuery(query string, track *domain.Track) bool {
-	q := normalize(query)
-	return strings.Contains(normalize(track.Title), q) ||
-		strings.Contains(normalize(track.Artist), q) ||
-		strings.Contains(normalize(track.Album), q)
+	q := domain.Normalize(query)
+	return strings.Contains(domain.Normalize(track.Title), q) ||
+		strings.Contains(domain.Normalize(track.Artist), q) ||
+		strings.Contains(domain.Normalize(track.Album), q)
 }

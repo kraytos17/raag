@@ -16,7 +16,7 @@ import (
 	"github.com/p-society/raag/internal/infra/audio"
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/ipc"
-	"github.com/p-society/raag/internal/infra/storage"
+	db "github.com/p-society/raag/internal/infra/storage"
 )
 
 func main() {
@@ -106,7 +106,7 @@ func main() {
 	searchIndex := app.NewSearchIndex(libraryRepo)
 	peerRepo := db.NewPeerRepo(database)
 
-	scanner := app.NewLibraryScanner(libraryRepo, searchIndex, bus, cfg.Library.Paths)
+	scanner := app.NewLibraryScanner(libraryRepo, libraryRepo, searchIndex, bus, cfg.Library.Paths)
 	searchService := app.NewSearchService(searchIndex, libraryRepo)
 
 	resolver := app.NewResolver(libraryRepo)
@@ -121,8 +121,11 @@ func main() {
 	ipcServer.SetLibraryRepoHandler(libraryRepo)
 	ipcServer.SetPeerRepoHandler(peerRepo)
 	ipcServer.SetQueueHandler(queue)
-	if err := ipcServer.Start(context.Background()); err != nil {
-		slog.Error("failed to start IPC server", "error", err)
+
+	lc := app.NewLifecycleManager()
+	lc.Register(ipc.AsComponent(ipcServer))
+	if err := lc.StartAll(context.Background()); err != nil {
+		slog.Error("failed to start components", "error", err)
 		_ = database.Close()
 		os.Exit(1)
 	}
@@ -149,11 +152,11 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_ = ipcServer.Stop(shutdownCtx)
 	if err := player.Stop(shutdownCtx); err != nil {
 		slog.Warn("player stop error", "error", err)
 	}
-
+	
+	_ = lc.StopAll(shutdownCtx)
 	_ = database.Close()
 	slog.Info("raag daemon stopped")
 }

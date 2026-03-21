@@ -547,3 +547,15 @@ func (s *Server) isListenerClosed(err error) bool {
 	}
 	return false
 }
+
+type ServerComponent struct {
+	*Server
+}
+
+func (c *ServerComponent) Name() string {
+	return "ipc-server"
+}
+
+func AsComponent(server *Server) app.Component {
+	return &ServerComponent{Server: server}
+}

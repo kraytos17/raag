@@ -198,7 +198,7 @@ func (u *PlaybackController) GetVolume() int {
 }
 
 func (u *PlaybackController) GetState() PlayerState {
-	return u.player.GetState()
+	return u.fsm.State()
 }
 
 func (u *PlaybackController) GetCurrentTrack() *domain.Track {

@@ -137,30 +137,14 @@ func (fw *FileWatcher) flushPending(ctx context.Context) {
 }
 
 func (fw *FileWatcher) removeFile(ctx context.Context, path string) {
-	track, err := fw.scanner.LibraryRepo().FindByPath(ctx, path)
-	if err != nil {
-		return
-	}
-	if err := fw.scanner.LibraryRepo().Delete(ctx, track.ID); err != nil {
-		slog.Warn("failed to delete removed track", "path", path, "error", err)
-	}
-	if err := fw.scanner.Index().Delete(ctx, track.ID); err != nil {
-		slog.Warn("failed to delete from index", "path", path, "error", err)
+	if err := fw.scanner.RemoveFile(ctx, path); err != nil {
+		slog.Warn("failed to remove file", "path", path, "error", err)
 	}
 }
 
 func (fw *FileWatcher) processFile(ctx context.Context, path string) {
-	track, err := fw.scanner.parseFile(path)
-	if err != nil {
-		slog.Warn("failed to parse changed file", "path", path, "error", err)
-		return
-	}
-	if err := fw.scanner.LibraryRepo().Save(ctx, track); err != nil {
-		slog.Warn("failed to save changed track", "path", path, "error", err)
-		return
-	}
-	if err := fw.scanner.Index().Index(ctx, track); err != nil {
-		slog.Warn("failed to index changed track", "path", path, "error", err)
+	if err := fw.scanner.AddFile(ctx, path); err != nil {
+		slog.Warn("failed to add file", "path", path, "error", err)
 	}
 }
 
