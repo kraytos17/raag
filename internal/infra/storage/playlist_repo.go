@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"github.com/dgraph-io/badger/v4"
@@ -38,7 +39,7 @@ func (r *playlistRepo) FindByID(ctx context.Context, id domain.PlaylistID) (*dom
 	val, err := view(r.DB, PlaylistKey(id), func(data []byte) (*domain.Playlist, error) {
 		return ipc.UnmarshalPlaylist(data)
 	})
-	if err == domain.ErrNotFound {
+	if errors.Is(err, errNotFound) {
 		return zero, domain.ErrPlaylistNotFound
 	}
 	return val, err
@@ -49,13 +50,13 @@ func (r *playlistRepo) Save(ctx context.Context, playlist *domain.Playlist) erro
 	if err != nil {
 		return err
 	}
-	return update(r.DB, func(txn *badger.Txn) error {
+	return r.DB.Update(func(txn *badger.Txn) error {
 		return txn.Set(PlaylistKey(playlist.ID), data)
 	})
 }
 
 func (r *playlistRepo) Delete(ctx context.Context, id domain.PlaylistID) error {
-	return update(r.DB, func(txn *badger.Txn) error {
+	return r.DB.Update(func(txn *badger.Txn) error {
 		return txn.Delete(PlaylistKey(id))
 	})
 }

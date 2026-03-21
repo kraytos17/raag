@@ -68,10 +68,10 @@ func (t *Track) Validate() error {
 		return ErrInvalidTrackID
 	}
 	if t.Path == "" {
-		return ErrFileNotAccessible
+		return ErrInvalidTrack
 	}
 	if t.DurationMs == 0 {
-		return ErrFileNotAccessible
+		return ErrInvalidTrack
 	}
 	return nil
 }

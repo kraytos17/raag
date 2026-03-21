@@ -84,55 +84,39 @@ func (idx *inmemoryIndex) Search(ctx context.Context, query string, limit int) (
 	}
 
 	idx.mu.RLock()
-	postingLists := make([][]domain.TrackID, 0, len(tokens))
+	defer idx.mu.RUnlock()
+
+	scoreMap := make(map[domain.TrackID]int)
 	for _, token := range tokens {
 		if list, ok := idx.terms[token]; ok {
-			postingLists = append(postingLists, list)
-		} else {
-			idx.mu.RUnlock()
-			return nil, nil
+			for _, id := range list {
+				scoreMap[id]++
+			}
 		}
 	}
-
-	idx.mu.RUnlock()
-	if len(postingLists) == 0 {
+	if len(scoreMap) == 0 {
 		return nil, nil
 	}
-	if len(postingLists) == 1 {
-		if limit > 0 && len(postingLists[0]) > limit {
-			return postingLists[0][:limit], nil
+
+	ids := make([]domain.TrackID, 0, len(scoreMap))
+	for id := range scoreMap {
+		ids = append(ids, id)
+	}
+	if len(ids) == 1 || len(tokens) == 1 {
+		if limit > 0 && len(ids) > limit {
+			return ids[:limit], nil
 		}
-		return postingLists[0], nil
+		return ids, nil
 	}
 
-	result := postingLists[0]
-	for i := 1; i < len(postingLists); i++ {
-		result = mergeIntersect(result, postingLists[i])
-		if len(result) == 0 {
-			break
-		}
-	}
-	if limit > 0 && len(result) > limit {
-		return result[:limit], nil
-	}
-	return result, nil
-}
+	slices.SortFunc(ids, func(a, b domain.TrackID) int {
+		return scoreMap[b] - scoreMap[a]
+	})
 
-func mergeIntersect(a, b []domain.TrackID) []domain.TrackID {
-	result := make([]domain.TrackID, 0, min(len(a), len(b)))
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		if a[i] == b[j] {
-			result = append(result, a[i])
-			i++
-			j++
-		} else if a[i] < b[j] {
-			i++
-		} else {
-			j++
-		}
+	if limit > 0 && len(ids) > limit {
+		return ids[:limit], nil
 	}
-	return result
+	return ids, nil
 }
 
 func (idx *inmemoryIndex) SearchFuzzy(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {

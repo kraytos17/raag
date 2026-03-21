@@ -289,10 +289,9 @@ func LibraryManifestToProto(m *domain.LibraryManifest) *pb.LibraryManifest {
 		trackIDs[i] = string(id)
 	}
 	return &pb.LibraryManifest{
-		PeerId:     string(m.PeerID),
-		Timestamp:  m.LastUpdated.Unix(),
-		TrackCount: int32(m.TrackCount()),
-		TrackIds:   trackIDs,
+		PeerId:    string(m.PeerID),
+		Timestamp: m.LastUpdated.Unix(),
+		TrackIds:  trackIDs,
 	}
 }
 

@@ -155,7 +155,7 @@ func main() {
 	if err := player.Stop(shutdownCtx); err != nil {
 		slog.Warn("player stop error", "error", err)
 	}
-	
+
 	_ = lc.StopAll(shutdownCtx)
 	_ = database.Close()
 	slog.Info("raag daemon stopped")
