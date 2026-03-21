@@ -71,74 +71,13 @@ message PeerScore {
 message LibraryManifest {
   string peer_id = 1;
   int64 timestamp = 2;
-  int32 track_count = 3;
-  repeated string track_ids = 4;
-  repeated TrackEntry tracks = 5;
-}
-
-message TrackEntry {
-  string track_id = 1;
-  string title = 2;
-  string artist = 3;
-  string album = 4;
-  uint64 duration_ms = 5;
-  string mime_type = 6;
+  repeated string track_ids = 3;
 }
 
 message FileStat {
   string path = 1;
   int64 mtime = 2;
   int64 size = 3;
-}
-
-message ChunkRequest {
-  string track_id = 1;
-  int64 offset = 2;
-  int32 length = 3;
-}
-
-message ChunkResponse {
-  string track_id = 1;
-  int64 offset = 2;
-  bytes data = 3;
-  bool last_chunk = 4;
-}
-
-enum CommandType {
-  COMMAND_TYPE_UNSPECIFIED = 0;
-  COMMAND_TYPE_STATUS = 1;
-  COMMAND_TYPE_PLAY = 2;
-  COMMAND_TYPE_PAUSE = 3;
-  COMMAND_TYPE_RESUME = 4;
-  COMMAND_TYPE_STOP = 5;
-  COMMAND_TYPE_NEXT = 6;
-  COMMAND_TYPE_PREV = 7;
-  COMMAND_TYPE_SEEK_TO = 8;
-  COMMAND_TYPE_SET_VOLUME = 9;
-  COMMAND_TYPE_QUEUE_ADD = 10;
-  COMMAND_TYPE_QUEUE_REMOVE = 11;
-  COMMAND_TYPE_QUEUE_LIST = 12;
-  COMMAND_TYPE_QUEUE_CLEAR = 13;
-  COMMAND_TYPE_SEARCH = 14;
-  COMMAND_TYPE_LIB_SCAN = 15;
-  COMMAND_TYPE_LIST_PEERS = 16;
-  COMMAND_TYPE_STREAM_FROM = 17;
-  COMMAND_TYPE_DEBUG_PEERS = 18;
-  COMMAND_TYPE_DEBUG_STREAMS = 19;
-  COMMAND_TYPE_HEALTH_CHECK = 20;
-  COMMAND_TYPE_SUBSCRIBE = 21;
-  COMMAND_TYPE_CREATE_PLAYLIST = 22;
-  COMMAND_TYPE_GET_PLAYLIST = 23;
-  COMMAND_TYPE_LIST_PLAYLISTS = 24;
-  COMMAND_TYPE_ADD_TO_PLAYLIST = 25;
-  COMMAND_TYPE_GET_TRACK = 26;
-  COMMAND_TYPE_GET_TRACK_BY_PATH = 27;
-}
-
-enum SyncRequestType {
-  SYNC_REQUEST_TYPE_UNSPECIFIED = 0;
-  SYNC_REQUEST_TYPE_MANIFEST = 1;
-  SYNC_REQUEST_TYPE_TRACK_DETAIL = 2;
 }
 
 message Empty {}
@@ -182,23 +121,13 @@ message Response {
     StatusResponse status = 6;
     HealthCheckResponse health_check = 7;
     QueueResponse queue = 8;
-    LibScanResponse lib_scan = 9;
-    CreatePlaylistResponse create_playlist = 10;
-    GetPlaylistResponse get_playlist = 11;
-    ListPlaylistsResponse list_playlists = 12;
-    GetTrackResponse get_track = 13;
+    GetTrackResponse get_track = 9;
   }
 }
 
 message PlayRequest {
   string track_id = 1;
   string query = 2;
-}
-
-message PlayResponse {
-  bool ok = 1;
-  Track track = 2;
-  string error = 3;
 }
 
 message StatusResponse {
@@ -260,11 +189,6 @@ message LibScanRequest {
   bool incremental = 1;
 }
 
-message LibScanResponse {
-  bool started = 1;
-  int32 tracks_found = 2;
-}
-
 message Peer {
   string id = 1;
   repeated string addrs = 2;
@@ -279,134 +203,14 @@ message ListPeersResponse {
   repeated Peer peers = 1;
 }
 
-message StreamFromRequest {
-  string peer_id = 1;
-  string track_id = 2;
-}
-
-message DebugPeersResponse {
-  repeated PeerDebugInfo peers = 1;
-}
-
-message PeerDebugInfo {
-  string peer_id = 1;
-  double score = 2;
-  double avg_latency_ms = 3;
-  int64 avg_bandwidth = 4;
-  int32 success_count = 5;
-  int32 failure_count = 6;
-  string state = 7;
-  int64 last_seen = 8;
-}
-
-message DebugStreamsResponse {
-  repeated StreamDebugInfo streams = 1;
-}
-
-message StreamDebugInfo {
-  string stream_id = 1;
-  string peer_id = 2;
-  string track_id = 3;
-  int64 offset = 4;
-  int64 buffer_size = 5;
-  int64 buffer_fill = 6;
-  string state = 7;
-  int64 bytes_transferred = 8;
-}
-
 message HealthCheckRequest {}
 
 message HealthCheckResponse {
   bool healthy = 1;
-  repeated ComponentHealth components = 2;
-}
-
-message ComponentHealth {
-  string name = 1;
-  bool healthy = 2;
-  string error = 3;
-}
-
-message SubscribeRequest {
-  int32 event_mask = 1;
-}
-
-message EventMessage {
-  EventType type = 1;
-  bytes payload = 2;
-  int64 timestamp = 3;
-}
-
-enum EventType {
-  EVENT_TYPE_UNSPECIFIED = 0;
-  EVENT_TYPE_TRACK_STARTED = 1;
-  EVENT_TYPE_TRACK_FINISHED = 2;
-  EVENT_TYPE_TRACK_PROGRESS = 3;
-  EVENT_TYPE_TRACK_ERROR = 4;
-  EVENT_TYPE_PLAYBACK_STATE_CHANGED = 5;
-  EVENT_TYPE_PEER_CONNECTED = 6;
-  EVENT_TYPE_PEER_DISCONNECTED = 7;
-  EVENT_TYPE_PEER_SCORE_UPDATED = 8;
-  EVENT_TYPE_SCAN_STARTED = 9;
-  EVENT_TYPE_SCAN_PROGRESS = 10;
-  EVENT_TYPE_SCAN_COMPLETE = 11;
-  EVENT_TYPE_QUEUE_UPDATED = 12;
-}
-
-message TrackStartedPayload {
-  Track track = 1;
-}
-
-message TrackFinishedPayload {
-  Track track = 1;
-}
-
-message TrackProgressPayload {
-  Track track = 1;
-  int64 position_ms = 2;
-  int64 duration_ms = 3;
-  float progress = 4;
-}
-
-message PlaybackStateChangedPayload {
-  string old_state = 1;
-  string new_state = 2;
-}
-
-message PeerEventPayload {
-  string peer_id = 1;
-  Peer peer = 2;
-}
-
-message PeerScorePayload {
-  string peer_id = 1;
-  double score = 2;
-}
-
-message ScanProgressPayload {
-  int32 phase = 1;
-  int32 total_found = 2;
-  int32 processed = 3;
-  string current_file = 4;
-}
-
-message ScanCompletePayload {
-  int32 tracks_added = 1;
-  int32 tracks_modified = 2;
-  int32 tracks_removed = 3;
-  int64 duration_ms = 4;
-}
-
-message QueueUpdatedPayload {
-  repeated Track tracks = 1;
 }
 
 message CreatePlaylistRequest {
   string name = 1;
-}
-
-message CreatePlaylistResponse {
-  Playlist playlist = 1;
 }
 
 message GetPlaylistRequest {
@@ -439,16 +243,4 @@ message GetTrackByPathRequest {
 
 message GetTrackResponse {
   Track track = 1;
-}
-
-message SyncRequest {
-  SyncRequestType type = 1;
-  string track_id = 2;
-}
-
-message SyncResponse {
-  oneof response {
-    LibraryManifest manifest = 1;
-    Track track = 2;
-  }
 }

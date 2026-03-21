@@ -23,14 +23,14 @@ func (r *peerRepo) SavePeerInfo(ctx context.Context, info *domain.PeerInfo) erro
 	if err != nil {
 		return err
 	}
-	return update(r.db, func(txn *badger.Txn) error {
+	return r.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(PeerKey(info.ID), data)
 	})
 }
 
 func (r *peerRepo) GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.PeerInfo, error) {
 	info, err := view(r.db, PeerKey(id), ipc.UnmarshalPeerInfo)
-	if err == domain.ErrNotFound {
+	if err == errNotFound {
 		return nil, domain.ErrPeerUnavailable
 	}
 	return info, err
@@ -41,14 +41,14 @@ func (r *peerRepo) SavePeerScore(ctx context.Context, id domain.PeerID, score *d
 	if err != nil {
 		return err
 	}
-	return update(r.db, func(txn *badger.Txn) error {
+	return r.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(PeerScoreKey(id), data)
 	})
 }
 
 func (r *peerRepo) GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.PeerScore, error) {
 	score, err := view(r.db, PeerScoreKey(id), ipc.UnmarshalPeerScore)
-	if err == domain.ErrNotFound {
+	if err == errNotFound {
 		return nil, nil
 	}
 	return score, err
@@ -59,14 +59,14 @@ func (r *peerRepo) SaveLibraryManifest(ctx context.Context, id domain.PeerID, ma
 	if err != nil {
 		return err
 	}
-	return update(r.db, func(txn *badger.Txn) error {
+	return r.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(PeerLibraryKey(id), data)
 	})
 }
 
 func (r *peerRepo) GetLibraryManifest(ctx context.Context, id domain.PeerID) (*domain.LibraryManifest, error) {
 	manifest, err := view(r.db, PeerLibraryKey(id), ipc.UnmarshalLibraryManifest)
-	if err == domain.ErrNotFound {
+	if err == errNotFound {
 		return nil, nil
 	}
 	return manifest, err

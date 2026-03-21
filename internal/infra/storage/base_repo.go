@@ -6,8 +6,9 @@ import (
 	"iter"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/p-society/raag/internal/domain"
 )
+
+var errNotFound = errors.New("not found")
 
 type SetFunc func(k, v []byte) error
 
@@ -45,13 +46,9 @@ func view[T any](
 		return nil
 	})
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		return zero, domain.ErrNotFound
+		return zero, errNotFound
 	}
 	return zero, err
-}
-
-func update(db *DB, fn func(*badger.Txn) error) error {
-	return db.Update(fn)
 }
 
 func listAll[T any](
@@ -134,7 +131,7 @@ func (r *BaseRepository[T, ID]) Save(ctx context.Context, id ID, entity T) error
 func (r *BaseRepository[T, ID]) FindByID(ctx context.Context, id ID) (T, error) {
 	var zero T
 	val, err := view(r.DB, r.keyByID(id), r.unmarshal)
-	if errors.Is(err, domain.ErrNotFound) {
+	if errors.Is(err, errNotFound) {
 		return zero, r.notFoundErr()
 	}
 	return val, err

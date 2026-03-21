@@ -6,7 +6,7 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-type ScanProgressPayload struct {
+type ScanProgress struct {
 	Scanned     int
 	Total       int
 	CurrentFile string

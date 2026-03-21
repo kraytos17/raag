@@ -3,7 +3,6 @@ package domain
 import "errors"
 
 var (
-	ErrNotFound               = errors.New("not found")
 	ErrTrackNotFound          = errors.New("track not found")
 	ErrPlaylistNotFound       = errors.New("playlist not found")
 	ErrPeerUnavailable        = errors.New("peer unavailable")
@@ -21,4 +20,5 @@ var (
 	ErrNoPeersFound           = errors.New("no peers found")
 	ErrCodecNotSupported      = errors.New("codec not supported")
 	ErrFileNotAccessible      = errors.New("file not accessible")
+	ErrInvalidTrack           = errors.New("invalid track")
 )

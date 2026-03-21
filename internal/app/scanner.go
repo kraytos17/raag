@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,14 +21,10 @@ import (
 
 var AudioExtensions = []string{".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma"}
 
-func isAudioExt(ext string) bool {
-	return slices.Contains(AudioExtensions, ext)
-}
-
 type Scanner struct {
 	paths         []string
 	supportedExts map[string]bool
-	onProgress    func(scanProgress)
+	onProgress    func(ScanProgress)
 	onTrack       func(*domain.Track)
 	onError       func(error)
 }
@@ -45,13 +40,7 @@ func NewScanner(paths []string) *Scanner {
 	}
 }
 
-type scanProgress struct {
-	Phase       string
-	TotalFound  int
-	CurrentFile string
-}
-
-func (s *Scanner) OnProgress(fn func(scanProgress)) {
+func (s *Scanner) OnProgress(fn func(ScanProgress)) {
 	s.onProgress = fn
 }
 
@@ -114,9 +103,10 @@ func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
 			if s.supportedExts[ext] {
 				files = append(files, walkPath)
 				if s.onProgress != nil {
-					s.onProgress(scanProgress{
-						Phase:      "discovery",
-						TotalFound: len(files),
+					s.onProgress(ScanProgress{
+						Phase:       ScanPhaseWalking,
+						Total:       len(files),
+						CurrentFile: walkPath,
 					})
 				}
 			}
@@ -137,6 +127,7 @@ type LibraryScanner struct {
 	bus         domain.EventBus
 	paths       []string
 	scanner     *Scanner
+	onProgress  func(ScanProgress)
 }
 
 func NewLibraryScanner(
@@ -154,6 +145,11 @@ func NewLibraryScanner(
 		paths:       paths,
 		scanner:     NewScanner(paths),
 	}
+}
+
+func (s *LibraryScanner) OnProgress(fn func(ScanProgress)) {
+	s.onProgress = fn
+	s.scanner.OnProgress(fn)
 }
 
 func (s *LibraryScanner) LibraryRepo() LibraryRepository {
@@ -346,12 +342,14 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 			default:
 			}
 
-			s.bus.Publish(gctx, domain.NewEvent(domain.EventScanProgress, ScanProgressPayload{
-				Scanned:     i + 1,
-				Total:       len(newFiles),
-				CurrentFile: file,
-				Phase:       ScanPhaseParsing,
-			}))
+			if s.onProgress != nil {
+				s.onProgress(ScanProgress{
+					Scanned:     i + 1,
+					Total:       len(newFiles),
+					CurrentFile: file,
+					Phase:       ScanPhaseParsing,
+				})
+			}
 
 			track, err := s.processFile(file)
 			if err != nil {
