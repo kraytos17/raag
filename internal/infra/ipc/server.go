@@ -3,6 +3,7 @@ package ipc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"net"
@@ -32,12 +33,44 @@ type Server struct {
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 
-	playback    PlaybackHandler
-	scanner     ScannerHandler
-	search      SearchHandler
-	libraryRepo LibraryRepoHandler
-	peerRepo    PeerRepoHandler
-	queue       QueueHandler
+	playback     PlaybackHandler
+	scanner      ScannerHandler
+	search       SearchHandler
+	libraryRepo  LibraryRepoHandler
+	peerRepo     PeerRepoHandler
+	queue        QueueHandler
+	playlistRepo app.PlaylistRepository
+	cbRegistry   *app.CBRegistry
+}
+
+type ServerConfig struct {
+	Playback     PlaybackHandler
+	Scanner      ScannerHandler
+	Search       SearchHandler
+	LibraryRepo  LibraryRepoHandler
+	PeerRepo     PeerRepoHandler
+	Queue        QueueHandler
+	PlaylistRepo app.PlaylistRepository
+	CBRegistry   *app.CBRegistry
+}
+
+func (c *ServerConfig) Validate() error {
+	if c.Playback == nil {
+		return errors.New("playback handler is required")
+	}
+	if c.Scanner == nil {
+		return errors.New("scanner handler is required")
+	}
+	if c.Search == nil {
+		return errors.New("search handler is required")
+	}
+	if c.LibraryRepo == nil {
+		return errors.New("library repo handler is required")
+	}
+	if c.Queue == nil {
+		return errors.New("queue handler is required")
+	}
+	return nil
 }
 
 type PlaybackHandler interface {
@@ -82,35 +115,22 @@ type QueueHandler interface {
 	Previous() *domain.Track
 }
 
-func NewServer(socketPath string) *Server {
-	return &Server{
-		socketPath: socketPath,
-		done:       make(chan struct{}),
+func NewServer(socketPath string, config ServerConfig) (*Server, error) {
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid server config: %w", err)
 	}
-}
-
-func (s *Server) SetPlaybackHandler(h PlaybackHandler) {
-	s.playback = h
-}
-
-func (s *Server) SetScannerHandler(h ScannerHandler) {
-	s.scanner = h
-}
-
-func (s *Server) SetSearchHandler(h SearchHandler) {
-	s.search = h
-}
-
-func (s *Server) SetLibraryRepoHandler(h LibraryRepoHandler) {
-	s.libraryRepo = h
-}
-
-func (s *Server) SetPeerRepoHandler(h PeerRepoHandler) {
-	s.peerRepo = h
-}
-
-func (s *Server) SetQueueHandler(h QueueHandler) {
-	s.queue = h
+	return &Server{
+		socketPath:   socketPath,
+		done:         make(chan struct{}),
+		playback:     config.Playback,
+		scanner:      config.Scanner,
+		search:       config.Search,
+		libraryRepo:  config.LibraryRepo,
+		peerRepo:     config.PeerRepo,
+		queue:        config.Queue,
+		playlistRepo: config.PlaylistRepo,
+		cbRegistry:   config.CBRegistry,
+	}, nil
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -241,13 +261,13 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 	case *pb.Request_HealthCheck:
 		return s.handleHealthCheck()
 	case *pb.Request_CreatePlaylist:
-		return s.handleCreatePlaylist(p.CreatePlaylist)
+		return s.handleCreatePlaylist(ctx, p.CreatePlaylist)
 	case *pb.Request_GetPlaylist:
-		return s.handleGetPlaylist(p.GetPlaylist)
+		return s.handleGetPlaylist(ctx, p.GetPlaylist)
 	case *pb.Request_ListPlaylists:
-		return s.handleListPlaylists()
+		return s.handleListPlaylists(ctx)
 	case *pb.Request_AddToPlaylist:
-		return s.handleAddToPlaylist(p.AddToPlaylist)
+		return s.handleAddToPlaylist(ctx, p.AddToPlaylist)
 	case *pb.Request_GetTrack:
 		return s.handleGetTrack(ctx, p.GetTrack)
 	case *pb.Request_GetTrackByPath:
@@ -404,6 +424,13 @@ func (s *Server) handleLibScan(ctx context.Context, req *pb.LibScanRequest) *pb.
 }
 
 func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
+	if s.peerRepo == nil {
+		return &pb.Response{
+			Success: false,
+			Error:   "P2P is not enabled",
+		}
+	}
+
 	var pbPeers []*pb.Peer
 	for p := range s.peerRepo.ListAll(ctx) {
 		pbPeers = append(pbPeers, &pb.Peer{Id: string(p.ID), Addrs: p.Addrs})
@@ -449,20 +476,68 @@ func (s *Server) handleHealthCheck() *pb.Response {
 	}
 }
 
-func (s *Server) handleCreatePlaylist(req *pb.CreatePlaylistRequest) *pb.Response {
-	return &pb.Response{Success: false, Error: "not implemented"}
+func (s *Server) handleCreatePlaylist(ctx context.Context, req *pb.CreatePlaylistRequest) *pb.Response {
+	if s.playlistRepo == nil {
+		return &pb.Response{Success: false, Error: "playlists not available"}
+	}
+
+	playlist, err := domain.NewPlaylist(req.Name)
+	if err != nil {
+		return &pb.Response{Success: false, Error: err.Error()}
+	}
+	if err := s.playlistRepo.Save(ctx, playlist); err != nil {
+		return &pb.Response{Success: false, Error: err.Error()}
+	}
+	return &pb.Response{Success: true}
 }
 
-func (s *Server) handleGetPlaylist(req *pb.GetPlaylistRequest) *pb.Response {
-	return &pb.Response{Success: false, Error: "not implemented"}
+func (s *Server) handleGetPlaylist(ctx context.Context, req *pb.GetPlaylistRequest) *pb.Response {
+	if s.playlistRepo == nil {
+		return &pb.Response{Success: false, Error: "playlists not available"}
+	}
+
+	playlist, err := s.playlistRepo.FindByID(ctx, domain.PlaylistID(req.PlaylistId))
+	if err != nil {
+		return &pb.Response{Success: false, Error: err.Error()}
+	}
+
+	pbPlaylist := PlaylistToProto(playlist)
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_GetPlaylist{GetPlaylist: &pb.GetPlaylistResponse{Playlist: pbPlaylist}},
+	}
 }
 
-func (s *Server) handleListPlaylists() *pb.Response {
-	return &pb.Response{Success: false, Error: "not implemented"}
+func (s *Server) handleListPlaylists(ctx context.Context) *pb.Response {
+	if s.playlistRepo == nil {
+		return &pb.Response{Success: false, Error: "playlists not available"}
+	}
+
+	var pbPlaylists []*pb.Playlist
+	for playlist := range s.playlistRepo.ListAll(ctx) {
+		pbPlaylists = append(pbPlaylists, PlaylistToProto(playlist))
+	}
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_ListPlaylists{ListPlaylists: &pb.ListPlaylistsResponse{Playlists: pbPlaylists}},
+	}
 }
 
-func (s *Server) handleAddToPlaylist(req *pb.AddToPlaylistRequest) *pb.Response {
-	return &pb.Response{Success: false, Error: "not implemented"}
+func (s *Server) handleAddToPlaylist(ctx context.Context, req *pb.AddToPlaylistRequest) *pb.Response {
+	if s.playlistRepo == nil {
+		return &pb.Response{Success: false, Error: "playlists not available"}
+	}
+
+	playlist, err := s.playlistRepo.FindByID(ctx, domain.PlaylistID(req.PlaylistId))
+	if err != nil {
+		return &pb.Response{Success: false, Error: err.Error()}
+	}
+
+	playlist.AddTrack(domain.TrackID(req.TrackId))
+	if err := s.playlistRepo.Save(ctx, playlist); err != nil {
+		return &pb.Response{Success: false, Error: err.Error()}
+	}
+	return &pb.Response{Success: true}
 }
 
 func (s *Server) handleGetTrack(ctx context.Context, req *pb.GetTrackRequest) *pb.Response {

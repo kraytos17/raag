@@ -21,4 +21,5 @@ var (
 	ErrCodecNotSupported      = errors.New("codec not supported")
 	ErrFileNotAccessible      = errors.New("file not accessible")
 	ErrInvalidTrack           = errors.New("invalid track")
+	ErrZeroDuration           = errors.New("track has zero duration")
 )

@@ -16,10 +16,8 @@ type ScanProgress struct {
 type ScanPhase string
 
 const (
-	ScanPhaseWalking  ScanPhase = "walking"
-	ScanPhaseParsing  ScanPhase = "parsing"
-	ScanPhaseIndexing ScanPhase = "indexing"
-	ScanPhaseDone     ScanPhase = "done"
+	ScanPhaseWalking ScanPhase = "walking"
+	ScanPhaseParsing ScanPhase = "parsing"
 )
 
 type BufferStatusPayload struct {

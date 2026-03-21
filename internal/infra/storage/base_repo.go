@@ -83,12 +83,12 @@ func listAll[T any](
 	}
 }
 
-func collectAll[T any](db *DB, prefix []byte, unmarshal func([]byte) (T, error)) ([]T, error) {
+func collectAll[T any](db *DB, prefix []byte, unmarshal func([]byte) (T, error)) []T {
 	var results []T
 	for item := range listAll(db, prefix, unmarshal) {
 		results = append(results, item)
 	}
-	return results, nil
+	return results
 }
 
 type BaseRepository[T any, ID comparable] struct {

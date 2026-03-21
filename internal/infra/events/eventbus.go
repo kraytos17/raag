@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/p-society/raag/internal/domain"
 )
@@ -124,10 +125,10 @@ func (eb *EventBus) dispatch(sub *subscription) {
 		if !ok {
 			select {
 			case <-sub.rb.notify:
-				continue
-			default:
+			case <-time.After(5 * time.Second):
 				return
 			}
+			continue
 		}
 		func() {
 			defer func() {

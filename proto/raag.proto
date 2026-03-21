@@ -122,6 +122,8 @@ message Response {
     HealthCheckResponse health_check = 7;
     QueueResponse queue = 8;
     GetTrackResponse get_track = 9;
+    GetPlaylistResponse get_playlist = 10;
+    ListPlaylistsResponse list_playlists = 11;
   }
 }
 
