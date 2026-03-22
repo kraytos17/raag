@@ -246,3 +246,58 @@ message GetTrackByPathRequest {
 message GetTrackResponse {
   Track track = 1;
 }
+
+message ChunkRequest {
+  string track_id = 1;
+  int64 offset = 2;
+  int32 length = 3;
+  string codec = 4;
+  int32 bitrate = 5;
+}
+
+message ChunkResponse {
+  string track_id = 1;
+  int64 offset = 2;
+  bytes data = 3;
+  bool last_chunk = 4;
+  int64 total_size = 5;
+  string mime_type = 6;
+}
+
+message SyncRequest {
+  oneof payload {
+    ManifestRequest manifest_request = 1;
+    TrackDetailRequest track_detail_request = 2;
+    CapabilitiesRequest capabilities_request = 3;
+  }
+}
+
+message ManifestRequest {}
+
+message TrackDetailRequest {
+  string track_id = 1;
+}
+
+message CapabilitiesRequest {}
+
+message SyncResponse {
+  oneof payload {
+    LibraryManifest manifest = 1;
+    Track track = 2;
+    PeerCapabilities capabilities = 3;
+    ErrorResponse error = 4;
+  }
+}
+
+message ErrorResponse {
+  string message = 1;
+  ErrorCode code = 2;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_TRACK_NOT_FOUND = 1;
+  ERROR_CODE_PERMISSION_DENIED = 2;
+  ERROR_CODE_RATE_LIMITED = 3;
+  ERROR_CODE_TRANSCODE_FAILED = 4;
+}

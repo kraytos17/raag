@@ -59,7 +59,10 @@ func TestPlaylistRepo_List(t *testing.T) {
 	}
 
 	var result []*domain.Playlist
-	for pl := range repo.ListAll(ctx) {
+	for pl, err := range repo.ListAll(ctx) {
+		if err != nil {
+			continue
+		}
 		result = append(result, pl)
 	}
 	if len(result) != 2 {

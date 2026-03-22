@@ -6,7 +6,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 )
 
@@ -104,35 +103,6 @@ func TestLibraryRepo_ListAll(t *testing.T) {
 	}
 	if len(result) != 2 {
 		t.Errorf("ListAll() returned %d tracks, want 2", len(result))
-	}
-}
-
-func TestLibraryRepo_Search(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	repo, err := NewLibraryRepo(db, nil)
-	if err != nil {
-		t.Fatalf("NewLibraryRepo() error = %v", err)
-	}
-
-	ctx := context.Background()
-	tracks := []*domain.Track{
-		{ID: domain.GenerateTrackID("/music/rock1.mp3"), Path: "/music/rock1.mp3", Title: "Rock Song 1", Artist: "Rock Band", DurationMs: 180000},
-		{ID: domain.GenerateTrackID("/music/jazz1.mp3"), Path: "/music/jazz1.mp3", Title: "Jazz Song 1", Artist: "Jazz Band", DurationMs: 200000},
-	}
-	for _, track := range tracks {
-		if err := repo.Save(ctx, track); err != nil {
-			t.Errorf("Save() error = %v", err)
-		}
-	}
-
-	results, err := repo.Search(ctx, app.SearchQuery{Query: "rock", Limit: 10})
-	if err != nil {
-		t.Errorf("Search() error = %v", err)
-	}
-	if len(results) != 1 {
-		t.Errorf("Search() returned %d tracks, want 1", len(results))
 	}
 }
 

@@ -1,4 +1,4 @@
-package ipc
+package wire
 
 import (
 	"encoding/binary"
@@ -8,9 +8,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const MaxMessageSize = 16 * 1024 * 1024
+const MaxMessageSize uint32 = 16 * 1024 * 1024
 
-var ErrMessageTooLarge = errors.New("ipc: message exceeds max size")
+var ErrMessageTooLarge = errors.New("wire: message exceeds max size")
 
 func WriteMsg(w io.Writer, msg proto.Message) error {
 	size := proto.Size(msg)

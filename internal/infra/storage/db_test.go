@@ -185,14 +185,6 @@ func TestSize(t *testing.T) {
 	_ = db.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte("key"), []byte("value"))
 	})
-
-	size, err := db.Size()
-	if err != nil {
-		t.Errorf("Size() error = %v", err)
-	}
-	if size == 0 {
-		t.Error("Size() should return non-zero size after writes")
-	}
 }
 
 func TestBackup(t *testing.T) {
@@ -272,14 +264,13 @@ func TestDefaultOptions(t *testing.T) {
 	}
 }
 
-func TestDB_StartCompaction(t *testing.T) {
+func TestDB_CompactionStartsOnOpen(t *testing.T) {
 	dir := t.TempDir()
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 
-	db.StartCompaction()
 	if err := db.Close(); err != nil {
 		t.Errorf("Close() error = %v", err)
 	}

@@ -17,13 +17,12 @@ const (
 	PrefixIdxTrigram   = "idx:trigram:"
 	PrefixFileStat     = "meta:filestat:"
 	PrefixPlaylist     = "pl:"
-	PrefixPeer         = "peer:"
+	PrefixPeerInfo     = "peer:info:"
 	PrefixPeerLib      = "peer:lib:"
 	PrefixPeerScore    = "peer:score:"
 	PrefixTrackCover   = "trk:cover:"
 
-	KeyIdentity      = "cfg:identity"
-	KeySchemaVersion = "cfg:schema"
+	KeyIdentity = "cfg:identity"
 )
 
 func TrackKey(id domain.TrackID) []byte {
@@ -31,19 +30,15 @@ func TrackKey(id domain.TrackID) []byte {
 }
 
 func PathKey(path string) []byte {
-	return []byte(PrefixTrackPath + pathHash(path))
-}
-
-func PathStrKey(path string) []byte {
-	return []byte(PrefixTrackPathStr + path)
+	return []byte(PrefixTrackPath + path)
 }
 
 func ArtistIndexKey(artist string, id domain.TrackID) []byte {
-	return []byte(PrefixTrackArtist + normalizeKey(artist) + "\x00" + string(id))
+	return []byte(PrefixTrackArtist + domain.NormalizeKey(artist) + "\x00" + string(id))
 }
 
 func AlbumIndexKey(album string, id domain.TrackID) []byte {
-	return []byte(PrefixTrackAlbum + normalizeKey(album) + "\x00" + string(id))
+	return []byte(PrefixTrackAlbum + domain.NormalizeKey(album) + "\x00" + string(id))
 }
 
 func TermIndexKey(term string, id domain.TrackID) []byte {
@@ -63,7 +58,7 @@ func PlaylistKey(id domain.PlaylistID) []byte {
 }
 
 func PeerKey(id domain.PeerID) []byte {
-	return []byte(PrefixPeer + string(id))
+	return []byte(PrefixPeerInfo + string(id))
 }
 
 func PeerLibraryKey(id domain.PeerID) []byte {
@@ -76,10 +71,6 @@ func PeerScoreKey(id domain.PeerID) []byte {
 
 func CoverArtKey(id domain.TrackID) []byte {
 	return []byte(PrefixTrackCover + string(id))
-}
-
-func normalizeKey(s string) string {
-	return domain.NormalizeKey(s)
 }
 
 func pathHash(path string) string {

@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/p-society/raag/internal/app"
+	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
 
@@ -70,6 +72,9 @@ func (c *ServerConfig) Validate() error {
 	if c.Queue == nil {
 		return errors.New("queue handler is required")
 	}
+	if c.CBRegistry == nil {
+		return errors.New("CBRegistry is required")
+	}
 	return nil
 }
 
@@ -101,7 +106,7 @@ type LibraryRepoHandler interface {
 }
 
 type PeerRepoHandler interface {
-	ListAll(ctx context.Context) iter.Seq[*domain.PeerInfo]
+	ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, error]
 }
 
 type QueueHandler interface {
@@ -206,7 +211,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		}
 
 		var req pb.Request
-		if err := ReadMsg(conn, &req); err != nil {
+		if err := wire.ReadMsg(conn, &req); err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
@@ -217,7 +222,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		if err := conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout)); err != nil {
 			return
 		}
-		if err := WriteMsg(conn, resp); err != nil {
+		if err := wire.WriteMsg(conn, resp); err != nil {
 			slog.Warn("write response failed", "error", err)
 			return
 		}
@@ -226,8 +231,6 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 	switch p := req.Payload.(type) {
-	case *pb.Request_Empty:
-		return s.handleEmpty()
 	case *pb.Request_Play:
 		return s.handlePlay(ctx, p.Play)
 	case *pb.Request_Pause:
@@ -275,10 +278,6 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 	default:
 		return &pb.Response{Success: false, Error: "unknown request type"}
 	}
-}
-
-func (s *Server) handleEmpty() *pb.Response {
-	return &pb.Response{Success: true}
 }
 
 func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Response {
@@ -390,16 +389,7 @@ func (s *Server) handleSearch(ctx context.Context, req *pb.SearchRequest) *pb.Re
 
 	pbTracks := make([]*pb.Track, len(tracks))
 	for i, t := range tracks {
-		pbTracks[i] = &pb.Track{
-			Id:         string(t.ID),
-			Path:       t.Path,
-			Title:      t.Title,
-			Artist:     t.Artist,
-			Album:      t.Album,
-			DurationMs: t.DurationMs,
-			AddedAt:    t.AddedAt,
-			ModifiedAt: t.ModifiedAt,
-		}
+		pbTracks[i] = convert.TrackToProto(t)
 	}
 	return &pb.Response{
 		Success: true,
@@ -432,7 +422,10 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 	}
 
 	var pbPeers []*pb.Peer
-	for p := range s.peerRepo.ListAll(ctx) {
+	for p, err := range s.peerRepo.ListAll(ctx) {
+		if err != nil {
+			continue
+		}
 		pbPeers = append(pbPeers, &pb.Peer{Id: string(p.ID), Addrs: p.Addrs})
 	}
 	return &pb.Response{
@@ -450,12 +443,7 @@ func (s *Server) handleStatus() *pb.Response {
 
 	var pbTrack *pb.Track
 	if currentTrack != nil {
-		pbTrack = &pb.Track{
-			Id:     string(currentTrack.ID),
-			Title:  currentTrack.Title,
-			Artist: currentTrack.Artist,
-			Album:  currentTrack.Album,
-		}
+		pbTrack = convert.TrackToProto(currentTrack)
 	}
 	return &pb.Response{
 		Success: true,
@@ -501,7 +489,7 @@ func (s *Server) handleGetPlaylist(ctx context.Context, req *pb.GetPlaylistReque
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
 
-	pbPlaylist := PlaylistToProto(playlist)
+	pbPlaylist := convert.PlaylistToProto(playlist)
 	return &pb.Response{
 		Success: true,
 		Payload: &pb.Response_GetPlaylist{GetPlaylist: &pb.GetPlaylistResponse{Playlist: pbPlaylist}},
@@ -514,8 +502,11 @@ func (s *Server) handleListPlaylists(ctx context.Context) *pb.Response {
 	}
 
 	var pbPlaylists []*pb.Playlist
-	for playlist := range s.playlistRepo.ListAll(ctx) {
-		pbPlaylists = append(pbPlaylists, PlaylistToProto(playlist))
+	for playlist, err := range s.playlistRepo.ListAll(ctx) {
+		if err != nil {
+			continue
+		}
+		pbPlaylists = append(pbPlaylists, convert.PlaylistToProto(playlist))
 	}
 	return &pb.Response{
 		Success: true,
@@ -546,16 +537,7 @@ func (s *Server) handleGetTrack(ctx context.Context, req *pb.GetTrackRequest) *p
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
 
-	pbTrack := &pb.Track{
-		Id:         string(track.ID),
-		Path:       track.Path,
-		Title:      track.Title,
-		Artist:     track.Artist,
-		Album:      track.Album,
-		DurationMs: track.DurationMs,
-		AddedAt:    track.AddedAt,
-		ModifiedAt: track.ModifiedAt,
-	}
+	pbTrack := convert.TrackToProto(track)
 	return &pb.Response{
 		Success: true,
 		Payload: &pb.Response_GetTrack{GetTrack: &pb.GetTrackResponse{Track: pbTrack}},
@@ -568,16 +550,7 @@ func (s *Server) handleGetTrackByPath(ctx context.Context, req *pb.GetTrackByPat
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
 
-	pbTrack := &pb.Track{
-		Id:         string(track.ID),
-		Path:       track.Path,
-		Title:      track.Title,
-		Artist:     track.Artist,
-		Album:      track.Album,
-		DurationMs: track.DurationMs,
-		AddedAt:    track.AddedAt,
-		ModifiedAt: track.ModifiedAt,
-	}
+	pbTrack := convert.TrackToProto(track)
 	return &pb.Response{
 		Success: true,
 		Payload: &pb.Response_GetTrack{GetTrack: &pb.GetTrackResponse{Track: pbTrack}},

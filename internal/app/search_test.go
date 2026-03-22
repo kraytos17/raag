@@ -133,7 +133,8 @@ func TestSearchService_CalculateMatchScore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := svc.calculateMatchScore(tt.query, tt.track)
+			normalizedQuery := domain.Normalize(tt.query)
+			got := svc.calculateMatchScore(normalizedQuery, tt.track)
 			if math.Abs(got-tt.wantScore) > 0.001 {
 				t.Errorf("calculateMatchScore() = %v, want %v", got, tt.wantScore)
 			}

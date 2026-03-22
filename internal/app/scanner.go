@@ -1,10 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -16,108 +21,50 @@ import (
 
 	"github.com/dhowden/tag"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/hashing"
+	"golang.org/x/image/draw"
 	"golang.org/x/sync/errgroup"
 )
 
 var AudioExtensions = []string{".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma"}
 
-type Scanner struct {
-	paths         []string
-	supportedExts map[string]bool
-	onProgress    func(ScanProgress)
-	onTrack       func(*domain.Track)
-	onError       func(error)
+type ScanProgress struct {
+	Scanned     int
+	Total       int
+	CurrentFile string
+	Phase       ScanPhase
 }
 
-func NewScanner(paths []string) *Scanner {
-	exts := make(map[string]bool)
-	for _, ext := range AudioExtensions {
-		exts[ext] = true
-	}
-	return &Scanner{
-		paths:         paths,
-		supportedExts: exts,
-	}
-}
+type ScanPhase string
 
-func (s *Scanner) OnProgress(fn func(ScanProgress)) {
-	s.onProgress = fn
-}
+const (
+	ScanPhaseWalking ScanPhase = "walking"
+	ScanPhaseParsing ScanPhase = "parsing"
+)
 
-func (s *Scanner) OnTrack(fn func(*domain.Track)) {
-	s.onTrack = fn
-}
-
-func (s *Scanner) OnError(fn func(error)) {
-	s.onError = fn
-}
-
-func (s *Scanner) WalkDir(ctx context.Context, dirPath string) ([]string, error) {
-	var files []string
-	err := filepath.WalkDir(dirPath, func(walkPath string, d fs.DirEntry, err error) error {
+func WalkAudioFiles(ctx context.Context, dirPath string, yield func(string) bool) error {
+	return filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return ctx.Err()
-		default:
 		}
-
-		if d.IsDir() {
-			return nil
-		}
-
-		ext := strings.ToLower(filepath.Ext(walkPath))
-		if s.supportedExts[ext] {
-			files = append(files, walkPath)
+		if !d.IsDir() && isAudioExt(filepath.Ext(path)) {
+			if !yield(path) {
+				return fs.SkipAll
+			}
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return files, nil
 }
 
-func (s *Scanner) Scan(ctx context.Context) ([]string, error) {
-	var files []string
-	for _, path := range s.paths {
-		if err := filepath.WalkDir(path, func(walkPath string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			if d.IsDir() {
-				return nil
-			}
-
-			ext := strings.ToLower(filepath.Ext(walkPath))
-			if s.supportedExts[ext] {
-				files = append(files, walkPath)
-				if s.onProgress != nil {
-					s.onProgress(ScanProgress{
-						Phase:       ScanPhaseWalking,
-						Total:       len(files),
-						CurrentFile: walkPath,
-					})
-				}
-			}
-			return nil
-		}); err != nil {
-			if s.onError != nil {
-				s.onError(err)
-			}
-		}
+func isAudioExt(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma":
+		return true
 	}
-	return files, nil
+	return false
 }
 
 type LibraryScanner struct {
@@ -126,8 +73,8 @@ type LibraryScanner struct {
 	index       SearchIndex
 	bus         domain.EventBus
 	paths       []string
-	scanner     *Scanner
 	onProgress  func(ScanProgress)
+	hashWorker  *hashing.HashWorker
 }
 
 func NewLibraryScanner(
@@ -143,13 +90,43 @@ func NewLibraryScanner(
 		index:       index,
 		bus:         bus,
 		paths:       paths,
-		scanner:     NewScanner(paths),
 	}
+}
+
+func (s *LibraryScanner) EnableHashing(workers int) {
+	s.hashWorker = hashing.NewHashWorker(workers)
+	s.hashWorker.Start()
+}
+
+func (s *LibraryScanner) HashContent(path string) string {
+	if s.hashWorker == nil {
+		return ""
+	}
+	resultCh := s.hashWorker.Submit(path)
+	return <-resultCh
+}
+
+func (s *LibraryScanner) Close() error {
+	if s.hashWorker != nil {
+		s.hashWorker.Close()
+	}
+	return nil
+}
+
+func (s *LibraryScanner) Name() string {
+	return "library-scanner"
+}
+
+func (s *LibraryScanner) Start(_ context.Context) error {
+	return nil
+}
+
+func (s *LibraryScanner) Stop(_ context.Context) error {
+	return s.Close()
 }
 
 func (s *LibraryScanner) OnProgress(fn func(ScanProgress)) {
 	s.onProgress = fn
-	s.scanner.OnProgress(fn)
 }
 
 func (s *LibraryScanner) LibraryRepo() LibraryRepository {
@@ -161,7 +138,7 @@ func (s *LibraryScanner) Index() SearchIndex {
 }
 
 func (s *LibraryScanner) AddFile(ctx context.Context, path string) error {
-	track, err := s.processFile(path)
+	track, err := s.parseFile(path)
 	if err != nil {
 		return err
 	}
@@ -171,7 +148,7 @@ func (s *LibraryScanner) AddFile(ctx context.Context, path string) error {
 func (s *LibraryScanner) RemoveFile(ctx context.Context, path string) error {
 	track, err := s.libraryRepo.FindByPath(ctx, path)
 	if err != nil {
-		if err == domain.ErrTrackNotFound {
+		if errors.Is(err, domain.ErrTrackNotFound) {
 			return nil
 		}
 		return err
@@ -231,8 +208,11 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modified int, removed int, err error) {
 	currentStats := make(map[string]*domain.FileStat)
 	for _, scanPath := range s.paths {
-		files, err := s.scanner.WalkDir(ctx, scanPath)
-		if err != nil {
+		var files []string
+		if err := WalkAudioFiles(ctx, scanPath, func(path string) bool {
+			files = append(files, path)
+			return true
+		}); err != nil {
 			slog.Warn("failed to walk directory", "path", scanPath, "error", err)
 			continue
 		}
@@ -262,7 +242,7 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 	for path, current := range currentStats {
 		previous, exists := prevStats[path]
 		if !exists {
-			track, err := s.processFile(path)
+			track, err := s.parseFile(path)
 			if err != nil {
 				slog.Warn("failed to parse new file", "path", path, "error", err)
 				continue
@@ -273,7 +253,7 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 			}
 			added++
 		} else if current.Changed(previous) {
-			track, err := s.processFile(path)
+			track, err := s.parseFile(path)
 			if err != nil {
 				slog.Warn("failed to parse modified file", "path", path, "error", err)
 				continue
@@ -312,8 +292,11 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 	var added int
 	var removed int
 
-	files, err := s.scanner.WalkDir(ctx, dirPath)
-	if err != nil {
+	var files []string
+	if err := WalkAudioFiles(ctx, dirPath, func(path string) bool {
+		files = append(files, path)
+		return true
+	}); err != nil {
 		return 0, 0, 0, fmt.Errorf("walk directory: %w", err)
 	}
 
@@ -351,7 +334,7 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 				})
 			}
 
-			track, err := s.processFile(file)
+			track, err := s.parseFile(file)
 			if err != nil {
 				slog.Warn("failed to parse file", "file", file, "error", err)
 				return nil
@@ -376,11 +359,34 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 		added++
 	}
 	for path := range existingPaths {
-		if strings.HasPrefix(path, dirPath) && !foundPaths[path] {
-			removed++
+		if !strings.HasPrefix(path, dirPath) || foundPaths[path] {
+			continue
 		}
+
+		track, err := s.libraryRepo.FindByPath(ctx, path)
+		if err != nil {
+			slog.Warn("scan: orphaned path not in repo", "path", path, "error", err)
+			continue
+		}
+		if err := s.libraryRepo.Delete(ctx, track.ID); err != nil {
+			slog.Warn("scan: failed to delete orphaned track", "path", path, "error", err)
+			continue
+		}
+		if err := s.index.Delete(ctx, track.ID); err != nil {
+			slog.Warn("scan: failed to remove from index", "id", track.ID, "error", err)
+		}
+		removed++
 	}
 	return scanned, added, removed, nil
+}
+
+func computeSyncHash(file *os.File) string {
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		slog.Warn("failed to hash file content", "error", err)
+		return ""
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
@@ -423,22 +429,30 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		slog.Warn("failed to seek file for hashing", "path", path, "error", err)
-	} else {
-		hash := sha256.New()
-		if _, err := io.Copy(hash, file); err != nil {
-			slog.Warn("failed to hash file content", "path", path, "error", err)
-		} else {
-			track.ContentHash = hex.EncodeToString(hash.Sum(nil))
+	} else if s.hashWorker != nil {
+		hashTimer := time.NewTimer(5 * time.Second)
+		defer hashTimer.Stop()
+
+		resultCh := s.hashWorker.Submit(path)
+		select {
+		case hash := <-resultCh:
+			if !hashTimer.Stop() {
+				<-hashTimer.C
+			}
+			track.ContentHash = hash
+		case <-hashTimer.C:
+			slog.Warn("hash worker timed out, using sync fallback", "path", path)
+			if _, err := file.Seek(0, io.SeekStart); err == nil {
+				track.ContentHash = computeSyncHash(file)
+			}
 		}
+	} else {
+		track.ContentHash = computeSyncHash(file)
 	}
 	if cover := extractCoverArt(metadata); len(cover) > 0 {
 		track.CoverArt = cover
 	}
 	return track, nil
-}
-
-func (s *LibraryScanner) processFile(path string) (*domain.Track, error) {
-	return s.parseFile(path)
 }
 
 func (s *LibraryScanner) indexTrack(ctx context.Context, track *domain.Track) error {
@@ -526,8 +540,36 @@ func extractCoverArt(m tag.Metadata) []byte {
 }
 
 func resizeCoverArt(data []byte) []byte {
-	slog.Warn("cover art exceeds 256KB, discarding", "size", len(data))
-	return nil
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		slog.Warn("cover art decode failed, discarding", "error", err)
+		return nil
+	}
+
+	bounds := img.Bounds()
+	const maxDim = 500
+	scale := 1.0
+	if bounds.Dx() > maxDim || bounds.Dy() > maxDim {
+		sx := float64(maxDim) / float64(bounds.Dx())
+		sy := float64(maxDim) / float64(bounds.Dy())
+		if sx < sy {
+			scale = sx
+		} else {
+			scale = sy
+		}
+	}
+
+	newW := int(float64(bounds.Dx()) * scale)
+	newH := int(float64(bounds.Dy()) * scale)
+	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
+	draw.BiLinear.Scale(dst, dst.Bounds(), img, bounds, draw.Over, nil)
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 80}); err != nil {
+		slog.Warn("cover art encode failed", "error", err)
+		return nil
+	}
+	return buf.Bytes()
 }
 
 func (s *LibraryScanner) getFileStat(path string) (*domain.FileStat, error) {
@@ -535,7 +577,6 @@ func (s *LibraryScanner) getFileStat(path string) (*domain.FileStat, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &domain.FileStat{
 		Path:  path,
 		Mtime: stat.ModTime().Unix(),

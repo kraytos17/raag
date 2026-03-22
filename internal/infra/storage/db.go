@@ -1,11 +1,9 @@
 package db
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -34,12 +32,11 @@ func DefaultOptions(dir string) Options {
 }
 
 type DB struct {
-	db     *badger.DB
-	path   string
-	opts   Options
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	db   *badger.DB
+	path string
+	opts Options
+	stop chan struct{}
+	wg   sync.WaitGroup
 }
 
 func Open(dir string, opts Options) (*DB, error) {
@@ -74,18 +71,18 @@ func Open(dir string, opts Options) (*DB, error) {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	return &DB{
-		db:     db,
-		path:   dir,
-		opts:   opts,
-		ctx:    ctx,
-		cancel: cancel,
-	}, nil
+	d := &DB{
+		db:   db,
+		path: dir,
+		opts: opts,
+		stop: make(chan struct{}),
+	}
+	d.startCompaction()
+	return d, nil
 }
 
 func (d *DB) Close() error {
-	d.cancel()
+	close(d.stop)
 	d.wg.Wait()
 	return d.db.Close()
 }
@@ -106,17 +103,17 @@ func (d *DB) Path() string {
 	return d.path
 }
 
-func (d *DB) StartCompaction() {
+func (d *DB) startCompaction() {
 	d.wg.Go(func() {
 		ticker := time.NewTicker(d.opts.GCInterval)
 		defer ticker.Stop()
 
 		for {
 			select {
-			case <-d.ctx.Done():
+			case <-d.stop:
 				return
 			case <-ticker.C:
-				if err := d.RunValueLogGC(0.5); err != nil {
+				if err := d.runValueLogGC(0.5); err != nil {
 					slog.Warn("value log GC failed", "error", err)
 				}
 			}
@@ -124,8 +121,13 @@ func (d *DB) StartCompaction() {
 	})
 }
 
-func (d *DB) RunValueLogGC(discardRatio float64) error {
+func (d *DB) runValueLogGC(discardRatio float64) error {
+	deadline := time.Now().Add(2 * time.Minute)
 	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("value log GC timed out after 2 minutes")
+		}
+
 		err := d.db.RunValueLogGC(discardRatio)
 		if err == badger.ErrNoRewrite {
 			return nil
@@ -136,18 +138,9 @@ func (d *DB) RunValueLogGC(discardRatio float64) error {
 	}
 }
 
-func (d *DB) Size() (int64, error) {
-	var size int64
-	err := filepath.Walk(d.path, func(_ string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-	return size, err
+func (d *DB) Size() (int64, int64) {
+	lsm, vlog := d.db.Size()
+	return lsm, vlog
 }
 
 func (d *DB) Backup(writeFn func([]byte) error) error {

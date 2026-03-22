@@ -1,7 +1,7 @@
 package testutil
 
 import (
-	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -66,18 +66,9 @@ func AssertError(t *testing.T, err error, want error) {
 		t.Errorf("expected error %v, got nil", want)
 		return
 	}
-	if err != want && !errorsIs(err, want) {
+	if !errors.Is(err, want) {
 		t.Errorf("error = %v, want %v", err, want)
 	}
-}
-
-func errorsIs(err, target error) bool {
-	if target == nil {
-		return err == nil
-	}
-
-	isNil := err == nil
-	return isNil || err.Error() == target.Error()
 }
 
 func AssertEqual[T comparable](t *testing.T, got, want T, msg string) {
@@ -106,9 +97,4 @@ func AssertFalse(t *testing.T, got bool, msg string) {
 	if got {
 		t.Errorf("%s: got %v, want false", msg, got)
 	}
-}
-
-func Context(t *testing.T) context.Context {
-	t.Helper()
-	return context.Background()
 }

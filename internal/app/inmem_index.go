@@ -100,7 +100,7 @@ func (idx *inmemoryIndex) Search(ctx context.Context, query string, limit int) (
 	}
 
 	slices.SortFunc(ids, func(a, b domain.TrackID) int {
-		return scoreMap[b] - scoreMap[a]
+		return cmp.Compare(scoreMap[b], scoreMap[a])
 	})
 
 	if limit > 0 && len(ids) > limit {

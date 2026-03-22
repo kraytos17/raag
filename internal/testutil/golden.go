@@ -1,9 +1,9 @@
 package testutil
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -54,7 +54,7 @@ func (g *GoldenFile) UpdateString(t *testing.T, data string) {
 func (g *GoldenFile) Compare(t *testing.T, got []byte) {
 	t.Helper()
 	want := g.Read(t)
-	if !strings.EqualFold(string(got), string(want)) {
+	if !bytes.Equal(got, want) {
 		t.Errorf("golden file mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }

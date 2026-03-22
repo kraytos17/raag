@@ -10,7 +10,7 @@ import (
 )
 
 type Queue struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	tracks  []*domain.Track
 	pos     int
 	shuffle bool
@@ -26,8 +26,8 @@ func NewQueue() *Queue {
 }
 
 func (q *Queue) Peek() *domain.Track {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 
 	if len(q.tracks) == 0 {
 		return nil
@@ -93,8 +93,8 @@ func (q *Queue) Previous() *domain.Track {
 }
 
 func (q *Queue) Current() *domain.Track {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 
 	if q.pos < 0 || q.pos >= len(q.tracks) {
 		return nil
@@ -103,14 +103,14 @@ func (q *Queue) Current() *domain.Track {
 }
 
 func (q *Queue) Length() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 	return len(q.tracks)
 }
 
 func (q *Queue) Position() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 	return q.pos
 }
 
@@ -165,7 +165,8 @@ func (q *Queue) Clear() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.tracks = make([]*domain.Track, 0)
+	clear(q.tracks)
+	q.tracks = q.tracks[:0]
 	q.pos = -1
 }
 
@@ -176,8 +177,8 @@ func (q *Queue) SetRepeat(mode app.RepeatMode) {
 }
 
 func (q *Queue) GetRepeat() app.RepeatMode {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 	return q.repeat
 }
 
@@ -188,14 +189,14 @@ func (q *Queue) ToggleShuffle() {
 }
 
 func (q *Queue) GetShuffle() bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 	return q.shuffle
 }
 
 func (q *Queue) Tracks() []*domain.Track {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 
 	result := make([]*domain.Track, len(q.tracks))
 	copy(result, q.tracks)

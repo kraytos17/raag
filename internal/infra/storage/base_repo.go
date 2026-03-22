@@ -25,39 +25,34 @@ func view[T any](
 	key []byte,
 	unmarshal UnmarshalFunc[T],
 ) (T, error) {
-	var zero T
+	var zeroVal T
 	err := db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
 		if err != nil {
 			return err
 		}
-
-		data, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-
-		val, err := unmarshal(data)
-		if err != nil {
-			return err
-		}
-
-		zero = val
-		return nil
+		return item.Value(func(data []byte) error {
+			val, err := unmarshal(data)
+			if err != nil {
+				return err
+			}
+			zeroVal = val
+			return nil
+		})
 	})
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		return zero, errNotFound
+		return zeroVal, errNotFound
 	}
-	return zero, err
+	return zeroVal, err
 }
 
 func listAll[T any](
 	db *DB,
 	prefix []byte,
 	unmarshal func([]byte) (T, error),
-) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		_ = db.View(func(txn *badger.Txn) error {
+) iter.Seq2[T, error] {
+	return func(yield func(T, error) bool) {
+		err := db.View(func(txn *badger.Txn) error {
 			iter := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer iter.Close()
 
@@ -73,19 +68,26 @@ func listAll[T any](
 					iter.Next()
 					continue
 				}
-				if !yield(val) {
+				if !yield(val, nil) {
 					return nil
 				}
 				iter.Next()
 			}
 			return nil
 		})
+		if err != nil {
+			var zeroVal T
+			yield(zeroVal, err)
+		}
 	}
 }
 
 func collectAll[T any](db *DB, prefix []byte, unmarshal func([]byte) (T, error)) []T {
 	var results []T
-	for item := range listAll(db, prefix, unmarshal) {
+	for item, err := range listAll(db, prefix, unmarshal) {
+		if err != nil {
+			continue
+		}
 		results = append(results, item)
 	}
 	return results
@@ -129,10 +131,10 @@ func (r *BaseRepository[T, ID]) Save(ctx context.Context, id ID, entity T) error
 }
 
 func (r *BaseRepository[T, ID]) FindByID(ctx context.Context, id ID) (T, error) {
-	var zero T
+	var zeroVal T
 	val, err := view(r.DB, r.keyByID(id), r.unmarshal)
 	if errors.Is(err, errNotFound) {
-		return zero, r.notFoundErr()
+		return zeroVal, r.notFoundErr()
 	}
 	return val, err
 }
@@ -143,6 +145,6 @@ func (r *BaseRepository[T, ID]) Delete(ctx context.Context, id ID) error {
 	})
 }
 
-func (r *BaseRepository[T, ID]) ListAll(ctx context.Context) iter.Seq[T] {
+func (r *BaseRepository[T, ID]) ListAll(ctx context.Context) iter.Seq2[T, error] {
 	return listAll(r.DB, r.prefix, r.unmarshal)
 }

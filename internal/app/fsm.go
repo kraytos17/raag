@@ -8,6 +8,49 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
+type FSM[S ~string, E ~string] struct {
+	mu          sync.Mutex
+	state       S
+	transitions map[S]map[E]S
+}
+
+func NewFSM[S ~string, E ~string](initial S, transitions map[S]map[E]S) *FSM[S, E] {
+	return &FSM[S, E]{
+		state:       initial,
+		transitions: transitions,
+	}
+}
+
+func (f *FSM[S, E]) State() S {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.state
+}
+
+func (f *FSM[S, E]) Send(ctx context.Context, event E) error {
+	f.mu.Lock()
+	prev := f.state
+	next, ok := f.transitions[prev][event]
+	if !ok {
+		f.mu.Unlock()
+		slog.Debug("FSM: invalid transition", "event", event, "from", prev)
+		return nil
+	}
+
+	f.state = next
+	slog.Debug("FSM transition", "from", prev, "to", next, "event", event)
+	f.mu.Unlock()
+
+	return nil
+}
+
+func (f *FSM[S, E]) CanTransition(event E) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.transitions[f.state][event]
+	return ok
+}
+
 type PlaybackEvent string
 
 const (
@@ -35,43 +78,7 @@ const (
 	StateError     PlaybackState = "error"
 )
 
-type PlaybackFSM struct {
-	mu    sync.Mutex
-	state PlaybackState
-	bus   domain.EventBus
-}
-
-func NewPlaybackFSM(bus domain.EventBus) *PlaybackFSM {
-	return &PlaybackFSM{
-		state: StateIdle,
-		bus:   bus,
-	}
-}
-
-func (p *PlaybackFSM) CurrentState() PlaybackState {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.state
-}
-
-func (p *PlaybackFSM) Send(ctx context.Context, event PlaybackEvent) error {
-	p.mu.Lock()
-	prev := p.state
-	next, ok := transitions[prev][event]
-	if !ok {
-		p.mu.Unlock()
-		slog.Warn("playback FSM: invalid transition", "event", event, "from", prev)
-		return nil
-	}
-
-	p.state = next
-	slog.Debug("playback FSM transition", "from", prev, "to", next, "event", event)
-	p.mu.Unlock()
-
-	return nil
-}
-
-var transitions = map[PlaybackState]map[PlaybackEvent]PlaybackState{
+var playbackTransitions = map[PlaybackState]map[PlaybackEvent]PlaybackState{
 	StateIdle:      {EventPlay: StateBuffering},
 	StateBuffering: {EventBufferReady: StatePlaying, EventBufferFail: StateError},
 	StatePlaying:   {EventPause: StatePaused, EventEOF: StateIdle, EventSeek: StateSeeking, EventUnderrun: StateBuffering},
@@ -80,15 +87,22 @@ var transitions = map[PlaybackState]map[PlaybackEvent]PlaybackState{
 	StateError:     {EventRetry: StateBuffering, EventStop: StateIdle},
 }
 
-func (p *PlaybackFSM) CanTransition(event PlaybackEvent) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	_, ok := transitions[p.state][event]
-	return ok
+type PlaybackFSM struct {
+	*FSM[PlaybackState, PlaybackEvent]
+	bus domain.EventBus
+}
+
+func NewPlaybackFSM(bus domain.EventBus) *PlaybackFSM {
+	return &PlaybackFSM{
+		FSM: NewFSM(StateIdle, playbackTransitions),
+		bus: bus,
+	}
+}
+
+func (p *PlaybackFSM) CurrentState() PlaybackState {
+	return p.FSM.State()
 }
 
 func (p *PlaybackFSM) State() PlayerState {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return PlayerState(p.state)
+	return PlayerState(p.FSM.State())
 }

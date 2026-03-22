@@ -72,26 +72,18 @@ func (r *peerRepo) GetLibraryManifest(ctx context.Context, id domain.PeerID) (*d
 	return manifest, err
 }
 
-func (r *peerRepo) ListAll(ctx context.Context) iter.Seq[*domain.PeerInfo] {
-	return func(yield func(*domain.PeerInfo) bool) {
-		_ = r.db.View(func(txn *badger.Txn) error {
+func (r *peerRepo) ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, error] {
+	return func(yield func(*domain.PeerInfo, error) bool) {
+		err := r.db.View(func(txn *badger.Txn) error {
 			iter := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer iter.Close()
 
-			prefix := []byte(PrefixPeer)
+			prefix := []byte(PrefixPeerInfo)
 			iter.Seek(prefix)
 			for iter.ValidForPrefix(prefix) {
 				item := iter.Item()
 				key := item.Key()
 				keyStr := string(key)
-				if len(keyStr) >= len(PrefixPeerLib) && keyStr[:len(PrefixPeerLib)] == PrefixPeerLib {
-					iter.Next()
-					continue
-				}
-				if len(keyStr) >= len(PrefixPeerScore) && keyStr[:len(PrefixPeerScore)] == PrefixPeerScore {
-					iter.Next()
-					continue
-				}
 
 				data, err := item.ValueCopy(nil)
 				if err != nil {
@@ -103,12 +95,25 @@ func (r *peerRepo) ListAll(ctx context.Context) iter.Seq[*domain.PeerInfo] {
 					iter.Next()
 					continue
 				}
-				if !yield(p) {
+
+				peerID := domain.PeerID(keyStr[len(PrefixPeerInfo):])
+				scoreItem, err := txn.Get(PeerScoreKey(peerID))
+				if err == nil && scoreItem != nil {
+					scoreData, _ := scoreItem.ValueCopy(nil)
+					score, _ := ipc.UnmarshalPeerScore(scoreData)
+					if score != nil {
+						p.Score = score
+					}
+				}
+				if !yield(p, nil) {
 					return nil
 				}
 				iter.Next()
 			}
 			return nil
 		})
+		if err != nil {
+			yield(nil, err)
+		}
 	}
 }

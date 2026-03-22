@@ -21,6 +21,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ErrorCode int32
+
+const (
+	ErrorCode_ERROR_CODE_UNSPECIFIED       ErrorCode = 0
+	ErrorCode_ERROR_CODE_TRACK_NOT_FOUND   ErrorCode = 1
+	ErrorCode_ERROR_CODE_PERMISSION_DENIED ErrorCode = 2
+	ErrorCode_ERROR_CODE_RATE_LIMITED      ErrorCode = 3
+	ErrorCode_ERROR_CODE_TRANSCODE_FAILED  ErrorCode = 4
+)
+
+// Enum value maps for ErrorCode.
+var (
+	ErrorCode_name = map[int32]string{
+		0: "ERROR_CODE_UNSPECIFIED",
+		1: "ERROR_CODE_TRACK_NOT_FOUND",
+		2: "ERROR_CODE_PERMISSION_DENIED",
+		3: "ERROR_CODE_RATE_LIMITED",
+		4: "ERROR_CODE_TRANSCODE_FAILED",
+	}
+	ErrorCode_value = map[string]int32{
+		"ERROR_CODE_UNSPECIFIED":       0,
+		"ERROR_CODE_TRACK_NOT_FOUND":   1,
+		"ERROR_CODE_PERMISSION_DENIED": 2,
+		"ERROR_CODE_RATE_LIMITED":      3,
+		"ERROR_CODE_TRANSCODE_FAILED":  4,
+	}
+)
+
+func (x ErrorCode) Enum() *ErrorCode {
+	p := new(ErrorCode)
+	*p = x
+	return p
+}
+
+func (x ErrorCode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ErrorCode) Descriptor() protoreflect.EnumDescriptor {
+	return file_raag_proto_enumTypes[0].Descriptor()
+}
+
+func (ErrorCode) Type() protoreflect.EnumType {
+	return &file_raag_proto_enumTypes[0]
+}
+
+func (x ErrorCode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ErrorCode.Descriptor instead.
+func (ErrorCode) EnumDescriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{0}
+}
+
 type Track struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -2797,6 +2852,546 @@ func (x *GetTrackResponse) GetTrack() *Track {
 	return nil
 }
 
+type ChunkRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TrackId       string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
+	Offset        int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`   // byte offset in track file
+	Length        int32                  `protobuf:"varint,3,opt,name=length,proto3" json:"length,omitempty"`   // bytes requested (max 256KB)
+	Codec         string                 `protobuf:"bytes,4,opt,name=codec,proto3" json:"codec,omitempty"`      // desired output codec (optional, for transcoding)
+	Bitrate       int32                  `protobuf:"varint,5,opt,name=bitrate,proto3" json:"bitrate,omitempty"` // desired bitrate in kbps (optional)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChunkRequest) Reset() {
+	*x = ChunkRequest{}
+	mi := &file_raag_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkRequest) ProtoMessage() {}
+
+func (x *ChunkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkRequest.ProtoReflect.Descriptor instead.
+func (*ChunkRequest) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *ChunkRequest) GetTrackId() string {
+	if x != nil {
+		return x.TrackId
+	}
+	return ""
+}
+
+func (x *ChunkRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ChunkRequest) GetLength() int32 {
+	if x != nil {
+		return x.Length
+	}
+	return 0
+}
+
+func (x *ChunkRequest) GetCodec() string {
+	if x != nil {
+		return x.Codec
+	}
+	return ""
+}
+
+func (x *ChunkRequest) GetBitrate() int32 {
+	if x != nil {
+		return x.Bitrate
+	}
+	return 0
+}
+
+type ChunkResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TrackId       string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
+	Offset        int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	LastChunk     bool                   `protobuf:"varint,4,opt,name=last_chunk,json=lastChunk,proto3" json:"last_chunk,omitempty"` // true if this is the final chunk of the file
+	TotalSize     int64                  `protobuf:"varint,5,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"` // total track size in bytes (set on first chunk)
+	MimeType      string                 `protobuf:"bytes,6,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`     // actual MIME type of returned data
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChunkResponse) Reset() {
+	*x = ChunkResponse{}
+	mi := &file_raag_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkResponse) ProtoMessage() {}
+
+func (x *ChunkResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkResponse.ProtoReflect.Descriptor instead.
+func (*ChunkResponse) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *ChunkResponse) GetTrackId() string {
+	if x != nil {
+		return x.TrackId
+	}
+	return ""
+}
+
+func (x *ChunkResponse) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ChunkResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *ChunkResponse) GetLastChunk() bool {
+	if x != nil {
+		return x.LastChunk
+	}
+	return false
+}
+
+func (x *ChunkResponse) GetTotalSize() int64 {
+	if x != nil {
+		return x.TotalSize
+	}
+	return 0
+}
+
+func (x *ChunkResponse) GetMimeType() string {
+	if x != nil {
+		return x.MimeType
+	}
+	return ""
+}
+
+type SyncRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*SyncRequest_ManifestRequest
+	//	*SyncRequest_TrackDetailRequest
+	//	*SyncRequest_CapabilitiesRequest
+	Payload       isSyncRequest_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncRequest) Reset() {
+	*x = SyncRequest{}
+	mi := &file_raag_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncRequest) ProtoMessage() {}
+
+func (x *SyncRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncRequest.ProtoReflect.Descriptor instead.
+func (*SyncRequest) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *SyncRequest) GetPayload() isSyncRequest_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *SyncRequest) GetManifestRequest() *ManifestRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*SyncRequest_ManifestRequest); ok {
+			return x.ManifestRequest
+		}
+	}
+	return nil
+}
+
+func (x *SyncRequest) GetTrackDetailRequest() *TrackDetailRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*SyncRequest_TrackDetailRequest); ok {
+			return x.TrackDetailRequest
+		}
+	}
+	return nil
+}
+
+func (x *SyncRequest) GetCapabilitiesRequest() *CapabilitiesRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*SyncRequest_CapabilitiesRequest); ok {
+			return x.CapabilitiesRequest
+		}
+	}
+	return nil
+}
+
+type isSyncRequest_Payload interface {
+	isSyncRequest_Payload()
+}
+
+type SyncRequest_ManifestRequest struct {
+	ManifestRequest *ManifestRequest `protobuf:"bytes,1,opt,name=manifest_request,json=manifestRequest,proto3,oneof"`
+}
+
+type SyncRequest_TrackDetailRequest struct {
+	TrackDetailRequest *TrackDetailRequest `protobuf:"bytes,2,opt,name=track_detail_request,json=trackDetailRequest,proto3,oneof"`
+}
+
+type SyncRequest_CapabilitiesRequest struct {
+	CapabilitiesRequest *CapabilitiesRequest `protobuf:"bytes,3,opt,name=capabilities_request,json=capabilitiesRequest,proto3,oneof"`
+}
+
+func (*SyncRequest_ManifestRequest) isSyncRequest_Payload() {}
+
+func (*SyncRequest_TrackDetailRequest) isSyncRequest_Payload() {}
+
+func (*SyncRequest_CapabilitiesRequest) isSyncRequest_Payload() {}
+
+type ManifestRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ManifestRequest) Reset() {
+	*x = ManifestRequest{}
+	mi := &file_raag_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ManifestRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ManifestRequest) ProtoMessage() {}
+
+func (x *ManifestRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ManifestRequest.ProtoReflect.Descriptor instead.
+func (*ManifestRequest) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{44}
+}
+
+type TrackDetailRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TrackId       string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrackDetailRequest) Reset() {
+	*x = TrackDetailRequest{}
+	mi := &file_raag_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrackDetailRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrackDetailRequest) ProtoMessage() {}
+
+func (x *TrackDetailRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrackDetailRequest.ProtoReflect.Descriptor instead.
+func (*TrackDetailRequest) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *TrackDetailRequest) GetTrackId() string {
+	if x != nil {
+		return x.TrackId
+	}
+	return ""
+}
+
+type CapabilitiesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CapabilitiesRequest) Reset() {
+	*x = CapabilitiesRequest{}
+	mi := &file_raag_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapabilitiesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapabilitiesRequest) ProtoMessage() {}
+
+func (x *CapabilitiesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapabilitiesRequest.ProtoReflect.Descriptor instead.
+func (*CapabilitiesRequest) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{46}
+}
+
+type SyncResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*SyncResponse_Manifest
+	//	*SyncResponse_Track
+	//	*SyncResponse_Capabilities
+	//	*SyncResponse_Error
+	Payload       isSyncResponse_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncResponse) Reset() {
+	*x = SyncResponse{}
+	mi := &file_raag_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncResponse) ProtoMessage() {}
+
+func (x *SyncResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncResponse.ProtoReflect.Descriptor instead.
+func (*SyncResponse) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *SyncResponse) GetPayload() isSyncResponse_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *SyncResponse) GetManifest() *LibraryManifest {
+	if x != nil {
+		if x, ok := x.Payload.(*SyncResponse_Manifest); ok {
+			return x.Manifest
+		}
+	}
+	return nil
+}
+
+func (x *SyncResponse) GetTrack() *Track {
+	if x != nil {
+		if x, ok := x.Payload.(*SyncResponse_Track); ok {
+			return x.Track
+		}
+	}
+	return nil
+}
+
+func (x *SyncResponse) GetCapabilities() *PeerCapabilities {
+	if x != nil {
+		if x, ok := x.Payload.(*SyncResponse_Capabilities); ok {
+			return x.Capabilities
+		}
+	}
+	return nil
+}
+
+func (x *SyncResponse) GetError() *ErrorResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*SyncResponse_Error); ok {
+			return x.Error
+		}
+	}
+	return nil
+}
+
+type isSyncResponse_Payload interface {
+	isSyncResponse_Payload()
+}
+
+type SyncResponse_Manifest struct {
+	Manifest *LibraryManifest `protobuf:"bytes,1,opt,name=manifest,proto3,oneof"`
+}
+
+type SyncResponse_Track struct {
+	Track *Track `protobuf:"bytes,2,opt,name=track,proto3,oneof"`
+}
+
+type SyncResponse_Capabilities struct {
+	Capabilities *PeerCapabilities `protobuf:"bytes,3,opt,name=capabilities,proto3,oneof"`
+}
+
+type SyncResponse_Error struct {
+	Error *ErrorResponse `protobuf:"bytes,4,opt,name=error,proto3,oneof"`
+}
+
+func (*SyncResponse_Manifest) isSyncResponse_Payload() {}
+
+func (*SyncResponse_Track) isSyncResponse_Payload() {}
+
+func (*SyncResponse_Capabilities) isSyncResponse_Payload() {}
+
+func (*SyncResponse_Error) isSyncResponse_Payload() {}
+
+type ErrorResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	Code          ErrorCode              `protobuf:"varint,2,opt,name=code,proto3,enum=raag.ErrorCode" json:"code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ErrorResponse) Reset() {
+	*x = ErrorResponse{}
+	mi := &file_raag_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ErrorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ErrorResponse) ProtoMessage() {}
+
+func (x *ErrorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_raag_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ErrorResponse.ProtoReflect.Descriptor instead.
+func (*ErrorResponse) Descriptor() ([]byte, []int) {
+	return file_raag_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *ErrorResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ErrorResponse) GetCode() ErrorCode {
+	if x != nil {
+		return x.Code
+	}
+	return ErrorCode_ERROR_CODE_UNSPECIFIED
+}
+
 var File_raag_proto protoreflect.FileDescriptor
 
 const file_raag_proto_rawDesc = "" +
@@ -2993,7 +3588,46 @@ const file_raag_proto_rawDesc = "" +
 	"\x15GetTrackByPathRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\"5\n" +
 	"\x10GetTrackResponse\x12!\n" +
-	"\x05track\x18\x01 \x01(\v2\v.raag.TrackR\x05trackB%Z#github.com/p-society/raag/proto/genb\x06proto3"
+	"\x05track\x18\x01 \x01(\v2\v.raag.TrackR\x05track\"\x89\x01\n" +
+	"\fChunkRequest\x12\x19\n" +
+	"\btrack_id\x18\x01 \x01(\tR\atrackId\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x16\n" +
+	"\x06length\x18\x03 \x01(\x05R\x06length\x12\x14\n" +
+	"\x05codec\x18\x04 \x01(\tR\x05codec\x12\x18\n" +
+	"\abitrate\x18\x05 \x01(\x05R\abitrate\"\xb1\x01\n" +
+	"\rChunkResponse\x12\x19\n" +
+	"\btrack_id\x18\x01 \x01(\tR\atrackId\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x1d\n" +
+	"\n" +
+	"last_chunk\x18\x04 \x01(\bR\tlastChunk\x12\x1d\n" +
+	"\n" +
+	"total_size\x18\x05 \x01(\x03R\ttotalSize\x12\x1b\n" +
+	"\tmime_type\x18\x06 \x01(\tR\bmimeType\"\xfa\x01\n" +
+	"\vSyncRequest\x12B\n" +
+	"\x10manifest_request\x18\x01 \x01(\v2\x15.raag.ManifestRequestH\x00R\x0fmanifestRequest\x12L\n" +
+	"\x14track_detail_request\x18\x02 \x01(\v2\x18.raag.TrackDetailRequestH\x00R\x12trackDetailRequest\x12N\n" +
+	"\x14capabilities_request\x18\x03 \x01(\v2\x19.raag.CapabilitiesRequestH\x00R\x13capabilitiesRequestB\t\n" +
+	"\apayload\"\x11\n" +
+	"\x0fManifestRequest\"/\n" +
+	"\x12TrackDetailRequest\x12\x19\n" +
+	"\btrack_id\x18\x01 \x01(\tR\atrackId\"\x15\n" +
+	"\x13CapabilitiesRequest\"\xde\x01\n" +
+	"\fSyncResponse\x123\n" +
+	"\bmanifest\x18\x01 \x01(\v2\x15.raag.LibraryManifestH\x00R\bmanifest\x12#\n" +
+	"\x05track\x18\x02 \x01(\v2\v.raag.TrackH\x00R\x05track\x12<\n" +
+	"\fcapabilities\x18\x03 \x01(\v2\x16.raag.PeerCapabilitiesH\x00R\fcapabilities\x12+\n" +
+	"\x05error\x18\x04 \x01(\v2\x13.raag.ErrorResponseH\x00R\x05errorB\t\n" +
+	"\apayload\"N\n" +
+	"\rErrorResponse\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\x12#\n" +
+	"\x04code\x18\x02 \x01(\x0e2\x0f.raag.ErrorCodeR\x04code*\xa7\x01\n" +
+	"\tErrorCode\x12\x1a\n" +
+	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aERROR_CODE_TRACK_NOT_FOUND\x10\x01\x12 \n" +
+	"\x1cERROR_CODE_PERMISSION_DENIED\x10\x02\x12\x1b\n" +
+	"\x17ERROR_CODE_RATE_LIMITED\x10\x03\x12\x1f\n" +
+	"\x1bERROR_CODE_TRANSCODE_FAILED\x10\x04B%Z#github.com/p-society/raag/proto/genb\x06proto3"
 
 var (
 	file_raag_proto_rawDescOnce sync.Once
@@ -3007,98 +3641,116 @@ func file_raag_proto_rawDescGZIP() []byte {
 	return file_raag_proto_rawDescData
 }
 
-var file_raag_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
+var file_raag_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_raag_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
 var file_raag_proto_goTypes = []any{
-	(*Track)(nil),                 // 0: raag.Track
-	(*Playlist)(nil),              // 1: raag.Playlist
-	(*PeerInfo)(nil),              // 2: raag.PeerInfo
-	(*PeerCapabilities)(nil),      // 3: raag.PeerCapabilities
-	(*PeerScore)(nil),             // 4: raag.PeerScore
-	(*LibraryManifest)(nil),       // 5: raag.LibraryManifest
-	(*FileStat)(nil),              // 6: raag.FileStat
-	(*Empty)(nil),                 // 7: raag.Empty
-	(*Request)(nil),               // 8: raag.Request
-	(*Response)(nil),              // 9: raag.Response
-	(*PlayRequest)(nil),           // 10: raag.PlayRequest
-	(*StatusResponse)(nil),        // 11: raag.StatusResponse
-	(*StatusRequest)(nil),         // 12: raag.StatusRequest
-	(*PauseRequest)(nil),          // 13: raag.PauseRequest
-	(*ResumeRequest)(nil),         // 14: raag.ResumeRequest
-	(*StopRequest)(nil),           // 15: raag.StopRequest
-	(*NextRequest)(nil),           // 16: raag.NextRequest
-	(*PrevRequest)(nil),           // 17: raag.PrevRequest
-	(*SeekRequest)(nil),           // 18: raag.SeekRequest
-	(*SetVolumeRequest)(nil),      // 19: raag.SetVolumeRequest
-	(*QueueAddRequest)(nil),       // 20: raag.QueueAddRequest
-	(*QueueRemoveRequest)(nil),    // 21: raag.QueueRemoveRequest
-	(*QueueClearRequest)(nil),     // 22: raag.QueueClearRequest
-	(*QueueResponse)(nil),         // 23: raag.QueueResponse
-	(*SearchRequest)(nil),         // 24: raag.SearchRequest
-	(*SearchResponse)(nil),        // 25: raag.SearchResponse
-	(*LibScanRequest)(nil),        // 26: raag.LibScanRequest
-	(*Peer)(nil),                  // 27: raag.Peer
-	(*ListPeersRequest)(nil),      // 28: raag.ListPeersRequest
-	(*ListPeersResponse)(nil),     // 29: raag.ListPeersResponse
-	(*HealthCheckRequest)(nil),    // 30: raag.HealthCheckRequest
-	(*HealthCheckResponse)(nil),   // 31: raag.HealthCheckResponse
-	(*CreatePlaylistRequest)(nil), // 32: raag.CreatePlaylistRequest
-	(*GetPlaylistRequest)(nil),    // 33: raag.GetPlaylistRequest
-	(*GetPlaylistResponse)(nil),   // 34: raag.GetPlaylistResponse
-	(*ListPlaylistsRequest)(nil),  // 35: raag.ListPlaylistsRequest
-	(*ListPlaylistsResponse)(nil), // 36: raag.ListPlaylistsResponse
-	(*AddToPlaylistRequest)(nil),  // 37: raag.AddToPlaylistRequest
-	(*GetTrackRequest)(nil),       // 38: raag.GetTrackRequest
-	(*GetTrackByPathRequest)(nil), // 39: raag.GetTrackByPathRequest
-	(*GetTrackResponse)(nil),      // 40: raag.GetTrackResponse
+	(ErrorCode)(0),                // 0: raag.ErrorCode
+	(*Track)(nil),                 // 1: raag.Track
+	(*Playlist)(nil),              // 2: raag.Playlist
+	(*PeerInfo)(nil),              // 3: raag.PeerInfo
+	(*PeerCapabilities)(nil),      // 4: raag.PeerCapabilities
+	(*PeerScore)(nil),             // 5: raag.PeerScore
+	(*LibraryManifest)(nil),       // 6: raag.LibraryManifest
+	(*FileStat)(nil),              // 7: raag.FileStat
+	(*Empty)(nil),                 // 8: raag.Empty
+	(*Request)(nil),               // 9: raag.Request
+	(*Response)(nil),              // 10: raag.Response
+	(*PlayRequest)(nil),           // 11: raag.PlayRequest
+	(*StatusResponse)(nil),        // 12: raag.StatusResponse
+	(*StatusRequest)(nil),         // 13: raag.StatusRequest
+	(*PauseRequest)(nil),          // 14: raag.PauseRequest
+	(*ResumeRequest)(nil),         // 15: raag.ResumeRequest
+	(*StopRequest)(nil),           // 16: raag.StopRequest
+	(*NextRequest)(nil),           // 17: raag.NextRequest
+	(*PrevRequest)(nil),           // 18: raag.PrevRequest
+	(*SeekRequest)(nil),           // 19: raag.SeekRequest
+	(*SetVolumeRequest)(nil),      // 20: raag.SetVolumeRequest
+	(*QueueAddRequest)(nil),       // 21: raag.QueueAddRequest
+	(*QueueRemoveRequest)(nil),    // 22: raag.QueueRemoveRequest
+	(*QueueClearRequest)(nil),     // 23: raag.QueueClearRequest
+	(*QueueResponse)(nil),         // 24: raag.QueueResponse
+	(*SearchRequest)(nil),         // 25: raag.SearchRequest
+	(*SearchResponse)(nil),        // 26: raag.SearchResponse
+	(*LibScanRequest)(nil),        // 27: raag.LibScanRequest
+	(*Peer)(nil),                  // 28: raag.Peer
+	(*ListPeersRequest)(nil),      // 29: raag.ListPeersRequest
+	(*ListPeersResponse)(nil),     // 30: raag.ListPeersResponse
+	(*HealthCheckRequest)(nil),    // 31: raag.HealthCheckRequest
+	(*HealthCheckResponse)(nil),   // 32: raag.HealthCheckResponse
+	(*CreatePlaylistRequest)(nil), // 33: raag.CreatePlaylistRequest
+	(*GetPlaylistRequest)(nil),    // 34: raag.GetPlaylistRequest
+	(*GetPlaylistResponse)(nil),   // 35: raag.GetPlaylistResponse
+	(*ListPlaylistsRequest)(nil),  // 36: raag.ListPlaylistsRequest
+	(*ListPlaylistsResponse)(nil), // 37: raag.ListPlaylistsResponse
+	(*AddToPlaylistRequest)(nil),  // 38: raag.AddToPlaylistRequest
+	(*GetTrackRequest)(nil),       // 39: raag.GetTrackRequest
+	(*GetTrackByPathRequest)(nil), // 40: raag.GetTrackByPathRequest
+	(*GetTrackResponse)(nil),      // 41: raag.GetTrackResponse
+	(*ChunkRequest)(nil),          // 42: raag.ChunkRequest
+	(*ChunkResponse)(nil),         // 43: raag.ChunkResponse
+	(*SyncRequest)(nil),           // 44: raag.SyncRequest
+	(*ManifestRequest)(nil),       // 45: raag.ManifestRequest
+	(*TrackDetailRequest)(nil),    // 46: raag.TrackDetailRequest
+	(*CapabilitiesRequest)(nil),   // 47: raag.CapabilitiesRequest
+	(*SyncResponse)(nil),          // 48: raag.SyncResponse
+	(*ErrorResponse)(nil),         // 49: raag.ErrorResponse
 }
 var file_raag_proto_depIdxs = []int32{
-	7,  // 0: raag.Request.empty:type_name -> raag.Empty
-	10, // 1: raag.Request.play:type_name -> raag.PlayRequest
-	13, // 2: raag.Request.pause:type_name -> raag.PauseRequest
-	14, // 3: raag.Request.resume:type_name -> raag.ResumeRequest
-	15, // 4: raag.Request.stop:type_name -> raag.StopRequest
-	16, // 5: raag.Request.next:type_name -> raag.NextRequest
-	17, // 6: raag.Request.prev:type_name -> raag.PrevRequest
-	18, // 7: raag.Request.seek:type_name -> raag.SeekRequest
-	19, // 8: raag.Request.set_volume:type_name -> raag.SetVolumeRequest
-	20, // 9: raag.Request.queue_add:type_name -> raag.QueueAddRequest
-	21, // 10: raag.Request.queue_remove:type_name -> raag.QueueRemoveRequest
-	22, // 11: raag.Request.queue_clear:type_name -> raag.QueueClearRequest
-	24, // 12: raag.Request.search:type_name -> raag.SearchRequest
-	26, // 13: raag.Request.lib_scan:type_name -> raag.LibScanRequest
-	28, // 14: raag.Request.list_peers:type_name -> raag.ListPeersRequest
-	12, // 15: raag.Request.status:type_name -> raag.StatusRequest
-	30, // 16: raag.Request.health_check:type_name -> raag.HealthCheckRequest
-	32, // 17: raag.Request.create_playlist:type_name -> raag.CreatePlaylistRequest
-	33, // 18: raag.Request.get_playlist:type_name -> raag.GetPlaylistRequest
-	35, // 19: raag.Request.list_playlists:type_name -> raag.ListPlaylistsRequest
-	37, // 20: raag.Request.add_to_playlist:type_name -> raag.AddToPlaylistRequest
-	38, // 21: raag.Request.get_track:type_name -> raag.GetTrackRequest
-	39, // 22: raag.Request.get_track_by_path:type_name -> raag.GetTrackByPathRequest
-	7,  // 23: raag.Response.empty:type_name -> raag.Empty
-	25, // 24: raag.Response.search:type_name -> raag.SearchResponse
-	29, // 25: raag.Response.list_peers:type_name -> raag.ListPeersResponse
-	11, // 26: raag.Response.status:type_name -> raag.StatusResponse
-	31, // 27: raag.Response.health_check:type_name -> raag.HealthCheckResponse
-	23, // 28: raag.Response.queue:type_name -> raag.QueueResponse
-	40, // 29: raag.Response.get_track:type_name -> raag.GetTrackResponse
-	34, // 30: raag.Response.get_playlist:type_name -> raag.GetPlaylistResponse
-	36, // 31: raag.Response.list_playlists:type_name -> raag.ListPlaylistsResponse
-	0,  // 32: raag.StatusResponse.current_track:type_name -> raag.Track
-	0,  // 33: raag.QueueResponse.tracks:type_name -> raag.Track
-	0,  // 34: raag.SearchResponse.tracks:type_name -> raag.Track
-	4,  // 35: raag.Peer.score:type_name -> raag.PeerScore
-	3,  // 36: raag.Peer.capabilities:type_name -> raag.PeerCapabilities
-	27, // 37: raag.ListPeersResponse.peers:type_name -> raag.Peer
-	1,  // 38: raag.GetPlaylistResponse.playlist:type_name -> raag.Playlist
-	0,  // 39: raag.GetPlaylistResponse.tracks:type_name -> raag.Track
-	1,  // 40: raag.ListPlaylistsResponse.playlists:type_name -> raag.Playlist
-	0,  // 41: raag.GetTrackResponse.track:type_name -> raag.Track
-	42, // [42:42] is the sub-list for method output_type
-	42, // [42:42] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	8,  // 0: raag.Request.empty:type_name -> raag.Empty
+	11, // 1: raag.Request.play:type_name -> raag.PlayRequest
+	14, // 2: raag.Request.pause:type_name -> raag.PauseRequest
+	15, // 3: raag.Request.resume:type_name -> raag.ResumeRequest
+	16, // 4: raag.Request.stop:type_name -> raag.StopRequest
+	17, // 5: raag.Request.next:type_name -> raag.NextRequest
+	18, // 6: raag.Request.prev:type_name -> raag.PrevRequest
+	19, // 7: raag.Request.seek:type_name -> raag.SeekRequest
+	20, // 8: raag.Request.set_volume:type_name -> raag.SetVolumeRequest
+	21, // 9: raag.Request.queue_add:type_name -> raag.QueueAddRequest
+	22, // 10: raag.Request.queue_remove:type_name -> raag.QueueRemoveRequest
+	23, // 11: raag.Request.queue_clear:type_name -> raag.QueueClearRequest
+	25, // 12: raag.Request.search:type_name -> raag.SearchRequest
+	27, // 13: raag.Request.lib_scan:type_name -> raag.LibScanRequest
+	29, // 14: raag.Request.list_peers:type_name -> raag.ListPeersRequest
+	13, // 15: raag.Request.status:type_name -> raag.StatusRequest
+	31, // 16: raag.Request.health_check:type_name -> raag.HealthCheckRequest
+	33, // 17: raag.Request.create_playlist:type_name -> raag.CreatePlaylistRequest
+	34, // 18: raag.Request.get_playlist:type_name -> raag.GetPlaylistRequest
+	36, // 19: raag.Request.list_playlists:type_name -> raag.ListPlaylistsRequest
+	38, // 20: raag.Request.add_to_playlist:type_name -> raag.AddToPlaylistRequest
+	39, // 21: raag.Request.get_track:type_name -> raag.GetTrackRequest
+	40, // 22: raag.Request.get_track_by_path:type_name -> raag.GetTrackByPathRequest
+	8,  // 23: raag.Response.empty:type_name -> raag.Empty
+	26, // 24: raag.Response.search:type_name -> raag.SearchResponse
+	30, // 25: raag.Response.list_peers:type_name -> raag.ListPeersResponse
+	12, // 26: raag.Response.status:type_name -> raag.StatusResponse
+	32, // 27: raag.Response.health_check:type_name -> raag.HealthCheckResponse
+	24, // 28: raag.Response.queue:type_name -> raag.QueueResponse
+	41, // 29: raag.Response.get_track:type_name -> raag.GetTrackResponse
+	35, // 30: raag.Response.get_playlist:type_name -> raag.GetPlaylistResponse
+	37, // 31: raag.Response.list_playlists:type_name -> raag.ListPlaylistsResponse
+	1,  // 32: raag.StatusResponse.current_track:type_name -> raag.Track
+	1,  // 33: raag.QueueResponse.tracks:type_name -> raag.Track
+	1,  // 34: raag.SearchResponse.tracks:type_name -> raag.Track
+	5,  // 35: raag.Peer.score:type_name -> raag.PeerScore
+	4,  // 36: raag.Peer.capabilities:type_name -> raag.PeerCapabilities
+	28, // 37: raag.ListPeersResponse.peers:type_name -> raag.Peer
+	2,  // 38: raag.GetPlaylistResponse.playlist:type_name -> raag.Playlist
+	1,  // 39: raag.GetPlaylistResponse.tracks:type_name -> raag.Track
+	2,  // 40: raag.ListPlaylistsResponse.playlists:type_name -> raag.Playlist
+	1,  // 41: raag.GetTrackResponse.track:type_name -> raag.Track
+	45, // 42: raag.SyncRequest.manifest_request:type_name -> raag.ManifestRequest
+	46, // 43: raag.SyncRequest.track_detail_request:type_name -> raag.TrackDetailRequest
+	47, // 44: raag.SyncRequest.capabilities_request:type_name -> raag.CapabilitiesRequest
+	6,  // 45: raag.SyncResponse.manifest:type_name -> raag.LibraryManifest
+	1,  // 46: raag.SyncResponse.track:type_name -> raag.Track
+	4,  // 47: raag.SyncResponse.capabilities:type_name -> raag.PeerCapabilities
+	49, // 48: raag.SyncResponse.error:type_name -> raag.ErrorResponse
+	0,  // 49: raag.ErrorResponse.code:type_name -> raag.ErrorCode
+	50, // [50:50] is the sub-list for method output_type
+	50, // [50:50] is the sub-list for method input_type
+	50, // [50:50] is the sub-list for extension type_name
+	50, // [50:50] is the sub-list for extension extendee
+	0,  // [0:50] is the sub-list for field type_name
 }
 
 func init() { file_raag_proto_init() }
@@ -3142,18 +3794,30 @@ func file_raag_proto_init() {
 		(*Response_GetPlaylist)(nil),
 		(*Response_ListPlaylists)(nil),
 	}
+	file_raag_proto_msgTypes[43].OneofWrappers = []any{
+		(*SyncRequest_ManifestRequest)(nil),
+		(*SyncRequest_TrackDetailRequest)(nil),
+		(*SyncRequest_CapabilitiesRequest)(nil),
+	}
+	file_raag_proto_msgTypes[47].OneofWrappers = []any{
+		(*SyncResponse_Manifest)(nil),
+		(*SyncResponse_Track)(nil),
+		(*SyncResponse_Capabilities)(nil),
+		(*SyncResponse_Error)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_raag_proto_rawDesc), len(file_raag_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   41,
+			NumEnums:      1,
+			NumMessages:   49,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_raag_proto_goTypes,
 		DependencyIndexes: file_raag_proto_depIdxs,
+		EnumInfos:         file_raag_proto_enumTypes,
 		MessageInfos:      file_raag_proto_msgTypes,
 	}.Build()
 	File_raag_proto = out.File
