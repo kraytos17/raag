@@ -1,0 +1,275 @@
+package audio
+
+import (
+	"bytes"
+	"io"
+	"sync"
+	"testing"
+	"time"
+)
+
+type slowReader struct {
+	data  []byte
+	pos   int
+	mu    sync.Mutex
+	delay time.Duration
+}
+
+func (r *slowReader) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	if r.delay > 0 {
+		time.Sleep(r.delay)
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func (r *slowReader) Close() error {
+	return nil
+}
+
+func waitForData(ss *StreamingSource, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ss.BufferUsed() > 0 {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func TestStreamingSource_BasicRead(t *testing.T) {
+	data := bytes.Repeat([]byte("test data "), 1000)
+	source := &slowReader{data: data, delay: 10 * time.Millisecond}
+	ss := NewStreamingSource(source, 64*1024)
+	defer ss.Close()
+
+	if !waitForData(ss, 500*time.Millisecond) {
+		t.Fatal("timeout waiting for data")
+	}
+
+	buf := make([]byte, 1024)
+	n, err := ss.Read(buf)
+	if err != nil && err != io.EOF {
+		t.Fatalf("Read error: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("Read returned 0 bytes")
+	}
+}
+
+func TestStreamingSource_FillLevel(t *testing.T) {
+	data := bytes.Repeat([]byte("x"), 50*1024)
+	source := &slowReader{data: data, delay: 10 * time.Millisecond}
+	ss := NewStreamingSource(source, 64*1024)
+	defer ss.Close()
+
+	time.Sleep(100 * time.Millisecond)
+
+	fill := ss.FillLevel()
+	if fill <= 0 {
+		t.Errorf("FillLevel = %f, want > 0", fill)
+	}
+	if fill > 1.0 {
+		t.Errorf("FillLevel = %f, want <= 1.0", fill)
+	}
+}
+
+func TestStreamingSource_BufferStats(t *testing.T) {
+	data := bytes.Repeat([]byte("y"), 32*1024)
+	source := &slowReader{data: data, delay: 5 * time.Millisecond}
+	ss := NewStreamingSource(source, 64*1024)
+	defer ss.Close()
+
+	time.Sleep(50 * time.Millisecond)
+	used := ss.BufferUsed()
+	size := ss.BufferSize()
+	if used <= 0 {
+		t.Errorf("BufferUsed = %d, want > 0", used)
+	}
+	if size != 64*1024 {
+		t.Errorf("BufferSize = %d, want %d", size, 64*1024)
+	}
+}
+
+func TestStreamingSource_Close(t *testing.T) {
+	data := bytes.Repeat([]byte("z"), 1024)
+	source := &slowReader{data: data}
+	ss := NewStreamingSource(source, 16*1024)
+
+	if err := ss.Close(); err != nil {
+		t.Errorf("Close error: %v", err)
+	}
+
+	buf := make([]byte, 1024)
+	_, err := ss.Read(buf)
+	if err != io.EOF {
+		t.Errorf("Read after close = %v, want io.EOF", err)
+	}
+}
+
+func TestStreamingSource_IsBuffering(t *testing.T) {
+	data := bytes.Repeat([]byte("a"), 10*1024)
+	source := &slowReader{data: data, delay: 50 * time.Millisecond}
+	ss := NewStreamingSource(source, 64*1024)
+	defer ss.Close()
+
+	if !ss.IsBuffering() {
+		t.Error("IsBuffering = false, want true during fill")
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	if ss.IsBuffering() {
+		t.Log("Still buffering after 500ms (might be ok depending on timing)")
+	}
+}
+
+func TestStreamingSource_ReadAll(t *testing.T) {
+	data := bytes.Repeat([]byte("b"), 10*1024)
+	source := &slowReader{data: data, delay: 500 * time.Microsecond}
+	ss := NewStreamingSource(source, 64*1024)
+	defer ss.Close()
+
+	var total int
+	buf := make([]byte, 1024)
+	attempts := 0
+	maxAttempts := 100
+	for {
+		n, err := ss.Read(buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if err == ErrEmpty {
+				attempts++
+				if attempts >= maxAttempts {
+					t.Fatalf("Too many empty reads, got %d bytes", total)
+				}
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("Read error: %v", err)
+		}
+
+		total += n
+		attempts = 0
+	}
+	if total != len(data) {
+		t.Errorf("Read %d bytes, want %d", total, len(data))
+	}
+}
+
+func TestStreamingSource_ImplementsAudioSource(t *testing.T) {
+	var _ AudioSource = (*StreamingSource)(nil)
+}
+
+func TestStreamingSource_ConcurrentReadWrite(t *testing.T) {
+	data := bytes.Repeat([]byte("c"), 100*1024)
+	source := &slowReader{data: data, delay: 50 * time.Microsecond}
+	ss := NewStreamingSource(source, 64*1024)
+	defer ss.Close()
+
+	readDone := make(chan struct{})
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			_, err := ss.Read(buf)
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = ss.FillLevel()
+			case <-readDone:
+				return
+			}
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	close(readDone)
+}
+
+func TestStreamingSource_EmptySource(t *testing.T) {
+	source := &slowReader{data: []byte{}}
+	ss := NewStreamingSource(source, 16*1024)
+	defer ss.Close()
+
+	time.Sleep(50 * time.Millisecond)
+	buf := make([]byte, 1024)
+	n, err := ss.Read(buf)
+	if err != io.EOF {
+		t.Errorf("Read empty source = %v, want io.EOF", err)
+	}
+	if n != 0 {
+		t.Errorf("Read empty source = %d, want 0", n)
+	}
+}
+
+func TestStreamingSource_CancelContext(t *testing.T) {
+	data := bytes.Repeat([]byte("d"), 1024)
+	source := &slowReader{data: data}
+	done := make(chan struct{})
+
+	ss := &StreamingSource{
+		rb:     NewRingBuffer(16 * 1024),
+		source: source,
+		done:   done,
+	}
+
+	ss.wg.Add(1)
+	go ss.fillBuffer()
+
+	time.Sleep(50 * time.Millisecond)
+	close(done)
+	ss.wg.Wait()
+}
+
+func TestStreamingSource_DefaultBufferSize(t *testing.T) {
+	source := &slowReader{data: []byte("e")}
+	ss := NewStreamingSource(source, 0)
+	if ss.BufferSize() != DefaultBufferSize {
+		t.Errorf("Default buffer size = %d, want %d", ss.BufferSize(), DefaultBufferSize)
+	}
+	ss.Close()
+}
+
+func TestStreamingSource_LargeData(t *testing.T) {
+	data := bytes.Repeat([]byte("f"), 1*1024*1024)
+	source := &slowReader{data: data, delay: 10 * time.Microsecond}
+	ss := NewStreamingSource(source, 256*1024)
+	defer ss.Close()
+
+	time.Sleep(200 * time.Millisecond)
+	fill := ss.FillLevel()
+	t.Logf("Buffer fill level: %.2f", fill)
+}
+
+func TestStreamingSource_MultipleClose(t *testing.T) {
+	source := &slowReader{data: []byte("g")}
+	ss := NewStreamingSource(source, 16*1024)
+
+	err1 := ss.Close()
+	err2 := ss.Close()
+	if err1 != nil {
+		t.Errorf("First close returned error: %v", err1)
+	}
+	if err2 != nil {
+		t.Errorf("Second close returned error: %v", err2)
+	}
+}

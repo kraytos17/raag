@@ -28,7 +28,6 @@ type LibraryRepository interface {
 	FindByIDs(ctx context.Context, ids []domain.TrackID) ([]*domain.Track, error)
 	FindByPath(ctx context.Context, path string) (*domain.Track, error)
 	GetCoverArt(ctx context.Context, id domain.TrackID) ([]byte, error)
-	Search(ctx context.Context, query SearchQuery) ([]*domain.Track, error)
 	Delete(ctx context.Context, id domain.TrackID) error
 	BulkSave(ctx context.Context, tracks []*domain.Track) error
 	ListAll(ctx context.Context) ([]*domain.Track, error)
@@ -43,7 +42,7 @@ type FileStatStore interface {
 type PlaylistRepository interface {
 	Save(ctx context.Context, playlist *domain.Playlist) error
 	FindByID(ctx context.Context, id domain.PlaylistID) (*domain.Playlist, error)
-	ListAll(ctx context.Context) iter.Seq[*domain.Playlist]
+	ListAll(ctx context.Context) iter.Seq2[*domain.Playlist, error]
 	Delete(ctx context.Context, id domain.PlaylistID) error
 }
 
@@ -54,7 +53,7 @@ type PeerRepository interface {
 	GetPeerScore(ctx context.Context, id domain.PeerID) (*domain.PeerScore, error)
 	SaveLibraryManifest(ctx context.Context, id domain.PeerID, manifest *domain.LibraryManifest) error
 	GetLibraryManifest(ctx context.Context, id domain.PeerID) (*domain.LibraryManifest, error)
-	ListAll(ctx context.Context) iter.Seq[*domain.PeerInfo]
+	ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, error]
 }
 
 type SearchIndex interface {

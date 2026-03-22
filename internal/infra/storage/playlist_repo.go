@@ -28,7 +28,7 @@ func NewPlaylistRepo(db *DB) app.PlaylistRepository {
 	}
 }
 
-func (r *playlistRepo) ListAll(ctx context.Context) iter.Seq[*domain.Playlist] {
+func (r *playlistRepo) ListAll(ctx context.Context) iter.Seq2[*domain.Playlist, error] {
 	return listAll(r.DB, []byte(PrefixPlaylist), ipc.UnmarshalPlaylist)
 }
 

@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -42,6 +43,7 @@ type Engine struct {
 	position      time.Duration
 	done          chan struct{}
 	desiredVolume int
+	audioSource   AudioSource
 }
 
 func NewEngine(sampleRate int) *Engine {
@@ -114,6 +116,87 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 	return nil
 }
 
+func (e *Engine) PlayStreaming(ctx context.Context, source AudioSource, mimeType string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.stopLocked()
+	if err := e.initSpeaker(); err != nil {
+		e.state = app.PlayerStateError
+		return err
+	}
+
+	streamer, format, err := decode(source, mimeType)
+	if err != nil {
+		e.state = app.PlayerStateError
+		_ = source.Close()
+		return fmt.Errorf("decode failed: %w", err)
+	}
+
+	e.streamer = streamer
+	e.format = format
+	e.audioSource = source
+
+	var s beep.Streamer = e.streamer
+	if format.SampleRate != e.sampleRate {
+		s = beep.Resample(4, format.SampleRate, e.sampleRate, s)
+	}
+
+	e.ctrl = &beep.Ctrl{Streamer: s, Paused: false}
+	e.vol = &effects.Volume{
+		Streamer: e.ctrl,
+		Base:     2,
+		Volume:   0,
+		Silent:   false,
+	}
+	if e.desiredVolume > 0 {
+		e.setVolumeLocked(e.desiredVolume)
+	}
+
+	speaker.Clear()
+	speaker.Play(beep.Seq(e.vol, beep.Callback(func() {
+		e.mu.Lock()
+		if e.audioSource != nil {
+			_ = e.audioSource.Close()
+			e.audioSource = nil
+		}
+
+		e.state = app.PlayerStateIdle
+		e.streamer = nil
+		e.ctrl = nil
+		e.vol = nil
+		e.mu.Unlock()
+
+		select {
+		case e.done <- struct{}{}:
+		default:
+		}
+	})))
+
+	e.state = app.PlayerStatePlaying
+	e.position = 0
+	slog.Info("streaming playback started", "mime", mimeType, "sample_rate", format.SampleRate, "buffer_fill", source.FillLevel())
+	return nil
+}
+
+func (e *Engine) GetBufferFillLevel() float64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.audioSource != nil {
+		return e.audioSource.FillLevel()
+	}
+	return 0
+}
+
+func (e *Engine) IsBuffering() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.audioSource != nil {
+		return e.audioSource.IsBuffering()
+	}
+	return false
+}
+
 func (e *Engine) Pause(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -158,6 +241,10 @@ func (e *Engine) stopLocked() {
 	speaker.Clear()
 	if e.streamer != nil {
 		_ = e.streamer.Close()
+	}
+	if e.audioSource != nil {
+		_ = e.audioSource.Close()
+		e.audioSource = nil
 	}
 
 	e.streamer = nil
@@ -272,53 +359,19 @@ func ensureReadSeekCloser(r io.Reader) (io.ReadSeekCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &readCloserFromBytes{data: data}, nil
+	return &readSeekNopCloser{bytes.NewReader(data)}, nil
 }
+
+type readSeekNopCloser struct {
+	*bytes.Reader
+}
+
+func (readSeekNopCloser) Close() error { return nil }
 
 type nopCloser struct {
 	io.ReadSeeker
 }
 
 func (n nopCloser) Close() error {
-	return nil
-}
-
-type readCloserFromBytes struct {
-	data []byte
-	pos  int
-}
-
-func (r *readCloserFromBytes) Read(p []byte) (int, error) {
-	if r.pos >= len(r.data) {
-		return 0, io.EOF
-	}
-
-	n := copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
-}
-
-func (r *readCloserFromBytes) Seek(offset int64, whence int) (int64, error) {
-	var newPos int64
-	switch whence {
-	case io.SeekStart:
-		newPos = offset
-	case io.SeekCurrent:
-		newPos = int64(r.pos) + offset
-	case io.SeekEnd:
-		newPos = int64(len(r.data)) + offset
-	default:
-		return 0, errors.New("invalid whence")
-	}
-	if newPos < 0 {
-		return 0, errors.New("negative position")
-	}
-
-	r.pos = int(newPos)
-	return newPos, nil
-}
-
-func (r *readCloserFromBytes) Close() error {
-	r.data = nil
 	return nil
 }

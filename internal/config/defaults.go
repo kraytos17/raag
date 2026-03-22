@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -40,9 +41,13 @@ const (
 )
 
 func getDefaultDataDir() string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		slog.Error("cannot determine home directory, using current directory")
+		return "./data"
 	}
 	return filepath.Join(home, ".local", "share", "raag")
 }

@@ -15,6 +15,7 @@ type PeerInfo struct {
 	LastSeen       time.Time
 	LibrarySummary *LibraryManifest
 	Capabilities   *PeerCapabilities
+	Score          *PeerScore
 }
 
 func NewPeerInfo(id PeerID, addrs []string) *PeerInfo {
@@ -78,8 +79,6 @@ type PeerScore struct {
 	FailureCount int
 	SuccessCount int
 	LastSeen     time.Time
-	TotalLatency int64
-	SampleCount  int
 }
 
 func NewPeerScore(peerID PeerID) *PeerScore {
@@ -104,16 +103,20 @@ func (s *PeerScore) Score() float64 {
 }
 
 func (s *PeerScore) RecordLatency(latency time.Duration) {
-	s.TotalLatency += latency.Nanoseconds()
-	s.SampleCount++
-	s.AvgLatency = time.Duration(s.TotalLatency / int64(s.SampleCount))
+	const latencyAlpha = 0.2
+	if s.AvgLatency == 0 {
+		s.AvgLatency = latency
+	} else {
+		s.AvgLatency = time.Duration(float64(s.AvgLatency)*(1-latencyAlpha) + float64(latency)*latencyAlpha)
+	}
 }
 
 func (s *PeerScore) RecordBandwidth(bytes int64) {
+	const bandwidthAlpha = 0.2
 	if s.AvgBandwidth == 0 {
 		s.AvgBandwidth = bytes
 	} else {
-		s.AvgBandwidth = (s.AvgBandwidth + bytes) / 2
+		s.AvgBandwidth = int64(float64(s.AvgBandwidth)*(1-bandwidthAlpha) + float64(bytes)*bandwidthAlpha)
 	}
 }
 

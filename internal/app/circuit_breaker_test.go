@@ -202,9 +202,6 @@ func TestCBRegistry_New(t *testing.T) {
 	if registry.cooldown != time.Minute {
 		t.Errorf("NewCBRegistry() cooldown = %v, want 1m", registry.cooldown)
 	}
-	if registry.breakers == nil {
-		t.Error("NewCBRegistry() should initialize breakers map")
-	}
 }
 
 func TestCBRegistry_Get(t *testing.T) {

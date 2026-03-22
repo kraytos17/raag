@@ -3,6 +3,7 @@ package app
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"slices"
@@ -41,8 +42,7 @@ func (s *SearchService) Search(ctx context.Context, query string, limit int) ([]
 
 	trackIDs, err := s.index.Search(ctx, query, limit)
 	if err != nil {
-		slog.Warn("search index failed, falling back to library search", "error", err)
-		return s.libraryRepo.Search(ctx, SearchQuery{Query: query, Limit: limit})
+		return nil, fmt.Errorf("search index failed: %w", err)
 	}
 	return s.resolveAndRankTracks(ctx, query, trackIDs, limit)
 }
@@ -71,32 +71,35 @@ func (s *SearchService) resolveAndRankTracks(ctx context.Context, query string, 
 		slog.Warn("failed to batch resolve tracks", "error", err)
 	}
 
-	scored := make([]scoredTrack, 0, len(tracks))
+	normalizedQuery := domain.Normalize(query)
+	all := make([]scoredTrack, 0, len(tracks))
 	for _, track := range tracks {
-		score := s.calculateRankScore(query, track)
-		scored = append(scored, scoredTrack{track: track, score: score})
+		all = append(all, scoredTrack{
+			track: track,
+			score: s.calculateRankScore(normalizedQuery, track),
+		})
 	}
 
-	slices.SortFunc(scored, func(a, b scoredTrack) int {
+	slices.SortFunc(all, func(a, b scoredTrack) int {
 		return cmp.Compare(b.score, a.score)
 	})
 
-	result := make([]*domain.Track, 0, min(len(scored), limit))
-	for i := 0; i < min(len(scored), limit); i++ {
-		result = append(result, scored[i].track)
+	n := min(len(all), limit)
+	result := make([]*domain.Track, n)
+	for i := range n {
+		result[i] = all[i].track
 	}
 	return result, nil
 }
 
-func (s *SearchService) calculateRankScore(query string, track *domain.Track) float64 {
-	matchScore := s.calculateMatchScore(query, track)
+func (s *SearchService) calculateRankScore(normalizedQuery string, track *domain.Track) float64 {
+	matchScore := s.calculateMatchScore(normalizedQuery, track)
 	playScore := s.calculatePlayScore(track)
 	recencyScore := s.calculateRecencyScore(track)
 	return matchScore*rankMatchWeight + playScore*rankPlayWeight + recencyScore*rankRecencyWeight
 }
 
-func (s *SearchService) calculateMatchScore(query string, track *domain.Track) float64 {
-	normalizedQuery := domain.Normalize(query)
+func (s *SearchService) calculateMatchScore(normalizedQuery string, track *domain.Track) float64 {
 	score := 0.0
 	if strings.Contains(domain.Normalize(track.Title), normalizedQuery) {
 		score += BoostTitle

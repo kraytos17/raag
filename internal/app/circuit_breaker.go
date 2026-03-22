@@ -109,56 +109,30 @@ func (cb *CircuitBreaker) Reset() {
 }
 
 type CBRegistry struct {
-	mu        sync.RWMutex
-	breakers  map[domain.PeerID]*CircuitBreaker
+	m         sync.Map
 	threshold int
 	cooldown  time.Duration
 }
 
 func NewCBRegistry(threshold int, cooldown time.Duration) *CBRegistry {
 	return &CBRegistry{
-		breakers:  make(map[domain.PeerID]*CircuitBreaker),
 		threshold: threshold,
 		cooldown:  cooldown,
 	}
 }
 
 func (r *CBRegistry) Get(peerID domain.PeerID) *CircuitBreaker {
-	r.mu.RLock()
-	cb, exists := r.breakers[peerID]
-	r.mu.RUnlock()
-
-	if exists {
-		return cb
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if cb, exists = r.breakers[peerID]; exists {
-		return cb
-	}
-
-	cb = NewCircuitBreaker(peerID, r.threshold, r.cooldown)
-	r.breakers[peerID] = cb
-	return cb
+	val, _ := r.m.LoadOrStore(peerID, NewCircuitBreaker(peerID, r.threshold, r.cooldown))
+	return val.(*CircuitBreaker)
 }
 
 func (r *CBRegistry) Remove(peerID domain.PeerID) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.breakers, peerID)
+	r.m.Delete(peerID)
 }
 
 func (r *CBRegistry) ResetAll() {
-	r.mu.RLock()
-	breakers := make([]*CircuitBreaker, 0, len(r.breakers))
-	for _, cb := range r.breakers {
-		breakers = append(breakers, cb)
-	}
-
-	r.mu.RUnlock()
-	for _, cb := range breakers {
-		cb.Reset()
-	}
+	r.m.Range(func(key, value any) bool {
+		value.(*CircuitBreaker).Reset()
+		return true
+	})
 }

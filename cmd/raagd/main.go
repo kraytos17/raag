@@ -105,6 +105,7 @@ func main() {
 	}
 
 	lc := app.NewLifecycleManager()
+	lc.Register(scanner)
 	lc.Register(ipc.AsComponent(ipcServer))
 	if err := lc.StartAll(context.Background()); err != nil {
 		slog.Error("failed to start components", "error", err)

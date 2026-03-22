@@ -15,17 +15,22 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
+type FileEventHandler interface {
+	AddFile(ctx context.Context, path string) error
+	RemoveFile(ctx context.Context, path string) error
+}
+
 type FileWatcher struct {
 	watcher   *fsnotify.Watcher
 	paths     []string
-	scanner   *LibraryScanner
+	handler   FileEventHandler
 	statCache map[string]*domain.FileStat
 	mu        sync.Mutex
 	pending   map[string]fsnotify.Event
 	flushTick *time.Ticker
 }
 
-func NewFileWatcher(paths []string, scanner *LibraryScanner) (*FileWatcher, error) {
+func NewFileWatcher(paths []string, handler FileEventHandler) (*FileWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -34,7 +39,7 @@ func NewFileWatcher(paths []string, scanner *LibraryScanner) (*FileWatcher, erro
 	fw := &FileWatcher{
 		watcher:   watcher,
 		paths:     paths,
-		scanner:   scanner,
+		handler:   handler,
 		statCache: make(map[string]*domain.FileStat),
 		pending:   make(map[string]fsnotify.Event),
 	}
@@ -113,7 +118,9 @@ func (fw *FileWatcher) flushPending(ctx context.Context) {
 
 	for path := range pending {
 		if info, err := os.Stat(path); os.IsNotExist(err) {
-			fw.removeFile(ctx, path)
+			if err := fw.handler.RemoveFile(ctx, path); err != nil {
+				slog.Warn("failed to remove file", "path", path, "error", err)
+			}
 		} else if err == nil && !info.IsDir() {
 			fw.mu.Lock()
 			prev, exists := fw.statCache[path]
@@ -125,24 +132,14 @@ func (fw *FileWatcher) flushPending(ctx context.Context) {
 			if !exists || prev.Mtime != newStat.Mtime || prev.Size != newStat.Size {
 				fw.statCache[path] = newStat
 				fw.mu.Unlock()
-				fw.processFile(ctx, path)
+				if err := fw.handler.AddFile(ctx, path); err != nil {
+					slog.Warn("failed to add file", "path", path, "error", err)
+				}
 			} else {
 				fw.statCache[path] = newStat
 				fw.mu.Unlock()
 			}
 		}
-	}
-}
-
-func (fw *FileWatcher) removeFile(ctx context.Context, path string) {
-	if err := fw.scanner.RemoveFile(ctx, path); err != nil {
-		slog.Warn("failed to remove file", "path", path, "error", err)
-	}
-}
-
-func (fw *FileWatcher) processFile(ctx context.Context, path string) {
-	if err := fw.scanner.AddFile(ctx, path); err != nil {
-		slog.Warn("failed to add file", "path", path, "error", err)
 	}
 }
 

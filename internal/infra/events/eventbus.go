@@ -120,15 +120,24 @@ func (eb *EventBus) Subscribe(eventType domain.EventType, handler domain.EventHa
 }
 
 func (eb *EventBus) dispatch(sub *subscription) {
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
 	for {
 		event, ok := sub.rb.Pop()
 		if !ok {
+			if !timer.Reset(5 * time.Second) {
+				timer = time.NewTimer(5 * time.Second)
+			}
 			select {
 			case <-sub.rb.notify:
-			case <-time.After(5 * time.Second):
+			case <-timer.C:
 				return
 			}
 			continue
+		}
+		if !timer.Reset(5 * time.Second) {
+			timer = time.NewTimer(5 * time.Second)
 		}
 		func() {
 			defer func() {

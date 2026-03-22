@@ -72,9 +72,6 @@ func (r *libraryRepo) setTrackEntry(set func([]byte, []byte) error, track *domai
 	if err := set(PathKey(track.Path), []byte(track.ID)); err != nil {
 		return fmt.Errorf("failed to save path index: %w", err)
 	}
-	if err := set(PathStrKey(track.Path), []byte(track.ID)); err != nil {
-		return fmt.Errorf("failed to save path str index: %w", err)
-	}
 	if err := set(ArtistIndexKey(track.Artist, track.ID), nil); err != nil {
 		return fmt.Errorf("failed to save artist index: %w", err)
 	}
@@ -243,29 +240,6 @@ func (r *libraryRepo) AllTracksIter(ctx context.Context) iter.Seq2[*domain.Track
 	}
 }
 
-func (r *libraryRepo) Search(ctx context.Context, q app.SearchQuery) ([]*domain.Track, error) {
-	var results []*domain.Track
-	var iterErr error
-	query := strings.ToLower(strings.TrimSpace(q.Query))
-	for track, err := range r.AllTracksIter(ctx) {
-		if err != nil {
-			iterErr = err
-			continue
-		}
-		if strings.Contains(strings.ToLower(track.Title), query) ||
-			strings.Contains(strings.ToLower(track.Artist), query) {
-			results = append(results, track)
-			if len(results) >= q.Limit {
-				break
-			}
-		}
-	}
-	if iterErr != nil {
-		return results, iterErr
-	}
-	return results, nil
-}
-
 func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 	track, err := r.FindByID(ctx, id)
 	if err != nil {
@@ -279,9 +253,6 @@ func (r *libraryRepo) Delete(ctx context.Context, id domain.TrackID) error {
 			return err
 		}
 		if err := txn.Delete(PathKey(track.Path)); err != nil {
-			return err
-		}
-		if err := txn.Delete(PathStrKey(track.Path)); err != nil {
 			return err
 		}
 		if err := txn.Delete(ArtistIndexKey(track.Artist, id)); err != nil {
@@ -325,16 +296,16 @@ func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer iter.Close()
 
-		iter.Seek([]byte(PrefixTrackPathStr))
-		for iter.ValidForPrefix([]byte(PrefixTrackPathStr)) {
+		iter.Seek([]byte(PrefixTrackPath))
+		for iter.ValidForPrefix([]byte(PrefixTrackPath)) {
 			item := iter.Item()
 			key := string(item.Key())
-			if len(key) <= len(PrefixTrackPathStr) {
+			if len(key) <= len(PrefixTrackPath) {
 				iter.Next()
 				continue
 			}
 
-			paths = append(paths, key[len(PrefixTrackPathStr):])
+			paths = append(paths, key[len(PrefixTrackPath):])
 			iter.Next()
 		}
 		return nil
@@ -344,22 +315,18 @@ func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {
 
 func (r *libraryRepo) SaveFileStats(ctx context.Context, stats map[string]*domain.FileStat) error {
 	wb := r.db.NewWriteBatch()
+	defer wb.Cancel()
+
 	for path, stat := range stats {
 		data, err := ipc.MarshalFileStat(stat)
 		if err != nil {
-			wb.Cancel()
 			return err
 		}
 		if err := wb.Set(FileStatKey(path), data); err != nil {
-			wb.Cancel()
 			return err
 		}
 	}
-	if err := wb.Flush(); err != nil {
-		wb.Cancel()
-		return err
-	}
-	return nil
+	return wb.Flush()
 }
 
 func (r *libraryRepo) LoadFileStats(ctx context.Context) (map[string]*domain.FileStat, error) {

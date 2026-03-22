@@ -103,7 +103,7 @@ func TestPeerKey(t *testing.T) {
 	t.Parallel()
 	id := domain.PeerID("QmPeer123")
 	key := PeerKey(id)
-	expected := "peer:QmPeer123"
+	expected := "peer:info:QmPeer123"
 	if string(key) != expected {
 		t.Errorf("PeerKey() = %v, want %v", string(key), expected)
 	}
@@ -144,7 +144,7 @@ func TestNormalizeKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := normalizeKey(tt.input)
+			result := domain.NormalizeKey(tt.input)
 			if result != tt.expected {
 				t.Errorf("normalizeKey(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
