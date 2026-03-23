@@ -500,7 +500,7 @@ jobs:
         id: gpg
         if: steps.check_gpg.outputs.has_gpg == 'true'
         # Fix: was "ghaaction-import-gpg" (typo) — correct name is "ghaction-import-gpg"
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
