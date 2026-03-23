@@ -11,6 +11,7 @@ import (
 func Normalize(s string) string {
 	s = strings.ToLower(s)
 	s = strings.TrimSpace(s)
+
 	var result strings.Builder
 	result.Grow(len(s))
 	for _, r := range s {

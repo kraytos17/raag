@@ -1,12 +1,16 @@
 package db
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/denisbrodbeck/machineid"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
 	"github.com/klauspost/compress/zstd"
@@ -40,17 +44,13 @@ type DB struct {
 }
 
 func Open(dir string, opts Options) (*DB, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create db directory: %w", err)
 	}
 
-	encKey := os.Getenv("RAAG_DB_KEY")
-	var encryptionKey []byte
-	if encKey != "" {
-		encryptionKey = []byte(encKey)
-		if len(encryptionKey) != 32 {
-			return nil, fmt.Errorf("encryption key must be 32 bytes")
-		}
+	encryptionKey, err := getEncryptionKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get encryption key: %w", err)
 	}
 
 	compression := options.ZSTD
@@ -60,25 +60,43 @@ func Open(dir string, opts Options) (*DB, error) {
 
 	badgerOpts := badger.DefaultOptions(dir).
 		WithValueLogFileSize(opts.ValueLogFileSize).
-		WithCompression(compression)
-
-	if encryptionKey != nil {
-		badgerOpts = badgerOpts.WithEncryptionKey(encryptionKey)
-	}
+		WithCompression(compression).
+		WithEncryptionKey(encryptionKey)
 
 	db, err := badger.Open(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)
 	}
-
 	d := &DB{
 		db:   db,
 		path: dir,
 		opts: opts,
 		stop: make(chan struct{}),
 	}
+
 	d.startCompaction()
 	return d, nil
+}
+
+func getEncryptionKey() ([]byte, error) {
+	if key := os.Getenv("RAAG_DB_KEY"); key != "" {
+		if len(key) != 32 {
+			return nil, fmt.Errorf("RAAG_DB_KEY must be 32 bytes")
+		}
+		return []byte(key), nil
+	}
+
+	protectedID, err := machineid.ProtectedID("raag-v1")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get protected machine ID: %w", err)
+	}
+
+	h := hmac.New(sha256.New, []byte(protectedID))
+	h.Write([]byte("raag-db-v1"))
+	key := h.Sum(nil)
+
+	slog.Info("using machine-derived encryption key", "key_hash", hex.EncodeToString(key[:8]))
+	return key, nil
 }
 
 func (d *DB) Close() error {

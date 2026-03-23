@@ -15,11 +15,47 @@ import (
 	"github.com/p-society/raag/internal/infra/audio"
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/ipc"
+	"github.com/p-society/raag/internal/infra/p2p"
 	db "github.com/p-society/raag/internal/infra/storage"
 	"golang.org/x/term"
 )
 
 func main() {
+	cfg, skipScan := loadConfig()
+	database, libraryRepo, p2pNode := initializeServices(cfg)
+	runDaemon(cfg, database, libraryRepo, p2pNode, skipScan)
+}
+
+func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode) {
+	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
+	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
+	if err != nil {
+		slog.Error("failed to open database", "error", err)
+		os.Exit(1)
+	}
+
+	libraryRepo, err := db.NewLibraryRepo(database, cfg.Library.Paths)
+	if err != nil {
+		slog.Error("failed to create library repo", "error", err)
+		database.Close()
+		os.Exit(1)
+	}
+
+	p2pNode, err := p2p.NewP2PNode(context.Background(), p2p.P2PNodeConfig{
+		DataDir:         cfg.Daemon.DataDir,
+		ListenAddrs:     cfg.P2P.ListenAddrs,
+		AnnounceAddrs:   nil,
+		BootstrapPeers:  nil,
+		MdnsServiceName: cfg.P2P.MDNSServiceTag,
+	}, libraryRepo)
+	if err != nil {
+		slog.Error("failed to create P2P node", "error", err)
+		return database, libraryRepo, nil
+	}
+	return database, libraryRepo, p2pNode
+}
+
+func loadConfig() (*config.Config, bool) {
 	setup := flag.Bool("setup", false, "Run first-time setup wizard")
 	musicPath := flag.String("music-path", "", "Music directory path")
 	socketPath := flag.String("socket", "", "IPC socket path (overrides config)")
@@ -69,23 +105,18 @@ func main() {
 	}))
 
 	slog.SetDefault(logger)
-	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
-	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
-	if err != nil {
-		slog.Error("failed to open database", "error", err)
-		os.Exit(1)
-	}
+	return cfg, *noScan
+}
 
+func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, p2pNode *p2p.P2PNode, skipScan bool) {
 	bus := events.New()
-	libraryRepo, err := db.NewLibraryRepo(database, cfg.Library.Paths)
-	if err != nil {
-		slog.Error("failed to create library repo", "error", err)
-		_ = database.Close()
-		os.Exit(1)
-	}
-
 	searchIndex := app.NewSearchIndex(libraryRepo)
 	peerRepo := db.NewPeerRepo(database)
+	if p2pNode != nil {
+		if err := p2pNode.Start(context.Background(), bus); err != nil {
+			slog.Warn("failed to start P2P node", "error", err)
+		}
+	}
 
 	scanner := app.NewLibraryScanner(libraryRepo, libraryRepo, searchIndex, bus, cfg.Library.Paths)
 	searchService := app.NewSearchService(searchIndex, libraryRepo)
@@ -127,7 +158,7 @@ func main() {
 		_ = database.Close()
 		os.Exit(1)
 	}
-	if cfg.Library.ScanOnStart && !*noScan {
+	if cfg.Library.ScanOnStart && !skipScan {
 		slog.Info("starting library scan", "paths", cfg.Library.Paths)
 		go func() {
 			if _, err := scanner.Scan(context.Background()); err != nil {
@@ -152,6 +183,11 @@ func main() {
 
 	if err := player.Stop(shutdownCtx); err != nil {
 		slog.Warn("player stop error", "error", err)
+	}
+	if p2pNode != nil {
+		if err := p2pNode.Stop(shutdownCtx); err != nil {
+			slog.Warn("P2P node stop error", "error", err)
+		}
 	}
 
 	_ = lc.StopAll(shutdownCtx)
