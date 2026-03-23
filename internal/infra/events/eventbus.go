@@ -14,8 +14,6 @@ const (
 	eventChannelSize = 64
 )
 
-var subscriptionID atomic.Uint64
-
 type ringBuffer struct {
 	buf    []domain.Event
 	size   int
@@ -72,9 +70,10 @@ type subscription struct {
 }
 
 type EventBus struct {
-	mu     sync.RWMutex
-	subs   map[uint64]*subscription
-	closed bool
+	mu        sync.RWMutex
+	subs      map[uint64]*subscription
+	closed    bool
+	nextSubID atomic.Uint64
 }
 
 func New() *EventBus {
@@ -105,7 +104,7 @@ func (eb *EventBus) Subscribe(eventType domain.EventType, handler domain.EventHa
 		return func() {}
 	}
 
-	id := subscriptionID.Add(1)
+	id := eb.nextSubID.Add(1)
 	stop := make(chan struct{})
 	sub := &subscription{
 		id:        id,

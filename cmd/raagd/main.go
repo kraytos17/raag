@@ -12,7 +12,9 @@ import (
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/config"
+	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/audio"
+	"github.com/p-society/raag/internal/infra/duplicate"
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/ipc"
 	"github.com/p-society/raag/internal/infra/p2p"
@@ -112,6 +114,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	bus := events.New()
 	searchIndex := app.NewSearchIndex(libraryRepo)
 	peerRepo := db.NewPeerRepo(database)
+	duplicateDetector := duplicate.NewDetector(database, duplicate.ConfigToHandler(cfg.Library.DuplicateHandling))
 	if p2pNode != nil {
 		if err := p2pNode.Start(context.Background(), bus); err != nil {
 			slog.Warn("failed to start P2P node", "error", err)
@@ -119,14 +122,27 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	}
 
 	scanner := app.NewLibraryScanner(libraryRepo, libraryRepo, searchIndex, bus, cfg.Library.Paths)
-	searchService := app.NewSearchService(searchIndex, libraryRepo)
+	scanner.SetDuplicateCheck(func(ctx context.Context, hash string, trackID domain.TrackID, path string) (domain.TrackID, bool, bool, error) {
+		return duplicateDetector.CheckDuplicate(ctx, hash, trackID, path)
+	})
 
+	searchService := app.NewSearchService(searchIndex, libraryRepo)
 	resolve := app.NewResolveFunc(libraryRepo)
 	player := audio.NewEngine(cfg.Playback.SampleRate)
 	queue := audio.NewQueue()
 
 	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolve, bus)
-	cbRegistry := app.NewCBRegistry(cfg.P2P.MaxPeers, 30*time.Second)
+	cbThreshold := cfg.P2P.CBFailureThreshold
+	if cbThreshold <= 0 {
+		cbThreshold = 5
+	}
+
+	cbCooldown := cfg.P2P.CBCooldown
+	if cbCooldown <= 0 {
+		cbCooldown = time.Minute
+	}
+
+	cbRegistry := app.NewCBRegistry(cbThreshold, cbCooldown)
 	ipcServer, err := ipc.NewServer(cfg.Daemon.SocketPath, ipc.ServerConfig{
 		Playback:    playback,
 		Scanner:     scanner,
@@ -163,6 +179,12 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		go func() {
 			if _, err := scanner.Scan(context.Background()); err != nil {
 				slog.Error("library scan failed", "error", err)
+			}
+			if dups := duplicateDetector.GetDuplicates(); len(dups) > 0 {
+				slog.Warn("duplicates detected", "groups", len(dups))
+				for _, dup := range dups {
+					slog.Info("duplicate group", "hash", dup.Hash[:16]+"...", "original", dup.OriginalID, "duplicates", len(dup.DuplicateIDs))
+				}
 			}
 		}()
 	}

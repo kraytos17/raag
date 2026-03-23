@@ -8,12 +8,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/viper"
 )
 
 var ErrNoMusicPath = errors.New("no music path configured")
+
+type DuplicateHandling string
+
+const (
+	DuplicateSkip DuplicateHandling = "skip"
+	DuplicateWarn DuplicateHandling = "warn"
+	DuplicateKeep DuplicateHandling = "keep"
+)
 
 type Config struct {
 	Library    LibraryConfig    `mapstructure:"library"`
@@ -100,12 +109,16 @@ func (c *Config) expandPaths() error {
 
 func ExpandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil && home != "" {
-			return filepath.Join(home, path[2:])
-		}
+		return filepath.Join(homeDir(), path[2:])
 	}
 	return path
+}
+
+func homeDir() string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h
+	}
+	return os.Getenv("HOME")
 }
 
 func GetConfigDir() string {
@@ -227,9 +240,10 @@ func RunSetup() error {
 	configPath := filepath.Join(configDir, "config.toml")
 	newCfg := &Config{
 		Library: LibraryConfig{
-			Paths:       []string{musicPath},
-			ScanOnStart: true,
-			Watch:       false,
+			Paths:             []string{musicPath},
+			ScanOnStart:       true,
+			Watch:             false,
+			DuplicateHandling: DuplicateWarn,
 		},
 		Daemon: DaemonConfig{
 			SocketPath: socketPath,
@@ -293,9 +307,10 @@ func RunSetup() error {
 }
 
 type LibraryConfig struct {
-	Paths       []string `mapstructure:"paths"`
-	ScanOnStart bool     `mapstructure:"scan_on_start"`
-	Watch       bool     `mapstructure:"watch"`
+	Paths             []string          `mapstructure:"paths"`
+	ScanOnStart       bool              `mapstructure:"scan_on_start"`
+	Watch             bool              `mapstructure:"watch"`
+	DuplicateHandling DuplicateHandling `mapstructure:"duplicate_handling"`
 }
 
 type PlaybackConfig struct {
@@ -313,14 +328,16 @@ type DaemonConfig struct {
 }
 
 type P2PConfig struct {
-	Enabled          bool     `mapstructure:"enabled"`
-	ListenAddrs      []string `mapstructure:"listen_addrs"`
-	MDNSServiceTag   string   `mapstructure:"mdns_service_tag"`
-	MaxPeers         int      `mapstructure:"max_peers"`
-	StreamPort       int      `mapstructure:"stream_port"`
-	AnnounceLibrary  bool     `mapstructure:"announce_library"`
-	PerPeerRateLimit int      `mapstructure:"per_peer_rate_limit"`
-	UploadBandwidth  int      `mapstructure:"upload_bandwidth"`
+	Enabled            bool          `mapstructure:"enabled"`
+	ListenAddrs        []string      `mapstructure:"listen_addrs"`
+	MDNSServiceTag     string        `mapstructure:"mdns_service_tag"`
+	MaxPeers           int           `mapstructure:"max_peers"`
+	StreamPort         int           `mapstructure:"stream_port"`
+	AnnounceLibrary    bool          `mapstructure:"announce_library"`
+	PerPeerRateLimit   int           `mapstructure:"per_peer_rate_limit"`
+	UploadBandwidth    int           `mapstructure:"upload_bandwidth"`
+	CBFailureThreshold int           `mapstructure:"cb_failure_threshold"`
+	CBCooldown         time.Duration `mapstructure:"cb_cooldown"`
 }
 
 type TranscoderConfig struct {

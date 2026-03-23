@@ -46,28 +46,12 @@ func (r *libraryRepo) Save(ctx context.Context, track *domain.Track) error {
 }
 
 func (r *libraryRepo) setTrackEntry(set func([]byte, []byte) error, track *domain.Track) error {
-	if len(track.CoverArt) > 0 {
-		if err := set(CoverArtKey(track.ID), track.CoverArt); err != nil {
-			return fmt.Errorf("failed to save cover art: %w", err)
-		}
-
-		trackCopy := *track
-		trackCopy.CoverArt = nil
-		data, err := ipc.MarshalTrack(&trackCopy)
-		if err != nil {
-			return fmt.Errorf("failed to marshal track: %w", err)
-		}
-		if err := set(TrackKey(track.ID), data); err != nil {
-			return fmt.Errorf("failed to save track: %w", err)
-		}
-	} else {
-		data, err := ipc.MarshalTrack(track)
-		if err != nil {
-			return fmt.Errorf("failed to marshal track: %w", err)
-		}
-		if err := set(TrackKey(track.ID), data); err != nil {
-			return fmt.Errorf("failed to save track: %w", err)
-		}
+	data, err := ipc.MarshalTrack(track)
+	if err != nil {
+		return fmt.Errorf("failed to marshal track: %w", err)
+	}
+	if err := set(TrackKey(track.ID), data); err != nil {
+		return fmt.Errorf("failed to save track: %w", err)
 	}
 	if err := set(PathKey(track.Path), []byte(track.ID)); err != nil {
 		return fmt.Errorf("failed to save path index: %w", err)

@@ -2,7 +2,9 @@ package ipc
 
 import (
 	"errors"
+	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/p-society/raag/internal/infra/wire"
@@ -13,6 +15,31 @@ const (
 	ipcTimeout      = 3 * time.Second
 	protocolVersion = 1
 )
+
+var (
+	ErrTrackNotFound  = errors.New("track not found")
+	ErrPlaybackFailed = errors.New("playback failed")
+	ErrInvalidCommand = errors.New("invalid command")
+	ErrServerError    = errors.New("server error")
+)
+
+func mapResponseError(resp *pb.Response) error {
+	if resp.Success {
+		return nil
+	}
+
+	errStr := resp.Error
+	switch {
+	case strings.Contains(errStr, "not found"):
+		return ErrTrackNotFound
+	case strings.Contains(errStr, "playback"):
+		return ErrPlaybackFailed
+	case strings.Contains(errStr, "invalid"):
+		return ErrInvalidCommand
+	default:
+		return fmt.Errorf("%w: %s", ErrServerError, errStr)
+	}
+}
 
 type Client struct {
 	socketPath string
@@ -82,10 +109,7 @@ func (c *Client) SeekTo(offsetMs int64) error {
 	if err != nil {
 		return err
 	}
-	if !resp.Success {
-		return errors.New(resp.Error)
-	}
-	return nil
+	return mapResponseError(resp)
 }
 
 func (c *Client) SetVolume(volume int32) (*pb.Response, error) {

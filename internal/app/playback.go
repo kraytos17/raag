@@ -140,12 +140,15 @@ func (c *PlaybackController) Resume(ctx context.Context) error {
 }
 
 func (c *PlaybackController) Stop(ctx context.Context) error {
-	if c.fsm.State() == domain.PlayerStateIdle {
-		c.mu.Lock()
+	c.mu.Lock()
+	state := c.fsm.State()
+	if state == domain.PlayerStateIdle {
 		c.currentTrack = nil
 		c.mu.Unlock()
 		return nil
 	}
+
+	c.mu.Unlock()
 	if err := c.fsm.Send(ctx, EventStop); err != nil {
 		return err
 	}

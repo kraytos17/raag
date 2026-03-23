@@ -33,7 +33,6 @@ func TrackToProto(t *domain.Track) *pb.Track {
 		SampleRate:       t.SampleRate,
 		Channels:         t.Channels,
 		Lyrics:           t.Lyrics,
-		CoverArt:         t.CoverArt,
 		AddedAt:          t.AddedAt,
 		ModifiedAt:       t.ModifiedAt,
 		PlayCount:        t.PlayCount,
@@ -41,6 +40,8 @@ func TrackToProto(t *domain.Track) *pb.Track {
 		ReplayGainTrack:  t.ReplayGainTrack,
 		ReplayGainAlbum:  t.ReplayGainAlbum,
 		ContentHash:      t.ContentHash,
+		IsDuplicate:      t.IsDuplicate,
+		DuplicateOf:      string(t.DuplicateOf),
 	}
 }
 
@@ -70,7 +71,6 @@ func ProtoToTrack(p *pb.Track) *domain.Track {
 		SampleRate:       p.SampleRate,
 		Channels:         p.Channels,
 		Lyrics:           p.Lyrics,
-		CoverArt:         p.CoverArt,
 		AddedAt:          p.AddedAt,
 		ModifiedAt:       p.ModifiedAt,
 		PlayCount:        p.PlayCount,
@@ -78,6 +78,8 @@ func ProtoToTrack(p *pb.Track) *domain.Track {
 		ReplayGainTrack:  p.ReplayGainTrack,
 		ReplayGainAlbum:  p.ReplayGainAlbum,
 		ContentHash:      p.ContentHash,
+		IsDuplicate:      p.IsDuplicate,
+		DuplicateOf:      domain.TrackID(p.DuplicateOf),
 	}
 	if t.NormalizedTitle == "" {
 		t.NormalizedTitle = domain.Normalize(t.Title)

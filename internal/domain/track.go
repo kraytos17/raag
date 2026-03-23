@@ -46,7 +46,6 @@ type Track struct {
 	SampleRate       uint32
 	Channels         uint32
 	Lyrics           string
-	CoverArt         []byte
 	AddedAt          int64
 	ModifiedAt       int64
 	PlayCount        uint64
@@ -54,6 +53,8 @@ type Track struct {
 	ReplayGainTrack  float32
 	ReplayGainAlbum  float32
 	ContentHash      string
+	IsDuplicate      bool
+	DuplicateOf      TrackID
 }
 
 func NewTrack(path string) *Track {
@@ -83,8 +84,6 @@ func (t *Track) Copy() *Track {
 	genres := make([]string, len(t.Genres))
 	copy(genres, t.Genres)
 
-	coverArt := make([]byte, len(t.CoverArt))
-	copy(coverArt, t.CoverArt)
 	return &Track{
 		ID:               t.ID,
 		Path:             t.Path,
@@ -107,7 +106,6 @@ func (t *Track) Copy() *Track {
 		SampleRate:       t.SampleRate,
 		Channels:         t.Channels,
 		Lyrics:           t.Lyrics,
-		CoverArt:         coverArt,
 		AddedAt:          t.AddedAt,
 		ModifiedAt:       t.ModifiedAt,
 		PlayCount:        t.PlayCount,
@@ -115,6 +113,8 @@ func (t *Track) Copy() *Track {
 		ReplayGainTrack:  t.ReplayGainTrack,
 		ReplayGainAlbum:  t.ReplayGainAlbum,
 		ContentHash:      t.ContentHash,
+		IsDuplicate:      t.IsDuplicate,
+		DuplicateOf:      t.DuplicateOf,
 	}
 }
 
@@ -125,8 +125,4 @@ func (t *Track) Duration() time.Duration {
 func (t *Track) IncrementPlayCount() {
 	t.PlayCount++
 	t.LastPlayed = time.Now().Unix()
-}
-
-func (t *Track) HasCoverArt() bool {
-	return len(t.CoverArt) > 0
 }
