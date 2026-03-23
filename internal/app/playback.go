@@ -45,7 +45,7 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	if err != nil {
 		return err
 	}
-	if err := c.fsm.Send(ctx, EventPlay); err != nil {
+	if err := c.fsm.Send(ctx, domain.EventPlay); err != nil {
 		return err
 	}
 
@@ -55,20 +55,20 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 
 	reader, err := c.resolve(ctx, trackID)
 	if err != nil {
-		_ = c.fsm.Send(ctx, EventBufferFail)
+		_ = c.fsm.Send(ctx, domain.EventBufferFail)
 		c.mu.Lock()
 		c.currentTrack = nil
 		c.mu.Unlock()
 		return err
 	}
 	if err := c.player.Play(ctx, reader, track.MimeType); err != nil {
-		_ = c.fsm.Send(ctx, EventBufferFail)
+		_ = c.fsm.Send(ctx, domain.EventBufferFail)
 		c.mu.Lock()
 		c.currentTrack = nil
 		c.mu.Unlock()
 		return err
 	}
-	if err := c.fsm.Send(ctx, EventBufferReady); err != nil {
+	if err := c.fsm.Send(ctx, domain.EventBufferReady); err != nil {
 		slog.Error("FSM transition to playing failed", "error", err)
 	}
 
@@ -94,11 +94,11 @@ func (c *PlaybackController) PlayQuery(ctx context.Context, query string) error 
 }
 
 func (c *PlaybackController) Pause(ctx context.Context) error {
-	if err := c.fsm.Send(ctx, EventPause); err != nil {
+	if err := c.fsm.Send(ctx, domain.EventPause); err != nil {
 		return err
 	}
 	if err := c.player.Pause(ctx); err != nil {
-		_ = c.fsm.Send(ctx, EventResume)
+		_ = c.fsm.Send(ctx, domain.EventResume)
 		return err
 	}
 
@@ -117,11 +117,11 @@ func (c *PlaybackController) Pause(ctx context.Context) error {
 }
 
 func (c *PlaybackController) Resume(ctx context.Context) error {
-	if err := c.fsm.Send(ctx, EventResume); err != nil {
+	if err := c.fsm.Send(ctx, domain.EventResume); err != nil {
 		return err
 	}
 	if err := c.player.Resume(ctx); err != nil {
-		_ = c.fsm.Send(ctx, EventPause)
+		_ = c.fsm.Send(ctx, domain.EventPause)
 		return err
 	}
 
@@ -149,7 +149,7 @@ func (c *PlaybackController) Stop(ctx context.Context) error {
 	}
 
 	c.mu.Unlock()
-	if err := c.fsm.Send(ctx, EventStop); err != nil {
+	if err := c.fsm.Send(ctx, domain.EventStop); err != nil {
 		return err
 	}
 	if err := c.player.Stop(ctx); err != nil {
@@ -165,19 +165,19 @@ func (c *PlaybackController) Stop(ctx context.Context) error {
 func (c *PlaybackController) Seek(ctx context.Context, position time.Duration) error {
 	prevState := c.fsm.State()
 	prevPos := c.player.GetPosition()
-	if err := c.fsm.Send(ctx, EventSeek); err != nil {
+	if err := c.fsm.Send(ctx, domain.EventSeek); err != nil {
 		return err
 	}
 	if err := c.player.Seek(ctx, position); err != nil {
 		// Roll back to the previous stable state.
 		// We are currently in Seeking; SeekDone returns to Playing.
-		_ = c.fsm.Send(ctx, EventSeekDone)
+		_ = c.fsm.Send(ctx, domain.EventSeekDone)
 		if prevState == domain.PlayerStatePaused {
-			_ = c.fsm.Send(ctx, EventPause)
+			_ = c.fsm.Send(ctx, domain.EventPause)
 		}
 		return err
 	}
-	if err := c.fsm.Send(ctx, EventSeekDone); err != nil {
+	if err := c.fsm.Send(ctx, domain.EventSeekDone); err != nil {
 		return err
 	}
 	c.mu.Lock()

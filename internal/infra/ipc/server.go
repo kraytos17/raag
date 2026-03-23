@@ -19,11 +19,6 @@ import (
 	pb "github.com/p-society/raag/proto/gen"
 )
 
-const (
-	ipcReadTimeout  = 30 * time.Second
-	ipcWriteTimeout = 5 * time.Second
-)
-
 type Server struct {
 	socketPath string
 	listener   net.Listener
@@ -206,7 +201,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		default:
 		}
 
-		if err := conn.SetReadDeadline(time.Now().Add(ipcReadTimeout)); err != nil {
+		if err := conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout)); err != nil {
 			slog.Warn("failed to set read deadline", "error", err)
 			return
 		}
@@ -223,7 +218,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		}
 
 		resp := s.dispatch(ctx, &req)
-		if err := conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout)); err != nil {
+		if err := conn.SetWriteDeadline(time.Now().Add(domain.IPCWriteTimeout)); err != nil {
 			slog.Warn("failed to set write deadline", "error", err)
 			return
 		}

@@ -23,25 +23,14 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const sampleSize = 64 * 1024 // 64KB sample chunks
-
-var ErrDuplicateSkipped = errors.New("duplicate track, skipped by policy")
-
-var AudioExtensions = []string{".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma"}
+var AudioExtensions = domain.AudioExtensions
 
 type ScanProgress struct {
 	Scanned     int
 	Total       int
 	CurrentFile string
-	Phase       ScanPhase
+	Phase       domain.ScanPhase
 }
-
-type ScanPhase string
-
-const (
-	ScanPhaseWalking ScanPhase = "walking"
-	ScanPhaseParsing ScanPhase = "parsing"
-)
 
 func WalkAudioFiles(ctx context.Context, dirPath string) iter.Seq2[string, error] {
 	return func(yield func(string, error) bool) {
@@ -352,13 +341,13 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 					Scanned:     fileIdx + 1,
 					Total:       len(newFiles),
 					CurrentFile: filePath,
-					Phase:       ScanPhaseParsing,
+					Phase:       domain.ScanPhaseParsing,
 				})
 			}
 
 			track, err := s.parseFile(filePath)
 			if err != nil {
-				if errors.Is(err, ErrDuplicateSkipped) {
+				if errors.Is(err, domain.ErrDuplicateSkipped) {
 					slog.Info("skipping duplicate track", "file", filePath)
 					return nil
 				}
@@ -407,7 +396,7 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 }
 
 func computeSampleHash(file *os.File, fileSize int64) string {
-	if fileSize <= sampleSize*2 {
+	if fileSize <= domain.SampleSize*2 {
 		hash := sha256.New()
 		if _, err := io.Copy(hash, file); err != nil {
 			return ""
@@ -420,17 +409,17 @@ func computeSampleHash(file *os.File, fileSize int64) string {
 		return ""
 	}
 
-	head := make([]byte, sampleSize)
+	head := make([]byte, domain.SampleSize)
 	if _, err := io.ReadFull(file, head); err != nil {
 		return ""
 	}
 
 	hash.Write(head)
-	if _, err := file.Seek(-sampleSize, io.SeekEnd); err != nil {
+	if _, err := file.Seek(-domain.SampleSize, io.SeekEnd); err != nil {
 		return ""
 	}
 
-	tail := make([]byte, sampleSize)
+	tail := make([]byte, domain.SampleSize)
 	if _, err := io.ReadFull(file, tail); err != nil {
 		return ""
 	}
@@ -541,7 +530,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 			slog.Info("duplicate track detected", "path", path, "original", originalID)
 		}
 		if shouldSkip {
-			return track, ErrDuplicateSkipped
+			return track, domain.ErrDuplicateSkipped
 		}
 	}
 

@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	rankMatchWeight   = 0.6
-	rankPlayWeight    = 0.25
-	rankRecencyWeight = 0.15
+	rankMatchWeight   = domain.RankMatchWeight
+	rankPlayWeight    = domain.RankPlayWeight
+	rankRecencyWeight = domain.RankRecencyWeight
 
-	BoostTitle  = 3.0
-	BoostArtist = 2.0
-	BoostAlbum  = 1.5
+	BoostTitle  = domain.BoostTitle
+	BoostArtist = domain.BoostArtist
+	BoostAlbum  = domain.BoostAlbum
 )
 
 type SearchService struct {

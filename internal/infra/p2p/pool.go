@@ -9,15 +9,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	protocol "github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/p-society/raag/internal/domain"
 )
 
 var ErrConnectionFailed = errors.New("connection failed")
-
-const (
-	MaxStreamsPerPeer = 3
-	StreamIdleTimeout = 5 * time.Minute
-	MaxPoolSize       = 100
-)
 
 type StreamOpener interface {
 	NewStream(ctx context.Context, pid peer.ID, protos ...protocol.ID) (network.Stream, error)
@@ -61,7 +56,7 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 		if s.refCnt > 0 {
 			continue
 		}
-		if now.Sub(s.lastUsed) > StreamIdleTimeout {
+		if now.Sub(s.lastUsed) > domain.StreamIdleTimeout {
 			p.removeStreamLocked(pid, i)
 			continue
 		}
@@ -70,7 +65,7 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 		p.mu.Unlock()
 		return s.stream, nil
 	}
-	if len(pool) < MaxStreamsPerPeer {
+	if len(pool) < domain.MaxStreamsPerPeer {
 		p.mu.Unlock()
 		return p.createStream(ctx, pid)
 	}
@@ -96,7 +91,7 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 
 func (p *StreamPool) createStream(ctx context.Context, pid peer.ID) (network.Stream, error) {
 	p.mu.Lock()
-	if p.totalStreams >= MaxPoolSize {
+	if p.totalStreams >= domain.MaxPoolSize {
 		p.mu.Unlock()
 		return nil, ErrConnectionFailed
 	}
@@ -114,7 +109,7 @@ func (p *StreamPool) createStream(ctx context.Context, pid peer.ID) (network.Str
 	}
 
 	p.mu.Lock()
-	if p.totalStreams >= MaxPoolSize {
+	if p.totalStreams >= domain.MaxPoolSize {
 		_ = stream.Close()
 		p.mu.Unlock()
 		return nil, ErrConnectionFailed
@@ -214,7 +209,7 @@ func (p *StreamPool) reaper() {
 			for pid, pool := range p.pools {
 				for i := len(pool) - 1; i >= 0; i-- {
 					ps := pool[i]
-					if ps.refCnt == 0 && now.Sub(ps.lastUsed) > StreamIdleTimeout {
+					if ps.refCnt == 0 && now.Sub(ps.lastUsed) > domain.StreamIdleTimeout {
 						p.removeStreamLocked(pid, i)
 					}
 				}

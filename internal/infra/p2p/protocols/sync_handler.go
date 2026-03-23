@@ -129,7 +129,7 @@ func (h *SyncHandler) handleCapabilitiesRequest(_ context.Context, stream networ
 		Payload: &pb.SyncResponse_Capabilities{
 			Capabilities: &pb.PeerCapabilities{
 				SupportedCodecs:   app.AudioExtensions,
-				SupportedBitrates: []int32{128, 192, 256, 320},
+				SupportedBitrates: domain.SupportedBitrates,
 				ProtocolVersion:   "1.0.0",
 			},
 		},

@@ -14,10 +14,6 @@ import (
 	"github.com/p-society/raag/internal/infra/ipc"
 )
 
-const (
-	defaultCacheSize = 10000
-)
-
 type libraryRepo struct {
 	db    *DB
 	cache *lru.Cache[string, *domain.Track]
@@ -29,7 +25,7 @@ type LibraryRepo interface {
 }
 
 func NewLibraryRepo(db *DB, paths []string) (LibraryRepo, error) {
-	cache, err := lru.New[string, *domain.Track](defaultCacheSize)
+	cache, err := lru.New[string, *domain.Track](domain.DefaultCacheSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create LRU cache: %w", err)
 	}
@@ -193,7 +189,7 @@ func (r *libraryRepo) AllTracksIter(ctx context.Context) iter.Seq2[*domain.Track
 			it := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer it.Close()
 
-			prefix := []byte(PrefixTrackData)
+			prefix := []byte(domain.PrefixTrackData)
 			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -271,7 +267,7 @@ func (r *libraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) erro
 }
 
 func (r *libraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error) {
-	return collectAll(r.db, []byte(PrefixTrackData), ipc.UnmarshalTrack), nil
+	return collectAll(r.db, []byte(domain.PrefixTrackData), ipc.UnmarshalTrack), nil
 }
 
 func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {
@@ -280,16 +276,16 @@ func (r *libraryRepo) ListAllPaths(ctx context.Context) ([]string, error) {
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer iter.Close()
 
-		iter.Seek([]byte(PrefixTrackPath))
-		for iter.ValidForPrefix([]byte(PrefixTrackPath)) {
+		iter.Seek([]byte(domain.PrefixTrackPath))
+		for iter.ValidForPrefix([]byte(domain.PrefixTrackPath)) {
 			item := iter.Item()
 			key := string(item.Key())
-			if len(key) <= len(PrefixTrackPath) {
+			if len(key) <= len(domain.PrefixTrackPath) {
 				iter.Next()
 				continue
 			}
 
-			paths = append(paths, key[len(PrefixTrackPath):])
+			paths = append(paths, key[len(domain.PrefixTrackPath):])
 			iter.Next()
 		}
 		return nil
@@ -319,8 +315,8 @@ func (r *libraryRepo) LoadFileStats(ctx context.Context) (map[string]*domain.Fil
 		iter := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer iter.Close()
 
-		iter.Seek([]byte(PrefixFileStat))
-		for iter.ValidForPrefix([]byte(PrefixFileStat)) {
+		iter.Seek([]byte(domain.PrefixFileStat))
+		for iter.ValidForPrefix([]byte(domain.PrefixFileStat)) {
 			item := iter.Item()
 			data, err := item.ValueCopy(nil)
 			if err != nil {

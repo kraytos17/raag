@@ -10,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	protocol "github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/p-society/raag/internal/domain"
 )
 
 type mockStream struct {
@@ -329,7 +330,7 @@ func TestStreamPool_MaxStreamsPerPeer(t *testing.T) {
 		}
 	}
 
-	if active != MaxStreamsPerPeer {
-		t.Errorf("Active streams = %d, want %d (max per peer)", active, MaxStreamsPerPeer)
+	if active != domain.MaxStreamsPerPeer {
+		t.Errorf("Active streams = %d, want %d (max per peer)", active, domain.MaxStreamsPerPeer)
 	}
 }

@@ -78,7 +78,7 @@ func (r *peerRepo) ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, erro
 			iter := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer iter.Close()
 
-			prefix := []byte(PrefixPeerInfo)
+			prefix := []byte(domain.PrefixPeerInfo)
 			iter.Seek(prefix)
 			for iter.ValidForPrefix(prefix) {
 				item := iter.Item()
@@ -96,7 +96,7 @@ func (r *peerRepo) ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, erro
 					continue
 				}
 
-				peerID := domain.PeerID(keyStr[len(PrefixPeerInfo):])
+				peerID := domain.PeerID(keyStr[len(domain.PrefixPeerInfo):])
 				scoreItem, err := txn.Get(PeerScoreKey(peerID))
 				if err == nil && scoreItem != nil {
 					scoreData, _ := scoreItem.ValueCopy(nil)

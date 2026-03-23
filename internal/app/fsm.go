@@ -67,56 +67,40 @@ func (f *FSM[S, E]) CanTransition(event E) bool {
 	return ok
 }
 
-type PlaybackEvent string
-
-const (
-	EventPlay        PlaybackEvent = "play"
-	EventBufferReady PlaybackEvent = "buffer_ready"
-	EventBufferFail  PlaybackEvent = "buffer_fail"
-	EventPause       PlaybackEvent = "pause"
-	EventResume      PlaybackEvent = "resume"
-	EventEOF         PlaybackEvent = "eof"
-	EventSeek        PlaybackEvent = "seek"
-	EventSeekDone    PlaybackEvent = "seek_done"
-	EventUnderrun    PlaybackEvent = "underrun"
-	EventStop        PlaybackEvent = "stop"
-	EventRetry       PlaybackEvent = "retry"
-)
-
-var playbackTransitions = map[domain.PlayerState]map[PlaybackEvent]domain.PlayerState{
+var playbackTransitions = map[domain.PlayerState]map[domain.PlaybackEvent]domain.PlayerState{
 	domain.PlayerStateIdle: {
-		EventPlay: domain.PlayerStateBuffering,
-		EventStop: domain.PlayerStateIdle,
+		domain.EventPlay: domain.PlayerStateBuffering,
+		domain.EventStop: domain.PlayerStateIdle,
 	},
 	domain.PlayerStateBuffering: {
-		EventBufferReady: domain.PlayerStatePlaying,
-		EventBufferFail:  domain.PlayerStateError,
-		EventStop:        domain.PlayerStateIdle,
+		domain.EventBufferReady: domain.PlayerStatePlaying,
+		domain.EventBufferFail:  domain.PlayerStateError,
+		domain.EventStop:        domain.PlayerStateIdle,
 	},
 	domain.PlayerStatePlaying: {
-		EventPause:    domain.PlayerStatePaused,
-		EventEOF:      domain.PlayerStateIdle,
-		EventSeek:     domain.PlayerStateSeeking,
-		EventUnderrun: domain.PlayerStateBuffering,
-		EventStop:     domain.PlayerStateIdle,
+		domain.EventPause:    domain.PlayerStatePaused,
+		domain.EventEOF:      domain.PlayerStateIdle,
+		domain.EventSeek:     domain.PlayerStateSeeking,
+		domain.EventUnderrun: domain.PlayerStateBuffering,
+		domain.EventStop:     domain.PlayerStateIdle,
 	},
 	domain.PlayerStatePaused: {
-		EventResume: domain.PlayerStatePlaying,
-		EventSeek:   domain.PlayerStateSeeking,
-		EventStop:   domain.PlayerStateIdle,
+		domain.EventResume: domain.PlayerStatePlaying,
+		domain.EventSeek:   domain.PlayerStateSeeking,
+		domain.EventStop:   domain.PlayerStateIdle,
 	},
 	domain.PlayerStateSeeking: {
-		EventSeekDone: domain.PlayerStatePlaying,
-		EventStop:     domain.PlayerStateIdle,
+		domain.EventSeekDone: domain.PlayerStatePlaying,
+		domain.EventStop:     domain.PlayerStateIdle,
 	},
 	domain.PlayerStateError: {
-		EventRetry: domain.PlayerStateBuffering,
-		EventStop:  domain.PlayerStateIdle,
+		domain.EventRetry: domain.PlayerStateBuffering,
+		domain.EventStop:  domain.PlayerStateIdle,
 	},
 }
 
 type PlaybackFSM struct {
-	*FSM[domain.PlayerState, PlaybackEvent]
+	*FSM[domain.PlayerState, domain.PlaybackEvent]
 	bus domain.EventBus
 }
 

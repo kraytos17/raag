@@ -13,8 +13,8 @@ func TestCircuitBreaker_New(t *testing.T) {
 	if cb.peerID != peerID {
 		t.Errorf("NewCircuitBreaker() peerID = %v, want %v", cb.peerID, peerID)
 	}
-	if cb.state != CBStateClosed {
-		t.Errorf("NewCircuitBreaker() initial state = %v, want CBStateClosed", cb.state)
+	if cb.state != domain.CBStateClosed {
+		t.Errorf("NewCircuitBreaker() initial state = %v, want domain.CBStateClosed", cb.state)
 	}
 	if cb.threshold != 5 {
 		t.Errorf("NewCircuitBreaker() threshold = %d, want 5", cb.threshold)
@@ -24,11 +24,11 @@ func TestCircuitBreaker_New(t *testing.T) {
 func TestCircuitBreaker_States(t *testing.T) {
 	tests := []struct {
 		name  string
-		state CBState
+		state domain.CBState
 	}{
-		{"closed", CBStateClosed},
-		{"open", CBStateOpen},
-		{"half_open", CBStateHalfOpen},
+		{"closed", domain.CBStateClosed},
+		{"open", domain.CBStateOpen},
+		{"half_open", domain.CBStateHalfOpen},
 	}
 
 	for _, tt := range tests {
@@ -46,15 +46,15 @@ func TestCircuitBreaker_States(t *testing.T) {
 func TestCircuitBreaker_Allow(t *testing.T) {
 	tests := []struct {
 		name        string
-		state       CBState
+		state       domain.CBState
 		cooldown    time.Duration
 		lastFailAgo time.Duration
 		wantAllowed bool
 	}{
-		{"closed allows", CBStateClosed, 0, 0, true},
-		{"half_open allows", CBStateHalfOpen, 0, 0, true},
-		{"open blocks during cooldown", CBStateOpen, time.Hour, time.Minute, false},
-		{"open allows after cooldown", CBStateOpen, time.Millisecond, time.Hour, true},
+		{"closed allows", domain.CBStateClosed, 0, 0, true},
+		{"half_open allows", domain.CBStateHalfOpen, 0, 0, true},
+		{"open blocks during cooldown", domain.CBStateOpen, time.Hour, time.Minute, false},
+		{"open allows after cooldown", domain.CBStateOpen, time.Millisecond, time.Hour, true},
 	}
 
 	for _, tt := range tests {
@@ -77,13 +77,13 @@ func TestCircuitBreaker_Threshold(t *testing.T) {
 
 	for i := range 2 {
 		cb.RecordFailure()
-		if cb.GetState() != CBStateClosed {
+		if cb.GetState() != domain.CBStateClosed {
 			t.Errorf("after %d failures, state = %v, want closed", i+1, cb.GetState())
 		}
 	}
 
 	cb.RecordFailure()
-	if cb.GetState() != CBStateOpen {
+	if cb.GetState() != domain.CBStateOpen {
 		t.Errorf("after 3 failures, state = %v, want open", cb.GetState())
 	}
 }
@@ -94,7 +94,7 @@ func TestCircuitBreaker_HalfOpen(t *testing.T) {
 
 	cb.RecordFailure()
 	cb.RecordFailure()
-	if cb.GetState() != CBStateOpen {
+	if cb.GetState() != domain.CBStateOpen {
 		t.Errorf("after threshold failures, state = %v, want open", cb.GetState())
 	}
 
@@ -102,7 +102,7 @@ func TestCircuitBreaker_HalfOpen(t *testing.T) {
 	if !cb.Allow() {
 		t.Error("Allow() should return true after cooldown")
 	}
-	if cb.GetState() != CBStateHalfOpen {
+	if cb.GetState() != domain.CBStateHalfOpen {
 		t.Errorf("after Allow() during cooldown, state = %v, want half_open", cb.GetState())
 	}
 }
@@ -111,19 +111,19 @@ func TestCircuitBreaker_HalfOpenSuccess(t *testing.T) {
 	peerID := domain.PeerID("test-peer")
 	cb := NewCircuitBreaker(peerID, 2, time.Millisecond)
 
-	cb.state = CBStateHalfOpen
+	cb.state = domain.CBStateHalfOpen
 	cb.RecordSuccess()
-	if cb.GetState() != CBStateHalfOpen {
+	if cb.GetState() != domain.CBStateHalfOpen {
 		t.Errorf("after 1 success in half_open, state = %v, want half_open", cb.GetState())
 	}
 
 	cb.RecordSuccess()
-	if cb.GetState() != CBStateHalfOpen {
+	if cb.GetState() != domain.CBStateHalfOpen {
 		t.Errorf("after 2 successes in half_open, state = %v, want half_open", cb.GetState())
 	}
 
 	cb.RecordSuccess()
-	if cb.GetState() != CBStateClosed {
+	if cb.GetState() != domain.CBStateClosed {
 		t.Errorf("after 3 successes in half_open, state = %v, want closed", cb.GetState())
 	}
 }
@@ -132,9 +132,9 @@ func TestCircuitBreaker_HalfOpenFailure(t *testing.T) {
 	peerID := domain.PeerID("test-peer")
 	cb := NewCircuitBreaker(peerID, 2, time.Minute)
 
-	cb.state = CBStateHalfOpen
+	cb.state = domain.CBStateHalfOpen
 	cb.RecordFailure()
-	if cb.GetState() != CBStateOpen {
+	if cb.GetState() != domain.CBStateOpen {
 		t.Errorf("after failure in half_open, state = %v, want open", cb.GetState())
 	}
 }
@@ -143,13 +143,13 @@ func TestCircuitBreaker_Reset(t *testing.T) {
 	peerID := domain.PeerID("test-peer")
 	cb := NewCircuitBreaker(peerID, 2, time.Minute)
 
-	cb.state = CBStateOpen
+	cb.state = domain.CBStateOpen
 	cb.failCount = 10
 	cb.successCount = 5
 	cb.halfOpenSuccesses = 2
 
 	cb.Reset()
-	if cb.GetState() != CBStateClosed {
+	if cb.GetState() != domain.CBStateClosed {
 		t.Errorf("after Reset(), state = %v, want closed", cb.GetState())
 	}
 	if cb.failCount != 0 {
@@ -177,12 +177,12 @@ func TestCircuitBreaker_SuccessDecrementFailure(t *testing.T) {
 func TestCircuitBreaker_Constants(t *testing.T) {
 	tests := []struct {
 		name  string
-		state CBState
+		state domain.CBState
 		str   string
 	}{
-		{"closed", CBStateClosed, "closed"},
-		{"open", CBStateOpen, "open"},
-		{"half_open", CBStateHalfOpen, "half_open"},
+		{"closed", domain.CBStateClosed, "closed"},
+		{"open", domain.CBStateOpen, "open"},
+		{"half_open", domain.CBStateHalfOpen, "half_open"},
 	}
 
 	for _, tt := range tests {
@@ -220,7 +220,7 @@ func TestCBRegistry_GetNew(t *testing.T) {
 	peerID := domain.PeerID("test-peer")
 
 	cb := registry.Get(peerID)
-	if cb.GetState() != CBStateClosed {
+	if cb.GetState() != domain.CBStateClosed {
 		t.Errorf("Get() new breaker state = %v, want closed", cb.GetState())
 	}
 }
@@ -244,14 +244,14 @@ func TestCBRegistry_ResetAll(t *testing.T) {
 
 	cb1 := registry.Get(peer1)
 	cb2 := registry.Get(peer2)
-	cb1.state = CBStateOpen
+	cb1.state = domain.CBStateOpen
 	cb1.failCount = 10
 
 	registry.ResetAll()
-	if cb1.GetState() != CBStateClosed {
+	if cb1.GetState() != domain.CBStateClosed {
 		t.Errorf("after ResetAll(), cb1 state = %v, want closed", cb1.GetState())
 	}
-	if cb2.GetState() != CBStateClosed {
+	if cb2.GetState() != domain.CBStateClosed {
 		t.Errorf("after ResetAll(), cb2 state = %v, want closed", cb2.GetState())
 	}
 }
