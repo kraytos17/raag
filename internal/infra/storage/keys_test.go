@@ -24,9 +24,9 @@ func TestPathKey(t *testing.T) {
 		t.Error("PathKey() returned empty key")
 	}
 
-	expectedPrefix := string(PrefixTrackPath)
+	expectedPrefix := string(domain.PrefixTrackPath)
 	if string(key[:len(expectedPrefix)]) != expectedPrefix {
-		t.Errorf("PathKey() should start with prefix %v", PrefixTrackPath)
+		t.Errorf("PathKey() should start with prefix %v", domain.PrefixTrackPath)
 	}
 }
 
@@ -84,9 +84,9 @@ func TestFileStatKey(t *testing.T) {
 		t.Error("FileStatKey() returned empty key")
 	}
 
-	expectedPrefix := string(PrefixFileStat)
+	expectedPrefix := string(domain.PrefixFileStat)
 	if string(key[:len(expectedPrefix)]) != expectedPrefix {
-		t.Errorf("FileStatKey() should start with prefix %v", PrefixFileStat)
+		t.Errorf("FileStatKey() should start with prefix %v", domain.PrefixFileStat)
 	}
 }
 

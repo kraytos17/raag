@@ -10,10 +10,6 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-const (
-	eventChannelSize = 64
-)
-
 type ringBuffer struct {
 	buf    []domain.Event
 	size   int
@@ -109,7 +105,7 @@ func (eb *EventBus) Subscribe(eventType domain.EventType, handler domain.EventHa
 	sub := &subscription{
 		id:        id,
 		eventType: eventType,
-		rb:        newRingBuffer(eventChannelSize),
+		rb:        newRingBuffer(domain.EventChannelSize),
 		handler:   handler,
 		stop:      stop,
 	}

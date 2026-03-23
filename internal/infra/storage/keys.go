@@ -7,75 +7,60 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-const (
-	PrefixTrackData    = "trk:data:"
-	PrefixTrackPath    = "trk:path:"
-	PrefixTrackPathStr = "trk:pathstr:"
-	PrefixTrackArtist  = "trk:artist:"
-	PrefixTrackAlbum   = "trk:album:"
-	PrefixIdxTerm      = "idx:term:"
-	PrefixIdxTrigram   = "idx:trigram:"
-	PrefixFileStat     = "meta:filestat:"
-	PrefixPlaylist     = "pl:"
-	PrefixPeerInfo     = "peer:info:"
-	PrefixPeerLib      = "peer:lib:"
-	PrefixPeerScore    = "peer:score:"
-	PrefixTrackCover   = "trk:cover:"
-	PrefixContentHash  = "hash:content:" // For deduplication lookup
-
-	KeyIdentity = "cfg:identity"
-)
-
 func TrackKey(id domain.TrackID) []byte {
-	return []byte(PrefixTrackData + string(id))
+	return []byte(domain.PrefixTrackData + string(id))
 }
 
 func PathKey(path string) []byte {
-	return []byte(PrefixTrackPath + path)
+	return []byte(domain.PrefixTrackPath + path)
 }
 
 func ArtistIndexKey(artist string, id domain.TrackID) []byte {
-	return []byte(PrefixTrackArtist + domain.NormalizeKey(artist) + "\x00" + string(id))
+	return []byte(domain.PrefixTrackArtist + domain.NormalizeKey(artist) + "\x00" + string(id))
 }
 
 func AlbumIndexKey(album string, id domain.TrackID) []byte {
-	return []byte(PrefixTrackAlbum + domain.NormalizeKey(album) + "\x00" + string(id))
+	return []byte(domain.PrefixTrackAlbum + domain.NormalizeKey(album) + "\x00" + string(id))
 }
 
 func TermIndexKey(term string, id domain.TrackID) []byte {
-	return []byte(PrefixIdxTerm + term + ":" + string(id))
+	return []byte(domain.PrefixIdxTerm + term + ":" + string(id))
 }
 
 func TrigramIndexKey(trigram string, id domain.TrackID) []byte {
-	return []byte(PrefixIdxTrigram + trigram + ":" + string(id))
+	return []byte(domain.PrefixIdxTrigram + trigram + ":" + string(id))
 }
 
 func FileStatKey(path string) []byte {
-	return []byte(PrefixFileStat + pathHash(path))
+	return []byte(domain.PrefixFileStat + pathHash(path))
 }
 
 func PlaylistKey(id domain.PlaylistID) []byte {
-	return []byte(PrefixPlaylist + string(id))
+	return []byte(domain.PrefixPlaylist + string(id))
 }
 
 func PeerKey(id domain.PeerID) []byte {
-	return []byte(PrefixPeerInfo + string(id))
+	return []byte(domain.PrefixPeerInfo + string(id))
 }
 
 func PeerLibraryKey(id domain.PeerID) []byte {
-	return []byte(PrefixPeerLib + string(id))
+	return []byte(domain.PrefixPeerLib + string(id))
 }
 
 func PeerScoreKey(id domain.PeerID) []byte {
-	return []byte(PrefixPeerScore + string(id))
+	return []byte(domain.PrefixPeerScore + string(id))
 }
 
 func CoverArtKey(id domain.TrackID) []byte {
-	return []byte(PrefixTrackCover + string(id))
+	return []byte(domain.PrefixTrackCover + string(id))
 }
 
 func ContentHashKey(hash string) []byte {
-	return []byte(PrefixContentHash + hash)
+	return []byte(domain.PrefixContentHash + hash)
+}
+
+func IdentityKey() []byte {
+	return []byte(domain.KeyIdentity)
 }
 
 func pathHash(path string) string {

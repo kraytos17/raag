@@ -63,6 +63,10 @@ func Open(dir string, opts Options) (*DB, error) {
 		WithCompression(compression).
 		WithEncryptionKey(encryptionKey)
 
+	if len(encryptionKey) > 0 {
+		badgerOpts = badgerOpts.WithIndexCacheSize(64 << 20)
+	}
+
 	db, err := badger.Open(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)

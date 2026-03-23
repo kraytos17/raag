@@ -5,7 +5,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 )
 
@@ -14,14 +13,14 @@ type Queue struct {
 	tracks  []*domain.Track
 	pos     int
 	shuffle bool
-	repeat  app.RepeatMode
+	repeat  domain.RepeatMode
 }
 
 func NewQueue() *Queue {
 	return &Queue{
 		tracks: make([]*domain.Track, 0),
 		pos:    -1,
-		repeat: app.RepeatModeNone,
+		repeat: domain.RepeatModeNone,
 	}
 }
 
@@ -35,7 +34,7 @@ func (q *Queue) Peek() *domain.Track {
 
 	next := q.pos + 1
 	if next >= len(q.tracks) {
-		if q.repeat == app.RepeatModeAll {
+		if q.repeat == domain.RepeatModeAll {
 			next = 0
 		} else {
 			return nil
@@ -51,7 +50,7 @@ func (q *Queue) Next() *domain.Track {
 	if len(q.tracks) == 0 {
 		return nil
 	}
-	if q.repeat == app.RepeatModeOne {
+	if q.repeat == domain.RepeatModeOne {
 		if q.pos < 0 {
 			return nil
 		}
@@ -60,7 +59,7 @@ func (q *Queue) Next() *domain.Track {
 
 	next := q.pos + 1
 	if next >= len(q.tracks) {
-		if q.repeat == app.RepeatModeAll {
+		if q.repeat == domain.RepeatModeAll {
 			next = 0
 		} else {
 			return nil
@@ -81,7 +80,7 @@ func (q *Queue) Previous() *domain.Track {
 
 	prev := q.pos - 1
 	if prev < 0 {
-		if q.repeat == app.RepeatModeAll {
+		if q.repeat == domain.RepeatModeAll {
 			prev = len(q.tracks) - 1
 		} else {
 			return nil
@@ -172,13 +171,13 @@ func (q *Queue) Clear() {
 	q.pos = -1
 }
 
-func (q *Queue) SetRepeat(mode app.RepeatMode) {
+func (q *Queue) SetRepeat(mode domain.RepeatMode) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.repeat = mode
 }
 
-func (q *Queue) GetRepeat() app.RepeatMode {
+func (q *Queue) GetRepeat() domain.RepeatMode {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 	return q.repeat

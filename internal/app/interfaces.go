@@ -118,11 +118,3 @@ type Queue interface {
 type SearchHandler interface {
 	Search(ctx context.Context, query string, limit int) ([]*domain.Track, error)
 }
-
-type RepeatMode string
-
-const (
-	RepeatModeNone RepeatMode = "none"
-	RepeatModeOne  RepeatMode = "one"
-	RepeatModeAll  RepeatMode = "all"
-)

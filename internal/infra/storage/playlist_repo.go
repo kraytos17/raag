@@ -20,7 +20,7 @@ func NewPlaylistRepo(db *DB) app.PlaylistRepository {
 		BaseRepository: NewBaseRepository(
 			db,
 			PlaylistKey,
-			[]byte(PrefixPlaylist),
+			[]byte(domain.PrefixPlaylist),
 			ipc.MarshalPlaylist,
 			ipc.UnmarshalPlaylist,
 			func() error { return domain.ErrPlaylistNotFound },
@@ -29,7 +29,7 @@ func NewPlaylistRepo(db *DB) app.PlaylistRepository {
 }
 
 func (r *playlistRepo) ListAll(ctx context.Context) iter.Seq2[*domain.Playlist, error] {
-	return listAll(r.DB, []byte(PrefixPlaylist), ipc.UnmarshalPlaylist)
+	return listAll(r.DB, []byte(domain.PrefixPlaylist), ipc.UnmarshalPlaylist)
 }
 
 func (r *playlistRepo) FindByID(ctx context.Context, id domain.PlaylistID) (*domain.Playlist, error) {

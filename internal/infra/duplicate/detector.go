@@ -12,25 +12,6 @@ import (
 	storage "github.com/p-society/raag/internal/infra/storage"
 )
 
-type Handler int
-
-const (
-	Skip Handler = iota
-	Warn
-	Keep
-)
-
-func ConfigToHandler(h config.DuplicateHandling) Handler {
-	switch h {
-	case config.DuplicateSkip:
-		return Skip
-	case config.DuplicateKeep:
-		return Keep
-	default:
-		return Warn
-	}
-}
-
 type Info struct {
 	Hash           string
 	OriginalID     domain.TrackID
@@ -41,18 +22,29 @@ type Info struct {
 
 type Detector struct {
 	store      *storage.DB
-	handler    Handler
+	handler    domain.DuplicateHandler
 	mu         sync.Mutex
 	duplicates map[string][]domain.TrackID
 	paths      map[domain.TrackID]string
 }
 
-func NewDetector(store *storage.DB, handler Handler) *Detector {
+func NewDetector(store *storage.DB, handler domain.DuplicateHandler) *Detector {
 	return &Detector{
 		store:      store,
 		handler:    handler,
 		duplicates: make(map[string][]domain.TrackID),
 		paths:      make(map[domain.TrackID]string),
+	}
+}
+
+func ConfigToHandler(h config.DuplicateHandling) domain.DuplicateHandler {
+	switch h {
+	case config.DuplicateSkip:
+		return domain.DuplicateSkip
+	case config.DuplicateKeep:
+		return domain.DuplicateKeep
+	default:
+		return domain.DuplicateWarn
 	}
 }
 
@@ -89,15 +81,15 @@ func (d *Detector) CheckDuplicate(ctx context.Context, hash string, trackID doma
 		existingID = string(val)
 		d.duplicates[hash] = append(d.duplicates[hash], trackID)
 		switch d.handler {
-		case Skip:
+		case domain.DuplicateSkip:
 			shouldSkip = true
-		case Warn:
+		case domain.DuplicateWarn:
 			slog.Warn("duplicate track detected",
 				"current_path", path,
 				"current_id", trackID,
 				"original_id", existingID,
 			)
-		case Keep:
+		case domain.DuplicateKeep:
 			if err := txn.Set(storage.ContentHashKey(hash), []byte(trackID)); err != nil {
 				return fmt.Errorf("failed to update content hash: %w", err)
 			}

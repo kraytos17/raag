@@ -2,17 +2,6 @@ package domain
 
 import "errors"
 
-type PlayerState string
-
-const (
-	PlayerStateIdle      PlayerState = "idle"
-	PlayerStatePlaying   PlayerState = "playing"
-	PlayerStatePaused    PlayerState = "paused"
-	PlayerStateBuffering PlayerState = "buffering"
-	PlayerStateError     PlayerState = "error"
-	PlayerStateSeeking   PlayerState = "seeking"
-)
-
 var (
 	ErrTrackNotFound          = errors.New("track not found")
 	ErrPlaylistNotFound       = errors.New("playlist not found")
@@ -33,4 +22,8 @@ var (
 	ErrFileNotAccessible      = errors.New("file not accessible")
 	ErrInvalidTrack           = errors.New("invalid track")
 	ErrZeroDuration           = errors.New("track has zero duration")
+	ErrAudioNoStreamer        = errors.New("audio: no active streamer")
+	ErrAudioNotPlaying        = errors.New("audio: not playing")
+	ErrAudioNotPaused         = errors.New("audio: not paused")
+	ErrDuplicateSkipped       = errors.New("duplicate track, skipped by policy")
 )

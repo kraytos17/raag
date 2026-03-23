@@ -7,18 +7,10 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-type CBState string
-
-const (
-	CBStateClosed   CBState = "closed"
-	CBStateOpen     CBState = "open"
-	CBStateHalfOpen CBState = "half_open"
-)
-
 type CircuitBreaker struct {
 	mu                sync.Mutex
 	peerID            domain.PeerID
-	state             CBState
+	state             domain.CBState
 	failCount         int
 	successCount      int
 	lastFailTime      time.Time
@@ -30,7 +22,7 @@ type CircuitBreaker struct {
 func NewCircuitBreaker(peerID domain.PeerID, threshold int, cooldown time.Duration) *CircuitBreaker {
 	return &CircuitBreaker{
 		peerID:    peerID,
-		state:     CBStateClosed,
+		state:     domain.CBStateClosed,
 		threshold: threshold,
 		cooldown:  cooldown,
 	}
@@ -41,16 +33,16 @@ func (cb *CircuitBreaker) Allow() bool {
 	defer cb.mu.Unlock()
 
 	switch cb.state {
-	case CBStateClosed:
+	case domain.CBStateClosed:
 		return true
-	case CBStateOpen:
+	case domain.CBStateOpen:
 		if time.Since(cb.lastFailTime) > cb.cooldown {
-			cb.state = CBStateHalfOpen
+			cb.state = domain.CBStateHalfOpen
 			cb.halfOpenSuccesses = 0
 			return true
 		}
 		return false
-	case CBStateHalfOpen:
+	case domain.CBStateHalfOpen:
 		return true
 	}
 	return false
@@ -61,16 +53,16 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	defer cb.mu.Unlock()
 
 	switch cb.state {
-	case CBStateClosed:
+	case domain.CBStateClosed:
 		cb.successCount++
 		if cb.failCount > 0 {
 			cb.failCount--
 		}
-	case CBStateHalfOpen:
+	case domain.CBStateHalfOpen:
 		cb.halfOpenSuccesses++
 		cb.successCount++
 		if cb.halfOpenSuccesses >= 3 {
-			cb.state = CBStateClosed
+			cb.state = domain.CBStateClosed
 			cb.failCount = 0
 		}
 	}
@@ -83,16 +75,16 @@ func (cb *CircuitBreaker) RecordFailure() {
 	cb.failCount++
 	cb.lastFailTime = time.Now()
 	switch cb.state {
-	case CBStateClosed:
+	case domain.CBStateClosed:
 		if cb.failCount >= cb.threshold {
-			cb.state = CBStateOpen
+			cb.state = domain.CBStateOpen
 		}
-	case CBStateHalfOpen:
-		cb.state = CBStateOpen
+	case domain.CBStateHalfOpen:
+		cb.state = domain.CBStateOpen
 	}
 }
 
-func (cb *CircuitBreaker) GetState() CBState {
+func (cb *CircuitBreaker) GetState() domain.CBState {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 	return cb.state
@@ -102,7 +94,7 @@ func (cb *CircuitBreaker) Reset() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	cb.state = CBStateClosed
+	cb.state = domain.CBStateClosed
 	cb.failCount = 0
 	cb.successCount = 0
 	cb.halfOpenSuccesses = 0
