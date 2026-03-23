@@ -18,7 +18,7 @@ import (
 	"github.com/gopxl/beep/v2/speaker"
 	"github.com/gopxl/beep/v2/vorbis"
 	"github.com/gopxl/beep/v2/wav"
-	"github.com/p-society/raag/internal/app"
+	"github.com/p-society/raag/internal/domain"
 )
 
 var (
@@ -33,13 +33,13 @@ var initSpeaker = sync.OnceValue(func() error {
 })
 
 type Engine struct {
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	sampleRate    beep.SampleRate
 	ctrl          *beep.Ctrl
 	vol           *effects.Volume
 	streamer      beep.StreamSeekCloser
 	format        beep.Format
-	state         app.PlayerState
+	state         domain.PlayerState
 	position      time.Duration
 	done          chan struct{}
 	desiredVolume int
@@ -52,7 +52,7 @@ func NewEngine(sampleRate int) *Engine {
 	}
 	return &Engine{
 		sampleRate: beep.SampleRate(sampleRate),
-		state:      app.PlayerStateIdle,
+		state:      domain.PlayerStateIdle,
 		done:       make(chan struct{}, 1),
 	}
 }
@@ -64,19 +64,19 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 	e.stopLocked()
 	rc, err := ensureReadSeekCloser(reader)
 	if err != nil {
-		e.state = app.PlayerStateError
+		e.state = domain.PlayerStateError
 		return fmt.Errorf("failed to read audio data: %w", err)
 	}
 	streamer, format, err := decode(rc, mimeType)
 	if err != nil {
-		e.state = app.PlayerStateError
+		e.state = domain.PlayerStateError
 		return fmt.Errorf("decode failed: %w", err)
 	}
 
 	e.streamer = streamer
 	e.format = format
 	if err := e.initSpeaker(); err != nil {
-		e.state = app.PlayerStateError
+		e.state = domain.PlayerStateError
 		return err
 	}
 
@@ -99,7 +99,7 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 	speaker.Clear()
 	speaker.Play(beep.Seq(e.vol, beep.Callback(func() {
 		e.mu.Lock()
-		e.state = app.PlayerStateIdle
+		e.state = domain.PlayerStateIdle
 		e.streamer = nil
 		e.ctrl = nil
 		e.vol = nil
@@ -110,7 +110,7 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 		}
 	})))
 
-	e.state = app.PlayerStatePlaying
+	e.state = domain.PlayerStatePlaying
 	e.position = 0
 	slog.Info("playback started", "mime", mimeType, "sample_rate", format.SampleRate)
 	return nil
@@ -122,13 +122,13 @@ func (e *Engine) PlayStreaming(ctx context.Context, source AudioSource, mimeType
 
 	e.stopLocked()
 	if err := e.initSpeaker(); err != nil {
-		e.state = app.PlayerStateError
+		e.state = domain.PlayerStateError
 		return err
 	}
 
 	streamer, format, err := decode(source, mimeType)
 	if err != nil {
-		e.state = app.PlayerStateError
+		e.state = domain.PlayerStateError
 		_ = source.Close()
 		return fmt.Errorf("decode failed: %w", err)
 	}
@@ -161,7 +161,7 @@ func (e *Engine) PlayStreaming(ctx context.Context, source AudioSource, mimeType
 			e.audioSource = nil
 		}
 
-		e.state = app.PlayerStateIdle
+		e.state = domain.PlayerStateIdle
 		e.streamer = nil
 		e.ctrl = nil
 		e.vol = nil
@@ -173,15 +173,15 @@ func (e *Engine) PlayStreaming(ctx context.Context, source AudioSource, mimeType
 		}
 	})))
 
-	e.state = app.PlayerStatePlaying
+	e.state = domain.PlayerStatePlaying
 	e.position = 0
 	slog.Info("streaming playback started", "mime", mimeType, "sample_rate", format.SampleRate, "buffer_fill", source.FillLevel())
 	return nil
 }
 
 func (e *Engine) GetBufferFillLevel() float64 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	if e.audioSource != nil {
 		return e.audioSource.FillLevel()
 	}
@@ -189,8 +189,8 @@ func (e *Engine) GetBufferFillLevel() float64 {
 }
 
 func (e *Engine) IsBuffering() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	if e.audioSource != nil {
 		return e.audioSource.IsBuffering()
 	}
@@ -201,7 +201,7 @@ func (e *Engine) Pause(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.state != app.PlayerStatePlaying {
+	if e.state != domain.PlayerStatePlaying {
 		return ErrNotPlaying
 	}
 	if e.ctrl != nil {
@@ -209,7 +209,7 @@ func (e *Engine) Pause(ctx context.Context) error {
 		e.ctrl.Paused = true
 		speaker.Unlock()
 	}
-	e.state = app.PlayerStatePaused
+	e.state = domain.PlayerStatePaused
 	return nil
 }
 
@@ -217,7 +217,7 @@ func (e *Engine) Resume(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.state != app.PlayerStatePaused {
+	if e.state != domain.PlayerStatePaused {
 		return ErrNotPaused
 	}
 	if e.ctrl != nil {
@@ -226,7 +226,7 @@ func (e *Engine) Resume(ctx context.Context) error {
 		speaker.Unlock()
 	}
 
-	e.state = app.PlayerStatePlaying
+	e.state = domain.PlayerStatePlaying
 	return nil
 }
 
@@ -251,7 +251,7 @@ func (e *Engine) stopLocked() {
 	e.ctrl = nil
 	e.vol = nil
 	e.format = beep.Format{}
-	e.state = app.PlayerStateIdle
+	e.state = domain.PlayerStateIdle
 	e.position = 0
 }
 
@@ -297,15 +297,15 @@ func (e *Engine) SetVolume(ctx context.Context, volume int) error {
 	return nil
 }
 
-func (e *Engine) GetState() app.PlayerState {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *Engine) GetState() domain.PlayerState {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return e.state
 }
 
 func (e *Engine) GetPosition() time.Duration {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	if e.streamer == nil || e.format.SampleRate == 0 {
 		return e.position
@@ -338,6 +338,7 @@ func decode(rc io.ReadCloser, mimeType string) (beep.StreamSeekCloser, beep.Form
 	case "audio/ogg", "audio/vorbis":
 		streamer, format, err = vorbis.Decode(rc)
 	default:
+		slog.Warn("unknown mime type; attempting mp3 decode", "mime", mimeType)
 		streamer, format, err = mp3.Decode(rc)
 		if err != nil {
 			_ = rc.Close()

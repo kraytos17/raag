@@ -16,7 +16,6 @@ func BenchmarkIndex_Index_Single(b *testing.B) {
 		Artist: "Benchmark Artist",
 		Album:  "Benchmark Album",
 	}
-
 	for b.Loop() {
 		_ = idx.Index(ctx, track)
 	}
@@ -56,43 +55,18 @@ func BenchmarkIndex_Search(b *testing.B) {
 	}
 }
 
-func BenchmarkIndex_SearchFuzzy(b *testing.B) {
-	idx := NewSearchIndex(nil)
-	ctx := context.Background()
-
-	for i := range 100 {
-		track := &domain.Track{
-			ID:     domain.GenerateTrackID("/music/track" + string(rune('a'+i%26)) + ".mp3"),
-			Title:  "Beatles Song",
-			Artist: "The Beatles",
-			Album:  "Abbey Road",
-		}
-		_ = idx.Index(ctx, track)
-	}
-	for b.Loop() {
-		_, _ = idx.SearchFuzzy(ctx, "beetles", 20)
-	}
-}
-
 func BenchmarkIndex_Delete(b *testing.B) {
 	idx := NewSearchIndex(nil)
 	ctx := context.Background()
 	trackID := domain.GenerateTrackID("/music/benchmark.mp3")
-
 	_ = idx.Index(ctx, &domain.Track{
 		ID:     trackID,
 		Title:  "Benchmark Song",
 		Artist: "Benchmark Artist",
 		Album:  "Benchmark Album",
 	})
+
 	for b.Loop() {
 		_ = idx.Delete(ctx, trackID)
 	}
-}
-
-func BenchmarkFSM_Send(b *testing.B) {
-	idx := NewSearchIndex(nil)
-	idxMu := &mockEmptyLibraryRepo{}
-	_ = idxMu
-	_ = idx
 }

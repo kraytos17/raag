@@ -118,6 +118,9 @@ func (fw *FileWatcher) flushPending(ctx context.Context) {
 
 	for path := range pending {
 		if info, err := os.Stat(path); os.IsNotExist(err) {
+			fw.mu.Lock()
+			delete(fw.statCache, path)
+			fw.mu.Unlock()
 			if err := fw.handler.RemoveFile(ctx, path); err != nil {
 				slog.Warn("failed to remove file", "path", path, "error", err)
 			}
@@ -129,13 +132,16 @@ func (fw *FileWatcher) flushPending(ctx context.Context) {
 				Mtime: info.ModTime().Unix(),
 				Size:  info.Size(),
 			}
-			if !exists || prev.Mtime != newStat.Mtime || prev.Size != newStat.Size {
-				fw.statCache[path] = newStat
-				fw.mu.Unlock()
+
+			needsUpdate := !exists || prev.Mtime != newStat.Mtime || prev.Size != newStat.Size
+			fw.mu.Unlock()
+			if needsUpdate {
 				if err := fw.handler.AddFile(ctx, path); err != nil {
 					slog.Warn("failed to add file", "path", path, "error", err)
+					continue
 				}
-			} else {
+
+				fw.mu.Lock()
 				fw.statCache[path] = newStat
 				fw.mu.Unlock()
 			}

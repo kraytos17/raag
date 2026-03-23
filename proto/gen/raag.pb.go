@@ -7,11 +7,12 @@
 package gen
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -77,35 +78,38 @@ func (ErrorCode) EnumDescriptor() ([]byte, []int) {
 }
 
 type Track struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Path            string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Title           string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
-	Artist          string                 `protobuf:"bytes,4,opt,name=artist,proto3" json:"artist,omitempty"`
-	AlbumArtist     string                 `protobuf:"bytes,5,opt,name=album_artist,json=albumArtist,proto3" json:"album_artist,omitempty"`
-	Album           string                 `protobuf:"bytes,6,opt,name=album,proto3" json:"album,omitempty"`
-	TrackNumber     uint32                 `protobuf:"varint,7,opt,name=track_number,json=trackNumber,proto3" json:"track_number,omitempty"`
-	DiscNumber      uint32                 `protobuf:"varint,8,opt,name=disc_number,json=discNumber,proto3" json:"disc_number,omitempty"`
-	Year            uint32                 `protobuf:"varint,9,opt,name=year,proto3" json:"year,omitempty"`
-	Genres          []string               `protobuf:"bytes,10,rep,name=genres,proto3" json:"genres,omitempty"`
-	DurationMs      uint64                 `protobuf:"varint,11,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
-	SizeBytes       uint64                 `protobuf:"varint,12,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
-	MimeType        string                 `protobuf:"bytes,13,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
-	Codec           string                 `protobuf:"bytes,14,opt,name=codec,proto3" json:"codec,omitempty"`
-	Bitrate         uint32                 `protobuf:"varint,15,opt,name=bitrate,proto3" json:"bitrate,omitempty"`
-	SampleRate      uint32                 `protobuf:"varint,16,opt,name=sample_rate,json=sampleRate,proto3" json:"sample_rate,omitempty"`
-	Channels        uint32                 `protobuf:"varint,17,opt,name=channels,proto3" json:"channels,omitempty"`
-	Lyrics          string                 `protobuf:"bytes,18,opt,name=lyrics,proto3" json:"lyrics,omitempty"`
-	CoverArt        []byte                 `protobuf:"bytes,19,opt,name=cover_art,json=coverArt,proto3" json:"cover_art,omitempty"`
-	AddedAt         int64                  `protobuf:"varint,20,opt,name=added_at,json=addedAt,proto3" json:"added_at,omitempty"`
-	ModifiedAt      int64                  `protobuf:"varint,21,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"`
-	PlayCount       uint64                 `protobuf:"varint,22,opt,name=play_count,json=playCount,proto3" json:"play_count,omitempty"`
-	LastPlayed      int64                  `protobuf:"varint,23,opt,name=last_played,json=lastPlayed,proto3" json:"last_played,omitempty"`
-	ReplayGainTrack float32                `protobuf:"fixed32,24,opt,name=replay_gain_track,json=replayGainTrack,proto3" json:"replay_gain_track,omitempty"`
-	ReplayGainAlbum float32                `protobuf:"fixed32,25,opt,name=replay_gain_album,json=replayGainAlbum,proto3" json:"replay_gain_album,omitempty"`
-	ContentHash     string                 `protobuf:"bytes,26,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Path             string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Title            string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
+	NormalizedTitle  string                 `protobuf:"bytes,27,opt,name=normalized_title,json=normalizedTitle,proto3" json:"normalized_title,omitempty"`
+	Artist           string                 `protobuf:"bytes,4,opt,name=artist,proto3" json:"artist,omitempty"`
+	NormalizedArtist string                 `protobuf:"bytes,28,opt,name=normalized_artist,json=normalizedArtist,proto3" json:"normalized_artist,omitempty"`
+	AlbumArtist      string                 `protobuf:"bytes,5,opt,name=album_artist,json=albumArtist,proto3" json:"album_artist,omitempty"`
+	Album            string                 `protobuf:"bytes,6,opt,name=album,proto3" json:"album,omitempty"`
+	NormalizedAlbum  string                 `protobuf:"bytes,29,opt,name=normalized_album,json=normalizedAlbum,proto3" json:"normalized_album,omitempty"`
+	TrackNumber      uint32                 `protobuf:"varint,7,opt,name=track_number,json=trackNumber,proto3" json:"track_number,omitempty"`
+	DiscNumber       uint32                 `protobuf:"varint,8,opt,name=disc_number,json=discNumber,proto3" json:"disc_number,omitempty"`
+	Year             uint32                 `protobuf:"varint,9,opt,name=year,proto3" json:"year,omitempty"`
+	Genres           []string               `protobuf:"bytes,10,rep,name=genres,proto3" json:"genres,omitempty"`
+	DurationMs       uint64                 `protobuf:"varint,11,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	SizeBytes        uint64                 `protobuf:"varint,12,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	MimeType         string                 `protobuf:"bytes,13,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	Codec            string                 `protobuf:"bytes,14,opt,name=codec,proto3" json:"codec,omitempty"`
+	Bitrate          uint32                 `protobuf:"varint,15,opt,name=bitrate,proto3" json:"bitrate,omitempty"`
+	SampleRate       uint32                 `protobuf:"varint,16,opt,name=sample_rate,json=sampleRate,proto3" json:"sample_rate,omitempty"`
+	Channels         uint32                 `protobuf:"varint,17,opt,name=channels,proto3" json:"channels,omitempty"`
+	Lyrics           string                 `protobuf:"bytes,18,opt,name=lyrics,proto3" json:"lyrics,omitempty"`
+	CoverArt         []byte                 `protobuf:"bytes,19,opt,name=cover_art,json=coverArt,proto3" json:"cover_art,omitempty"`
+	AddedAt          int64                  `protobuf:"varint,20,opt,name=added_at,json=addedAt,proto3" json:"added_at,omitempty"`
+	ModifiedAt       int64                  `protobuf:"varint,21,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"`
+	PlayCount        uint64                 `protobuf:"varint,22,opt,name=play_count,json=playCount,proto3" json:"play_count,omitempty"`
+	LastPlayed       int64                  `protobuf:"varint,23,opt,name=last_played,json=lastPlayed,proto3" json:"last_played,omitempty"`
+	ReplayGainTrack  float32                `protobuf:"fixed32,24,opt,name=replay_gain_track,json=replayGainTrack,proto3" json:"replay_gain_track,omitempty"`
+	ReplayGainAlbum  float32                `protobuf:"fixed32,25,opt,name=replay_gain_album,json=replayGainAlbum,proto3" json:"replay_gain_album,omitempty"`
+	ContentHash      string                 `protobuf:"bytes,26,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Track) Reset() {
@@ -159,9 +163,23 @@ func (x *Track) GetTitle() string {
 	return ""
 }
 
+func (x *Track) GetNormalizedTitle() string {
+	if x != nil {
+		return x.NormalizedTitle
+	}
+	return ""
+}
+
 func (x *Track) GetArtist() string {
 	if x != nil {
 		return x.Artist
+	}
+	return ""
+}
+
+func (x *Track) GetNormalizedArtist() string {
+	if x != nil {
+		return x.NormalizedArtist
 	}
 	return ""
 }
@@ -176,6 +194,13 @@ func (x *Track) GetAlbumArtist() string {
 func (x *Track) GetAlbum() string {
 	if x != nil {
 		return x.Album
+	}
+	return ""
+}
+
+func (x *Track) GetNormalizedAlbum() string {
+	if x != nil {
+		return x.NormalizedAlbum
 	}
 	return ""
 }
@@ -2855,10 +2880,10 @@ func (x *GetTrackResponse) GetTrack() *Track {
 type ChunkRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TrackId       string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
-	Offset        int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`   // byte offset in track file
-	Length        int32                  `protobuf:"varint,3,opt,name=length,proto3" json:"length,omitempty"`   // bytes requested (max 256KB)
-	Codec         string                 `protobuf:"bytes,4,opt,name=codec,proto3" json:"codec,omitempty"`      // desired output codec (optional, for transcoding)
-	Bitrate       int32                  `protobuf:"varint,5,opt,name=bitrate,proto3" json:"bitrate,omitempty"` // desired bitrate in kbps (optional)
+	Offset        int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	Length        int32                  `protobuf:"varint,3,opt,name=length,proto3" json:"length,omitempty"`
+	Codec         string                 `protobuf:"bytes,4,opt,name=codec,proto3" json:"codec,omitempty"`
+	Bitrate       int32                  `protobuf:"varint,5,opt,name=bitrate,proto3" json:"bitrate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2933,9 +2958,9 @@ type ChunkResponse struct {
 	TrackId       string                 `protobuf:"bytes,1,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
 	Offset        int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
 	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
-	LastChunk     bool                   `protobuf:"varint,4,opt,name=last_chunk,json=lastChunk,proto3" json:"last_chunk,omitempty"` // true if this is the final chunk of the file
-	TotalSize     int64                  `protobuf:"varint,5,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"` // total track size in bytes (set on first chunk)
-	MimeType      string                 `protobuf:"bytes,6,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`     // actual MIME type of returned data
+	LastChunk     bool                   `protobuf:"varint,4,opt,name=last_chunk,json=lastChunk,proto3" json:"last_chunk,omitempty"`
+	TotalSize     int64                  `protobuf:"varint,5,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
+	MimeType      string                 `protobuf:"bytes,6,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3397,14 +3422,17 @@ var File_raag_proto protoreflect.FileDescriptor
 const file_raag_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"raag.proto\x12\x04raag\"\xf8\x05\n" +
+	"raag.proto\x12\x04raag\"\xfb\x06\n" +
 	"\x05Track\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x14\n" +
-	"\x05title\x18\x03 \x01(\tR\x05title\x12\x16\n" +
-	"\x06artist\x18\x04 \x01(\tR\x06artist\x12!\n" +
+	"\x05title\x18\x03 \x01(\tR\x05title\x12)\n" +
+	"\x10normalized_title\x18\x1b \x01(\tR\x0fnormalizedTitle\x12\x16\n" +
+	"\x06artist\x18\x04 \x01(\tR\x06artist\x12+\n" +
+	"\x11normalized_artist\x18\x1c \x01(\tR\x10normalizedArtist\x12!\n" +
 	"\falbum_artist\x18\x05 \x01(\tR\valbumArtist\x12\x14\n" +
-	"\x05album\x18\x06 \x01(\tR\x05album\x12!\n" +
+	"\x05album\x18\x06 \x01(\tR\x05album\x12)\n" +
+	"\x10normalized_album\x18\x1d \x01(\tR\x0fnormalizedAlbum\x12!\n" +
 	"\ftrack_number\x18\a \x01(\rR\vtrackNumber\x12\x1f\n" +
 	"\vdisc_number\x18\b \x01(\rR\n" +
 	"discNumber\x12\x12\n" +

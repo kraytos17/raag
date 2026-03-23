@@ -12,9 +12,11 @@ import (
 	_ "image/png"
 	"io"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -42,29 +44,30 @@ const (
 	ScanPhaseParsing ScanPhase = "parsing"
 )
 
-func WalkAudioFiles(ctx context.Context, dirPath string, yield func(string) bool) error {
-	return filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if !d.IsDir() && isAudioExt(filepath.Ext(path)) {
-			if !yield(path) {
+func WalkAudioFiles(ctx context.Context, dirPath string) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		_ = filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				yield("", err)
 				return fs.SkipAll
 			}
-		}
-		return nil
-	})
+			if ctx.Err() != nil {
+				yield("", ctx.Err())
+				return fs.SkipAll
+			}
+			if !d.IsDir() && isAudioExt(filepath.Ext(path)) {
+				if !yield(path, nil) {
+					return fs.SkipAll
+				}
+			}
+			return nil
+		})
+	}
 }
 
 func isAudioExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma":
-		return true
-	}
-	return false
+	ext = strings.ToLower(ext)
+	return slices.Contains(AudioExtensions, ext)
 }
 
 type LibraryScanner struct {
@@ -102,6 +105,7 @@ func (s *LibraryScanner) HashContent(path string) string {
 	if s.hashWorker == nil {
 		return ""
 	}
+
 	resultCh := s.hashWorker.Submit(path)
 	return <-resultCh
 }
@@ -172,7 +176,6 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 	var totalScanned int
 	var totalAdded int
 	var totalRemoved int
-
 	existingPathsList, err := s.libraryRepo.ListAllPaths(ctx)
 	if err != nil {
 		slog.Warn("failed to list existing paths", "error", err)
@@ -209,12 +212,12 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 	currentStats := make(map[string]*domain.FileStat)
 	for _, scanPath := range s.paths {
 		var files []string
-		if err := WalkAudioFiles(ctx, scanPath, func(path string) bool {
+		for path, err := range WalkAudioFiles(ctx, scanPath) {
+			if err != nil {
+				slog.Warn("error walking file", "error", err)
+				continue
+			}
 			files = append(files, path)
-			return true
-		}); err != nil {
-			slog.Warn("failed to walk directory", "path", scanPath, "error", err)
-			continue
 		}
 		for _, file := range files {
 			stat, err := s.getFileStat(file)
@@ -288,27 +291,24 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 }
 
 func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, existingPaths map[string]bool) (int, int, int, error) {
+	slog.Info("scanDirectory called", "dir", dirPath, "existingPathsCount", len(existingPaths))
+
 	var scanned int
 	var added int
 	var removed int
-
 	var files []string
-	if err := WalkAudioFiles(ctx, dirPath, func(path string) bool {
+	for path, err := range WalkAudioFiles(ctx, dirPath) {
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("walk directory: %w", err)
+		}
 		files = append(files, path)
-		return true
-	}); err != nil {
-		return 0, 0, 0, fmt.Errorf("walk directory: %w", err)
 	}
 
 	foundPaths := make(map[string]bool)
 	newFiles := make([]string, 0, len(files))
 	for _, file := range files {
 		foundPaths[file] = true
-		if !existingPaths[file] {
-			newFiles = append(newFiles, file)
-		} else {
-			scanned++
-		}
+		newFiles = append(newFiles, file)
 	}
 
 	const maxConcurrency = 8
@@ -318,6 +318,8 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 	var mu sync.Mutex
 	parsedTracks := make([]*domain.Track, 0, len(newFiles))
 	for i, file := range newFiles {
+		fileIdx := i
+		filePath := file
 		g.Go(func() error {
 			select {
 			case <-gctx.Done():
@@ -327,16 +329,16 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 
 			if s.onProgress != nil {
 				s.onProgress(ScanProgress{
-					Scanned:     i + 1,
+					Scanned:     fileIdx + 1,
 					Total:       len(newFiles),
-					CurrentFile: file,
+					CurrentFile: filePath,
 					Phase:       ScanPhaseParsing,
 				})
 			}
 
-			track, err := s.parseFile(file)
+			track, err := s.parseFile(filePath)
 			if err != nil {
-				slog.Warn("failed to parse file", "file", file, "error", err)
+				slog.Warn("failed to parse file", "file", filePath, "error", err)
 				return nil
 			}
 
@@ -359,7 +361,7 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 		added++
 	}
 	for path := range existingPaths {
-		if !strings.HasPrefix(path, dirPath) || foundPaths[path] {
+		if !isSubPath(dirPath, path) || foundPaths[path] {
 			continue
 		}
 
@@ -389,6 +391,25 @@ func computeSyncHash(file *os.File) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+func isSubPath(dirPath, path string) bool {
+	if !strings.HasPrefix(path, dirPath) {
+		return false
+	}
+	if len(path) == len(dirPath) {
+		return true
+	}
+	return os.IsPathSeparator(path[len(dirPath)])
+}
+
+func filenameAsTitle(path string) string {
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	if ext != "" {
+		return strings.TrimSuffix(base, ext)
+	}
+	return base
+}
+
 func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -401,32 +422,43 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 		return nil, err
 	}
 
+	track := domain.NewTrack(path)
 	metadata, err := tag.ReadFrom(file)
 	if err != nil {
-		return nil, err
+		slog.Warn("failed to read metadata, using filename as title", "path", path, "error", err)
+		track.Title = filenameAsTitle(path)
+	} else {
+		track.Title = metadata.Title()
+		track.Artist = metadata.Artist()
+		track.AlbumArtist = metadata.AlbumArtist()
+		track.Album = metadata.Album()
+		trackNum, _ := metadata.Track()
+		track.TrackNumber = uint32(trackNum)
+		discNum, _ := metadata.Disc()
+		track.DiscNumber = uint32(discNum)
+		track.Year = uint32(metadata.Year())
+		if genre := metadata.Genre(); genre != "" {
+			track.Genres = []string{genre}
+		}
+		track.Lyrics = metadata.Lyrics()
+		if cover := extractCoverArt(metadata); len(cover) > 0 {
+			track.CoverArt = cover
+		}
 	}
 
-	track := domain.NewTrack(path)
-	track.Title = metadata.Title()
-	track.Artist = metadata.Artist()
-	track.AlbumArtist = metadata.AlbumArtist()
-	track.Album = metadata.Album()
-	trackNum, _ := metadata.Track()
-	track.TrackNumber = uint32(trackNum)
-	discNum, _ := metadata.Disc()
-	track.DiscNumber = uint32(discNum)
-	track.Year = uint32(metadata.Year())
-
-	if genre := metadata.Genre(); genre != "" {
-		track.Genres = []string{genre}
+	// Fallback: use filename as title if metadata fields are empty
+	if track.Title == "" {
+		track.Title = filenameAsTitle(path)
 	}
 
-	track.Lyrics = metadata.Lyrics()
+	track.NormalizedTitle = domain.Normalize(track.Title)
+	track.NormalizedArtist = domain.Normalize(track.Artist)
+	track.NormalizedAlbum = domain.Normalize(track.Album)
+
 	track.SizeBytes = uint64(stat.Size())
 	track.MimeType = mimeType(filepath.Ext(path))
 	track.Codec = codecFromExtension(filepath.Ext(path))
 	track.ModifiedAt = stat.ModTime().Unix()
-
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		slog.Warn("failed to seek file for hashing", "path", path, "error", err)
 	} else if s.hashWorker != nil {
@@ -449,18 +481,20 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 	} else {
 		track.ContentHash = computeSyncHash(file)
 	}
-	if cover := extractCoverArt(metadata); len(cover) > 0 {
-		track.CoverArt = cover
-	}
+
+	slog.Info("parsed track", "path", path, "title", track.Title, "id", track.ID)
 	return track, nil
 }
 
 func (s *LibraryScanner) indexTrack(ctx context.Context, track *domain.Track) error {
 	if err := s.libraryRepo.Save(ctx, track); err != nil {
+		slog.Warn("failed to save track to repo", "track", track.ID, "error", err)
 		return err
 	}
+	slog.Info("track saved to repo", "track", track.ID, "title", track.Title)
 	if err := s.index.Index(ctx, track); err != nil {
 		slog.Warn("failed to index track", "track", track.ID, "error", err)
+		return err
 	}
 	return nil
 }

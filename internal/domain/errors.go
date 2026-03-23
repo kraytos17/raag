@@ -2,6 +2,17 @@ package domain
 
 import "errors"
 
+type PlayerState string
+
+const (
+	PlayerStateIdle      PlayerState = "idle"
+	PlayerStatePlaying   PlayerState = "playing"
+	PlayerStatePaused    PlayerState = "paused"
+	PlayerStateBuffering PlayerState = "buffering"
+	PlayerStateError     PlayerState = "error"
+	PlayerStateSeeking   PlayerState = "seeking"
+)
+
 var (
 	ErrTrackNotFound          = errors.New("track not found")
 	ErrPlaylistNotFound       = errors.New("playlist not found")

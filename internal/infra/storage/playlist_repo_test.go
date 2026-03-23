@@ -36,7 +36,12 @@ func TestPlaylistRepo_NotFound(t *testing.T) {
 
 	repo := NewPlaylistRepo(db)
 	ctx := context.Background()
-	_, err := repo.FindByID(ctx, domain.GeneratePlaylistID())
+	playlistID, err := domain.GeneratePlaylistID()
+	if err != nil {
+		t.Fatalf("GeneratePlaylistID() error = %v", err)
+	}
+
+	_, err = repo.FindByID(ctx, playlistID)
 	if err != domain.ErrPlaylistNotFound {
 		t.Errorf("FindByID() error = %v, want %v", err, domain.ErrPlaylistNotFound)
 	}
@@ -48,9 +53,11 @@ func TestPlaylistRepo_List(t *testing.T) {
 
 	repo := NewPlaylistRepo(db)
 	ctx := context.Background()
+	id1, _ := domain.GeneratePlaylistID()
+	id2, _ := domain.GeneratePlaylistID()
 	playlists := []*domain.Playlist{
-		{ID: domain.GeneratePlaylistID(), Name: "Playlist 1"},
-		{ID: domain.GeneratePlaylistID(), Name: "Playlist 2"},
+		{ID: id1, Name: "Playlist 1"},
+		{ID: id2, Name: "Playlist 2"},
 	}
 	for _, pl := range playlists {
 		if err := repo.Save(ctx, pl); err != nil {

@@ -73,7 +73,7 @@ func (c *ServerConfig) Validate() error {
 		return errors.New("queue handler is required")
 	}
 	if c.CBRegistry == nil {
-		return errors.New("CBRegistry is required")
+		return errors.New("circuit breaker registry is required")
 	}
 	return nil
 }
@@ -86,7 +86,7 @@ type PlaybackHandler interface {
 	Stop(ctx context.Context) error
 	Seek(ctx context.Context, dur time.Duration) error
 	SetVolume(ctx context.Context, vol int) error
-	GetState() app.PlayerState
+	GetState() domain.PlayerState
 	GetVolume() int
 	GetCurrentTrack() *domain.Track
 }
@@ -207,19 +207,24 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		}
 
 		if err := conn.SetReadDeadline(time.Now().Add(ipcReadTimeout)); err != nil {
+			slog.Warn("failed to set read deadline", "error", err)
 			return
 		}
 
 		var req pb.Request
 		if err := wire.ReadMsg(conn, &req); err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				// If we time out mid-deserialization on a stream protocol,
+				// the next read would start from a corrupted offset.
+				return
 			}
 			return
 		}
 
 		resp := s.dispatch(ctx, &req)
 		if err := conn.SetWriteDeadline(time.Now().Add(ipcWriteTimeout)); err != nil {
+			slog.Warn("failed to set write deadline", "error", err)
 			return
 		}
 		if err := wire.WriteMsg(conn, resp); err != nil {

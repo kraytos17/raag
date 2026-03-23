@@ -2,7 +2,9 @@ package mocks
 
 import (
 	"context"
+	"io"
 	"sync"
+	"time"
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
@@ -79,49 +81,51 @@ type MockPlayer struct {
 	resumeCalled bool
 	stopCalled   bool
 	seekCalled   bool
+	SeekErr      error
 	volume       int
-	position     int64
-	state        app.PlayerState
+	position     time.Duration
+	state        domain.PlayerState
 	lastMimeType string
-	lastReader   any
+	lastReader   io.Reader
 }
 
 func NewMockPlayer() *MockPlayer {
 	return &MockPlayer{
-		state:  app.PlayerStateIdle,
+		state:  domain.PlayerStateIdle,
 		volume: 80,
 	}
 }
 
-func (m *MockPlayer) Play(ctx context.Context, reader any, mimeType string) error {
+func (m *MockPlayer) Play(ctx context.Context, reader io.Reader, mimeType string) error {
 	m.playCalled = true
 	m.lastReader = reader
 	m.lastMimeType = mimeType
-	m.state = app.PlayerStatePlaying
+	m.state = domain.PlayerStatePlaying
 	return nil
 }
 
 func (m *MockPlayer) Pause(ctx context.Context) error {
 	m.pauseCalled = true
-	m.state = app.PlayerStatePaused
+	m.state = domain.PlayerStatePaused
 	return nil
 }
 
 func (m *MockPlayer) Resume(ctx context.Context) error {
 	m.resumeCalled = true
-	m.state = app.PlayerStatePlaying
+	m.state = domain.PlayerStatePlaying
 	return nil
 }
 
 func (m *MockPlayer) Stop(ctx context.Context) error {
 	m.stopCalled = true
-	m.state = app.PlayerStateIdle
+	m.state = domain.PlayerStateIdle
 	return nil
 }
 
-func (m *MockPlayer) Seek(ctx context.Context, position any) error {
+func (m *MockPlayer) Seek(ctx context.Context, position time.Duration) error {
 	m.seekCalled = true
-	return nil
+	m.position = position
+	return m.SeekErr
 }
 
 func (m *MockPlayer) SetVolume(ctx context.Context, volume int) error {
@@ -129,11 +133,11 @@ func (m *MockPlayer) SetVolume(ctx context.Context, volume int) error {
 	return nil
 }
 
-func (m *MockPlayer) GetState() app.PlayerState {
+func (m *MockPlayer) GetState() domain.PlayerState {
 	return m.state
 }
 
-func (m *MockPlayer) GetPosition() any {
+func (m *MockPlayer) GetPosition() time.Duration {
 	return m.position
 }
 
@@ -143,7 +147,9 @@ func (m *MockPlayer) Reset() {
 	m.resumeCalled = false
 	m.stopCalled = false
 	m.seekCalled = false
-	m.state = app.PlayerStateIdle
+	m.SeekErr = nil
+	m.state = domain.PlayerStateIdle
+	m.position = 0
 }
 
 type MockQueue struct {

@@ -73,7 +73,7 @@ test-bench:
 	go test -bench=. -benchmem ./...
 
 lint:
-	go fmt ./...
+	gofumpt -w -e .
 	go vet ./...
 	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
 		echo "Installing golangci-lint..."; \
@@ -82,7 +82,7 @@ lint:
 	$(GOLANGCI_LINT) run ./...
 
 lint-fix:
-	go fmt ./...
+	gofumpt -w -e .
 	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
 		echo "Installing golangci-lint..."; \
 		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \

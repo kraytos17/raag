@@ -43,6 +43,7 @@ func NewEvent(eventType EventType, payload any) Event {
 type EventBus interface {
 	Publish(ctx context.Context, event Event)
 	Subscribe(eventType EventType, handler EventHandler) Unsubscribe
+	Close()
 }
 
 type TrackStartedPayload struct {

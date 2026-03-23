@@ -1,8 +1,8 @@
 package config
 
 import (
+	"errors"
 	"os"
-	"os/user"
 	"path/filepath"
 	"testing"
 )
@@ -98,7 +98,7 @@ func TestConfig_ValidateForStart_NoPath(t *testing.T) {
 	}
 
 	err := cfg.ValidateForStart()
-	if err != ErrNoMusicPath {
+	if !errors.Is(err, ErrNoMusicPath) {
 		t.Errorf("ValidateForStart() error = %v, want ErrNoMusicPath", err)
 	}
 }
@@ -121,9 +121,9 @@ func TestConfig_ValidateForStart_WithPath(t *testing.T) {
 }
 
 func TestExpandHome_Basic(t *testing.T) {
-	usr, err := user.Current()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		t.Skip("cannot get current user")
+		t.Skip("cannot get home directory")
 	}
 
 	tests := []struct {
@@ -131,8 +131,8 @@ func TestExpandHome_Basic(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"tilde home", "~/Music", filepath.Join(usr.HomeDir, "Music")},
-		{"tilde subdir", "~/Music/Rock", filepath.Join(usr.HomeDir, "Music", "Rock")},
+		{"tilde home", "~/Music", filepath.Join(home, "Music")},
+		{"tilde subdir", "~/Music/Rock", filepath.Join(home, "Music", "Rock")},
 		{"absolute path", "/music", "/music"},
 		{"relative path", "music", "music"},
 	}
@@ -240,8 +240,12 @@ func TestConfig_ExpandPaths(t *testing.T) {
 		t.Errorf("expandPaths() error = %v", err)
 	}
 
-	usr, _ := user.Current()
-	expected := filepath.Join(usr.HomeDir, "data")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot get home directory")
+	}
+
+	expected := filepath.Join(home, "data")
 	if cfg.Daemon.DataDir != expected {
 		t.Errorf("expandPaths() DataDir = %q, want %q", cfg.Daemon.DataDir, expected)
 	}

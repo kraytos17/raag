@@ -85,11 +85,15 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 	})
 
 	bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 	select {
 	case <-time.After(time.Second):
 		t.Fatal("first publish timeout")
-	case <-time.After(0):
-		wg.Wait()
+	case <-done:
 	}
 
 	if atomic.LoadInt64(&count) != 1 {
@@ -99,7 +103,8 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 	unsub()
 
 	bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
-	time.Sleep(100 * time.Millisecond)
+	// Ensure any in-flight dispatch has drained.
+	bus.Close()
 
 	if atomic.LoadInt64(&count) != 1 {
 		t.Errorf("after unsubscribe, count = %d, want 1", atomic.LoadInt64(&count))
@@ -136,18 +141,22 @@ func TestEventBus_DuplicateUnsubscribe(t *testing.T) {
 	})
 
 	bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 	select {
 	case <-time.After(time.Second):
 		t.Fatal("first publish timeout")
-	case <-time.After(0):
-		wg.Wait()
+	case <-done:
 	}
 
 	unsub()
 	unsub()
 
 	bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
-	time.Sleep(100 * time.Millisecond)
+	bus.Close()
 
 	if atomic.LoadInt64(&count) != 1 {
 		t.Errorf("duplicate unsubscribe count = %d, want 1", atomic.LoadInt64(&count))
@@ -173,11 +182,15 @@ func TestEventBus_PublishManyHandlers(t *testing.T) {
 		bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
 	}
 
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 	select {
 	case <-time.After(time.Second):
 		t.Error("PublishManyHandlers() timeout - events not processed")
-	case <-time.After(0):
-		wg.Wait()
+	case <-done:
 	}
 
 	finalCount := atomic.LoadInt64(&count)

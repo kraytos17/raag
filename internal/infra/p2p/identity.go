@@ -51,7 +51,7 @@ func (m *IdentityManager) LoadOrCreate() (crypto.PrivKey, peer.ID, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to marshal identity key: %w", err)
 	}
-	if err := os.WriteFile(m.keyFile, keyBytes, 0600); err != nil {
+	if err := os.WriteFile(m.keyFile, keyBytes, 0o600); err != nil {
 		return nil, "", fmt.Errorf("failed to save identity key: %w", err)
 	}
 

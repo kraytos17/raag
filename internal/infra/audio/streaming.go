@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -48,18 +49,31 @@ func (ss *StreamingSource) fillBuffer() {
 
 		ss.setReadDeadline(shortDeadline)
 		n, err := ss.source.Read(buf)
+		if n > 0 {
+			_, writeErr := ss.rb.Write(buf[:n])
+			if writeErr != nil {
+				slog.Debug("ring buffer write error", "err", writeErr)
+				ss.mu.Lock()
+				if !ss.closed.Load() {
+					ss.err = writeErr
+				}
+				ss.mu.Unlock()
+				_ = ss.rb.Close()
+				return
+			}
+		}
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
 				continue
 			}
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				ss.mu.Lock()
 				if !ss.closed.Load() {
 					ss.err = err
 				}
-
 				ss.mu.Unlock()
-				ss.rb.Close()
+				_ = ss.rb.Close()
 				return
 			}
 
@@ -68,17 +82,9 @@ func (ss *StreamingSource) fillBuffer() {
 			if !ss.closed.Load() {
 				ss.err = err
 			}
-
 			ss.mu.Unlock()
-			ss.rb.Close()
+			_ = ss.rb.Close()
 			return
-		}
-		if n > 0 {
-			_, writeErr := ss.rb.Write(buf[:n])
-			if writeErr != nil {
-				slog.Debug("ring buffer write error", "err", writeErr)
-				return
-			}
 		}
 	}
 }
@@ -87,7 +93,9 @@ func (ss *StreamingSource) setReadDeadline(d time.Duration) {
 	if fd, ok := ss.source.(interface {
 		SetReadDeadline(time.Time) error
 	}); ok {
-		fd.SetReadDeadline(time.Now().Add(d))
+		if err := fd.SetReadDeadline(time.Now().Add(d)); err != nil {
+			slog.Warn("failed to set read deadline", "error", err)
+		}
 	}
 }
 
@@ -96,14 +104,9 @@ func (ss *StreamingSource) Read(p []byte) (int, error) {
 }
 
 func (ss *StreamingSource) Close() error {
-	ss.mu.Lock()
-	if ss.closed.Load() {
-		ss.mu.Unlock()
+	if !ss.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-
-	ss.closed.Store(true)
-	ss.mu.Unlock()
 
 	close(ss.done)
 	ss.wg.Wait()
@@ -126,8 +129,6 @@ func (ss *StreamingSource) BufferSize() int {
 }
 
 func (ss *StreamingSource) IsBuffering() bool {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
 	if ss.closed.Load() {
 		return false
 	}

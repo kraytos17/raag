@@ -60,7 +60,6 @@ type SearchIndex interface {
 	Index(ctx context.Context, track *domain.Track) error
 	IndexBatch(ctx context.Context, tracks []*domain.Track) error
 	Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error)
-	SearchFuzzy(ctx context.Context, query string, limit int) ([]domain.TrackID, error)
 	Delete(ctx context.Context, id domain.TrackID) error
 	Stats(ctx context.Context) (IndexStats, error)
 	Rebuild(ctx context.Context, repo LibraryRepository) error
@@ -104,19 +103,9 @@ type Player interface {
 	Stop(ctx context.Context) error
 	Seek(ctx context.Context, position time.Duration) error
 	SetVolume(ctx context.Context, volume int) error
-	GetState() PlayerState
+	GetState() domain.PlayerState
 	GetPosition() time.Duration
 }
-
-type PlayerState string
-
-const (
-	PlayerStateIdle      PlayerState = "idle"
-	PlayerStatePlaying   PlayerState = "playing"
-	PlayerStatePaused    PlayerState = "paused"
-	PlayerStateBuffering PlayerState = "buffering"
-	PlayerStateError     PlayerState = "error"
-)
 
 type Queue interface {
 	Peek() *domain.Track

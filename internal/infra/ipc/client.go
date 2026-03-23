@@ -1,7 +1,7 @@
 package ipc
 
 import (
-	"fmt"
+	"errors"
 	"net"
 	"time"
 
@@ -9,8 +9,10 @@ import (
 	pb "github.com/p-society/raag/proto/gen"
 )
 
-const ipcTimeout = 3 * time.Second
-const protocolVersion = 1
+const (
+	ipcTimeout      = 3 * time.Second
+	protocolVersion = 1
+)
 
 type Client struct {
 	socketPath string
@@ -81,7 +83,7 @@ func (c *Client) SeekTo(offsetMs int64) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf("%s", resp.Error)
+		return errors.New(resp.Error)
 	}
 	return nil
 }
@@ -175,6 +177,8 @@ func (c *Client) GetTrackByPath(path string) (*pb.Response, error) {
 }
 
 func (c *Client) send(req *pb.Request) (*pb.Response, error) {
+	// Dial per request: keeps the client stateless and avoids
+	// managing long-lived connections/timeouts across commands.
 	conn, err := net.DialTimeout("unix", c.socketPath, ipcTimeout)
 	if err != nil {
 		return nil, err

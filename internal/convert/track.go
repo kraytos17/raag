@@ -12,32 +12,35 @@ func TrackToProto(t *domain.Track) *pb.Track {
 		return nil
 	}
 	return &pb.Track{
-		Id:              string(t.ID),
-		Path:            t.Path,
-		Title:           t.Title,
-		Artist:          t.Artist,
-		AlbumArtist:     t.AlbumArtist,
-		Album:           t.Album,
-		TrackNumber:     t.TrackNumber,
-		DiscNumber:      t.DiscNumber,
-		Year:            t.Year,
-		Genres:          t.Genres,
-		DurationMs:      t.DurationMs,
-		SizeBytes:       t.SizeBytes,
-		MimeType:        t.MimeType,
-		Codec:           t.Codec,
-		Bitrate:         t.Bitrate,
-		SampleRate:      t.SampleRate,
-		Channels:        t.Channels,
-		Lyrics:          t.Lyrics,
-		CoverArt:        t.CoverArt,
-		AddedAt:         t.AddedAt,
-		ModifiedAt:      t.ModifiedAt,
-		PlayCount:       t.PlayCount,
-		LastPlayed:      t.LastPlayed,
-		ReplayGainTrack: t.ReplayGainTrack,
-		ReplayGainAlbum: t.ReplayGainAlbum,
-		ContentHash:     t.ContentHash,
+		Id:               string(t.ID),
+		Path:             t.Path,
+		Title:            t.Title,
+		NormalizedTitle:  t.NormalizedTitle,
+		Artist:           t.Artist,
+		NormalizedArtist: t.NormalizedArtist,
+		AlbumArtist:      t.AlbumArtist,
+		Album:            t.Album,
+		NormalizedAlbum:  t.NormalizedAlbum,
+		TrackNumber:      t.TrackNumber,
+		DiscNumber:       t.DiscNumber,
+		Year:             t.Year,
+		Genres:           t.Genres,
+		DurationMs:       t.DurationMs,
+		SizeBytes:        t.SizeBytes,
+		MimeType:         t.MimeType,
+		Codec:            t.Codec,
+		Bitrate:          t.Bitrate,
+		SampleRate:       t.SampleRate,
+		Channels:         t.Channels,
+		Lyrics:           t.Lyrics,
+		CoverArt:         t.CoverArt,
+		AddedAt:          t.AddedAt,
+		ModifiedAt:       t.ModifiedAt,
+		PlayCount:        t.PlayCount,
+		LastPlayed:       t.LastPlayed,
+		ReplayGainTrack:  t.ReplayGainTrack,
+		ReplayGainAlbum:  t.ReplayGainAlbum,
+		ContentHash:      t.ContentHash,
 	}
 }
 
@@ -45,34 +48,47 @@ func ProtoToTrack(p *pb.Track) *domain.Track {
 	if p == nil {
 		return nil
 	}
-	return &domain.Track{
-		ID:              domain.TrackID(p.Id),
-		Path:            p.Path,
-		Title:           p.Title,
-		Artist:          p.Artist,
-		AlbumArtist:     p.AlbumArtist,
-		Album:           p.Album,
-		TrackNumber:     p.TrackNumber,
-		DiscNumber:      p.DiscNumber,
-		Year:            p.Year,
-		Genres:          p.Genres,
-		DurationMs:      p.DurationMs,
-		SizeBytes:       p.SizeBytes,
-		MimeType:        p.MimeType,
-		Codec:           p.Codec,
-		Bitrate:         p.Bitrate,
-		SampleRate:      p.SampleRate,
-		Channels:        p.Channels,
-		Lyrics:          p.Lyrics,
-		CoverArt:        p.CoverArt,
-		AddedAt:         p.AddedAt,
-		ModifiedAt:      p.ModifiedAt,
-		PlayCount:       p.PlayCount,
-		LastPlayed:      p.LastPlayed,
-		ReplayGainTrack: p.ReplayGainTrack,
-		ReplayGainAlbum: p.ReplayGainAlbum,
-		ContentHash:     p.ContentHash,
+	t := &domain.Track{
+		ID:               domain.TrackID(p.Id),
+		Path:             p.Path,
+		Title:            p.Title,
+		NormalizedTitle:  p.NormalizedTitle,
+		Artist:           p.Artist,
+		NormalizedArtist: p.NormalizedArtist,
+		AlbumArtist:      p.AlbumArtist,
+		Album:            p.Album,
+		NormalizedAlbum:  p.NormalizedAlbum,
+		TrackNumber:      p.TrackNumber,
+		DiscNumber:       p.DiscNumber,
+		Year:             p.Year,
+		Genres:           p.Genres,
+		DurationMs:       p.DurationMs,
+		SizeBytes:        p.SizeBytes,
+		MimeType:         p.MimeType,
+		Codec:            p.Codec,
+		Bitrate:          p.Bitrate,
+		SampleRate:       p.SampleRate,
+		Channels:         p.Channels,
+		Lyrics:           p.Lyrics,
+		CoverArt:         p.CoverArt,
+		AddedAt:          p.AddedAt,
+		ModifiedAt:       p.ModifiedAt,
+		PlayCount:        p.PlayCount,
+		LastPlayed:       p.LastPlayed,
+		ReplayGainTrack:  p.ReplayGainTrack,
+		ReplayGainAlbum:  p.ReplayGainAlbum,
+		ContentHash:      p.ContentHash,
 	}
+	if t.NormalizedTitle == "" {
+		t.NormalizedTitle = domain.Normalize(t.Title)
+	}
+	if t.NormalizedArtist == "" {
+		t.NormalizedArtist = domain.Normalize(t.Artist)
+	}
+	if t.NormalizedAlbum == "" {
+		t.NormalizedAlbum = domain.Normalize(t.Album)
+	}
+	return t
 }
 
 func PlaylistToProto(p *domain.Playlist) *pb.Playlist {

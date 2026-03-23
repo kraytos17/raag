@@ -117,7 +117,7 @@ func TestP2PResolver_ResolveLocal(t *testing.T) {
 
 	trackID := domain.GenerateTrackID("/music/test.mp3")
 	tmpFile := t.TempDir() + "/test.mp3"
-	if err := os.WriteFile(tmpFile, []byte("test data"), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte("test data"), 0o644); err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	repo.tracks[trackID] = &domain.Track{

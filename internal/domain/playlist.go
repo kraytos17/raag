@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 )
@@ -18,12 +19,12 @@ func (p PlaylistID) Validate() bool {
 	return p != ""
 }
 
-func GeneratePlaylistID() PlaylistID {
+func GeneratePlaylistID() (PlaylistID, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		return PlaylistID("")
+		return "", fmt.Errorf("failed to generate playlist ID: %w", err)
 	}
-	return PlaylistID(hex.EncodeToString(b))
+	return PlaylistID(hex.EncodeToString(b)), nil
 }
 
 type Playlist struct {
@@ -39,8 +40,13 @@ func NewPlaylist(name string) (*Playlist, error) {
 	if name == "" {
 		return nil, ErrInvalidPlaylistName
 	}
+
+	id, err := GeneratePlaylistID()
+	if err != nil {
+		return nil, err
+	}
 	return &Playlist{
-		ID:         GeneratePlaylistID(),
+		ID:         id,
 		Name:       name,
 		TrackIDs:   []TrackID{},
 		CreatedAt:  time.Now().Unix(),
@@ -64,14 +70,7 @@ func (p *Playlist) AddTrack(trackID TrackID) {
 }
 
 func (p *Playlist) RemoveTrack(trackID TrackID) {
-	newTracks := make([]TrackID, 0, len(p.TrackIDs))
-	for _, id := range p.TrackIDs {
-		if id != trackID {
-			newTracks = append(newTracks, id)
-		}
-	}
-
-	p.TrackIDs = newTracks
+	p.TrackIDs = slices.DeleteFunc(p.TrackIDs, func(id TrackID) bool { return id == trackID })
 	p.ModifiedAt = time.Now().Unix()
 }
 
@@ -83,7 +82,7 @@ func (p *Playlist) MoveTrack(from, to int) error {
 		return errors.New("invalid to index")
 	}
 	if from == to {
-		return nil // No-op: moving to same position doesn't modify playlist
+		return nil
 	}
 
 	track := p.TrackIDs[from]

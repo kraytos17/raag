@@ -30,6 +30,7 @@ type StreamPool struct {
 	pools        map[peer.ID][]*PooledStream
 	pending      map[peer.ID][]chan *PooledStream
 	totalStreams int
+	done         chan struct{}
 }
 
 type PooledStream struct {
@@ -45,6 +46,7 @@ func NewStreamPool(h StreamOpener, protoID protocol.ID) *StreamPool {
 		protocolID: protoID,
 		pools:      make(map[peer.ID][]*PooledStream),
 		pending:    make(map[peer.ID][]chan *PooledStream),
+		done:       make(chan struct{}),
 	}
 	go sp.reaper()
 	return sp
@@ -180,6 +182,7 @@ func (p *StreamPool) removePendingLocked(pid peer.ID, ch chan *PooledStream) {
 }
 
 func (p *StreamPool) Close() {
+	close(p.done)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -203,18 +206,23 @@ func (p *StreamPool) reaper() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		p.mu.Lock()
-		now := time.Now()
-		for pid, pool := range p.pools {
-			for i := len(pool) - 1; i >= 0; i-- {
-				ps := pool[i]
-				if ps.refCnt == 0 && now.Sub(ps.lastUsed) > StreamIdleTimeout {
-					p.removeStreamLocked(pid, i)
+	for {
+		select {
+		case <-ticker.C:
+			p.mu.Lock()
+			now := time.Now()
+			for pid, pool := range p.pools {
+				for i := len(pool) - 1; i >= 0; i-- {
+					ps := pool[i]
+					if ps.refCnt == 0 && now.Sub(ps.lastUsed) > StreamIdleTimeout {
+						p.removeStreamLocked(pid, i)
+					}
 				}
 			}
+			p.mu.Unlock()
+		case <-p.done:
+			return
 		}
-		p.mu.Unlock()
 	}
 }
 
