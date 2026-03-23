@@ -82,6 +82,7 @@ func (t *Track) Validate() error {
 func (t *Track) Copy() *Track {
 	genres := make([]string, len(t.Genres))
 	copy(genres, t.Genres)
+
 	coverArt := make([]byte, len(t.CoverArt))
 	copy(coverArt, t.CoverArt)
 	return &Track{

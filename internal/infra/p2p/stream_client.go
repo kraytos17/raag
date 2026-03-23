@@ -48,14 +48,14 @@ func (c *StreamClient) GetChunk(ctx context.Context, req *pb.ChunkRequest) (*pb.
 			lastErr = err
 			continue
 		}
-		if err := c.writeRequest(ctx, stream, req); err != nil {
+		if err := c.writeRequest(stream, req); err != nil {
 			c.pool.Remove(c.peerID, stream)
 			lastErr = err
 			continue
 		}
 
 		var resp pb.ChunkResponse
-		if err := c.readResponse(ctx, stream, &resp); err != nil {
+		if err := c.readResponse(stream, &resp); err != nil {
 			c.pool.Remove(c.peerID, stream)
 			lastErr = err
 			continue
@@ -67,13 +67,13 @@ func (c *StreamClient) GetChunk(ctx context.Context, req *pb.ChunkRequest) (*pb.
 	return nil, lastErr
 }
 
-func (c *StreamClient) writeRequest(ctx context.Context, stream network.Stream, req *pb.ChunkRequest) error {
+func (c *StreamClient) writeRequest(stream network.Stream, req *pb.ChunkRequest) error {
 	stream.SetWriteDeadline(time.Now().Add(c.timeout))
 	defer stream.SetWriteDeadline(time.Time{})
 	return wire.WriteMsg(stream, req)
 }
 
-func (c *StreamClient) readResponse(ctx context.Context, stream network.Stream, resp *pb.ChunkResponse) error {
+func (c *StreamClient) readResponse(stream network.Stream, resp *pb.ChunkResponse) error {
 	stream.SetReadDeadline(time.Now().Add(c.timeout))
 	defer stream.SetReadDeadline(time.Time{})
 	return wire.ReadMsg(stream, resp)

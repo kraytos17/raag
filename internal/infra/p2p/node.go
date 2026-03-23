@@ -3,7 +3,9 @@ package p2p
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -11,6 +13,8 @@ import (
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	protocols "github.com/p-society/raag/internal/infra/p2p/protocols"
+	"github.com/p-society/raag/internal/infra/wire"
+	pb "github.com/p-society/raag/proto/gen"
 )
 
 type P2PNode struct {
@@ -19,10 +23,12 @@ type P2PNode struct {
 	identity       *IdentityManager
 	streamPool     *StreamPool
 	streamHandler  *protocols.StreamHandler
+	syncHandler    *protocols.SyncHandler
 	resolver       *P2PResolver
 	scorer         *PeerScorer
 	peerCache      *discovery.PeerCache
 	mdns           *discovery.MdnsDiscovery
+	peerMgr        *peerManager
 	mu             sync.Mutex
 	started        bool
 }
@@ -52,24 +58,25 @@ func NewP2PNode(ctx context.Context, cfg P2PNodeConfig, libraryRepo app.LibraryR
 		return nil, err
 	}
 
+	syncHandler := protocols.NewSyncHandler(libraryRepo, p2pHost.ID())
 	streamHandler := protocols.NewStreamHandler(libraryRepo)
 	streamPool := NewStreamPool(p2pHost, protocols.StreamProtocol)
 	scorer := NewPeerScorer()
-	peerCache := discovery.NewPeerCache(100)
-	resolver := NewP2PResolver(libraryRepo, streamPool, &peerManager{
-		host:      p2pHost,
-		peerCache: peerCache,
-	}, scorer)
 
+	peerCache := discovery.NewPeerCache(100)
+	peerMgr := newPeerManager(p2pHost, peerCache, libraryRepo)
+	resolver := NewP2PResolver(libraryRepo, streamPool, peerMgr, scorer)
 	node := &P2PNode{
 		host:           p2pHost,
 		bootstrapPeers: cfg.BootstrapPeers,
 		identity:       identity,
 		streamPool:     streamPool,
 		streamHandler:  streamHandler,
+		syncHandler:    syncHandler,
 		resolver:       resolver,
 		scorer:         scorer,
 		peerCache:      peerCache,
+		peerMgr:        peerMgr,
 	}
 	return node, nil
 }
@@ -83,7 +90,9 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 
 	n.started = true
 	n.mu.Unlock()
+
 	n.host.SetStreamHandler(protocols.StreamProtocol, n.streamHandler.Handle)
+	n.host.SetStreamHandler(protocols.SyncProtocol, n.syncHandler.Handle)
 	mdns := discovery.NewMdnsDiscovery(n.host, func(pi peer.AddrInfo) {
 		slog.Info("peer discovered", "peer", pi.ID)
 		if !n.peerCache.Add(pi) {
@@ -140,13 +149,44 @@ func (n *P2PNode) PeerCache() *discovery.PeerCache {
 	return n.peerCache
 }
 
+func (n *P2PNode) SyncHandler() *protocols.SyncHandler {
+	return n.syncHandler
+}
+
+func (n *P2PNode) StreamHandler() *protocols.StreamHandler {
+	return n.streamHandler
+}
+
 type peerManager struct {
 	host      host.Host
 	peerCache *discovery.PeerCache
+	library   app.LibraryRepository
+	mu        sync.RWMutex
+	manifests map[peer.ID]*pb.LibraryManifest
+	caps      map[peer.ID]*pb.PeerCapabilities
+}
+
+func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.LibraryRepository) *peerManager {
+	return &peerManager{
+		host:      h,
+		peerCache: peerCache,
+		library:   library,
+		manifests: make(map[peer.ID]*pb.LibraryManifest),
+		caps:      make(map[peer.ID]*pb.PeerCapabilities),
+	}
 }
 
 func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID {
-	return pm.host.Network().Peers()
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	var owners []peer.ID
+	for pid, manifest := range pm.manifests {
+		if slices.Contains(manifest.TrackIds, string(trackID)) {
+			owners = append(owners, pid)
+		}
+	}
+	return owners
 }
 
 func (pm *peerManager) GetPeerScore(ctx context.Context, pid peer.ID) *domain.PeerScore {
@@ -162,7 +202,53 @@ func (pm *peerManager) IsBanned(pid peer.ID) bool {
 }
 
 func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities {
-	return &domain.PeerCapabilities{
-		SupportedCodecs: []string{"mp3", "flac", "ogg", "wav"},
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if caps, ok := pm.caps[pid]; ok {
+		return &domain.PeerCapabilities{
+			SupportedCodecs:   caps.SupportedCodecs,
+			SupportedBitrates: caps.SupportedBitrates,
+			CanTranscode:      caps.CanTranscode,
+			ProtocolVersion:   caps.ProtocolVersion,
+		}
 	}
+	return &domain.PeerCapabilities{
+		SupportedCodecs: app.AudioExtensions,
+	}
+}
+
+func (pm *peerManager) FetchManifest(ctx context.Context, pid peer.ID) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	stream, err := pm.host.NewStream(ctx, pid, protocols.SyncProtocol)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	req := &pb.SyncRequest{
+		Payload: &pb.SyncRequest_ManifestRequest{},
+	}
+	if err := wire.WriteMsg(stream, req); err != nil {
+		return err
+	}
+
+	var resp pb.SyncResponse
+	if err := wire.ReadMsg(stream, &resp); err != nil {
+		return err
+	}
+	if manifest, ok := resp.GetPayload().(*pb.SyncResponse_Manifest); ok {
+		pm.mu.Lock()
+		pm.manifests[pid] = manifest.Manifest
+		pm.mu.Unlock()
+	}
+	return nil
+}
+
+func (pm *peerManager) GetManifest(pid peer.ID) *pb.LibraryManifest {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.manifests[pid]
 }
