@@ -47,19 +47,6 @@ func (s *SearchService) Search(ctx context.Context, query string, limit int) ([]
 	return s.resolveAndRankTracks(ctx, query, trackIDs, limit)
 }
 
-func (s *SearchService) SearchFuzzy(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-
-	trackIDs, err := s.index.SearchFuzzy(ctx, query, limit)
-	if err != nil {
-		slog.Warn("fuzzy search failed, falling back to exact search", "error", err)
-		return s.Search(ctx, query, limit)
-	}
-	return s.resolveAndRankTracks(ctx, query, trackIDs, limit)
-}
-
 func (s *SearchService) resolveAndRankTracks(ctx context.Context, query string, ids []domain.TrackID, limit int) ([]*domain.Track, error) {
 	type scoredTrack struct {
 		track *domain.Track
@@ -81,7 +68,10 @@ func (s *SearchService) resolveAndRankTracks(ctx context.Context, query string, 
 	}
 
 	slices.SortFunc(all, func(a, b scoredTrack) int {
-		return cmp.Compare(b.score, a.score)
+		if d := cmp.Compare(b.score, a.score); d != 0 {
+			return d
+		}
+		return cmp.Compare(a.track.ID, b.track.ID)
 	})
 
 	n := min(len(all), limit)
@@ -101,13 +91,27 @@ func (s *SearchService) calculateRankScore(normalizedQuery string, track *domain
 
 func (s *SearchService) calculateMatchScore(normalizedQuery string, track *domain.Track) float64 {
 	score := 0.0
-	if strings.Contains(domain.Normalize(track.Title), normalizedQuery) {
+	title := track.NormalizedTitle
+	if title == "" {
+		title = domain.Normalize(track.Title)
+	}
+
+	artist := track.NormalizedArtist
+	if artist == "" {
+		artist = domain.Normalize(track.Artist)
+	}
+
+	album := track.NormalizedAlbum
+	if album == "" {
+		album = domain.Normalize(track.Album)
+	}
+	if strings.Contains(title, normalizedQuery) {
 		score += BoostTitle
 	}
-	if strings.Contains(domain.Normalize(track.Artist), normalizedQuery) {
+	if strings.Contains(artist, normalizedQuery) {
 		score += BoostArtist
 	}
-	if strings.Contains(domain.Normalize(track.Album), normalizedQuery) {
+	if strings.Contains(album, normalizedQuery) {
 		score += BoostAlbum
 	}
 	return score
@@ -124,6 +128,10 @@ func (s *SearchService) calculateRecencyScore(track *domain.Track) float64 {
 	if track.LastPlayed == 0 {
 		return 0.5
 	}
+
 	hoursSince := time.Since(time.Unix(track.LastPlayed, 0)).Hours()
+	if hoursSince < 0 {
+		hoursSince = 0
+	}
 	return 1.0 / (1.0 + hoursSince/24.0)
 }

@@ -16,6 +16,8 @@ func Normalize(s string) string {
 	for _, r := range s {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' {
 			result.WriteRune(r)
+		} else if r == '_' || r == '-' || r == '.' {
+			result.WriteRune(' ')
 		}
 	}
 	return result.String()

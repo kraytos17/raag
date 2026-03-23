@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func TestNewPlaylist(t *testing.T) {
 
 func TestNewPlaylist_EmptyName(t *testing.T) {
 	_, err := NewPlaylist("")
-	if err != ErrInvalidPlaylistName {
+	if !errors.Is(err, ErrInvalidPlaylistName) {
 		t.Errorf("NewPlaylist(\"\") error = %v, want %v", err, ErrInvalidPlaylistName)
 	}
 }

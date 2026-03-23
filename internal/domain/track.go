@@ -25,32 +25,35 @@ func GenerateTrackID(path string) TrackID {
 }
 
 type Track struct {
-	ID              TrackID
-	Path            string
-	Title           string
-	Artist          string
-	AlbumArtist     string
-	Album           string
-	TrackNumber     uint32
-	DiscNumber      uint32
-	Year            uint32
-	Genres          []string
-	DurationMs      uint64
-	SizeBytes       uint64
-	MimeType        string
-	Codec           string
-	Bitrate         uint32
-	SampleRate      uint32
-	Channels        uint32
-	Lyrics          string
-	CoverArt        []byte
-	AddedAt         int64
-	ModifiedAt      int64
-	PlayCount       uint64
-	LastPlayed      int64
-	ReplayGainTrack float32
-	ReplayGainAlbum float32
-	ContentHash     string
+	ID               TrackID
+	Path             string
+	Title            string
+	NormalizedTitle  string
+	Artist           string
+	NormalizedArtist string
+	AlbumArtist      string
+	Album            string
+	NormalizedAlbum  string
+	TrackNumber      uint32
+	DiscNumber       uint32
+	Year             uint32
+	Genres           []string
+	DurationMs       uint64
+	SizeBytes        uint64
+	MimeType         string
+	Codec            string
+	Bitrate          uint32
+	SampleRate       uint32
+	Channels         uint32
+	Lyrics           string
+	CoverArt         []byte
+	AddedAt          int64
+	ModifiedAt       int64
+	PlayCount        uint64
+	LastPlayed       int64
+	ReplayGainTrack  float32
+	ReplayGainAlbum  float32
+	ContentHash      string
 }
 
 func NewTrack(path string) *Track {
@@ -74,6 +77,44 @@ func (t *Track) Validate() error {
 		return ErrZeroDuration
 	}
 	return nil
+}
+
+func (t *Track) Copy() *Track {
+	genres := make([]string, len(t.Genres))
+	copy(genres, t.Genres)
+	coverArt := make([]byte, len(t.CoverArt))
+	copy(coverArt, t.CoverArt)
+	return &Track{
+		ID:               t.ID,
+		Path:             t.Path,
+		Title:            t.Title,
+		NormalizedTitle:  t.NormalizedTitle,
+		Artist:           t.Artist,
+		NormalizedArtist: t.NormalizedArtist,
+		AlbumArtist:      t.AlbumArtist,
+		Album:            t.Album,
+		NormalizedAlbum:  t.NormalizedAlbum,
+		TrackNumber:      t.TrackNumber,
+		DiscNumber:       t.DiscNumber,
+		Year:             t.Year,
+		Genres:           genres,
+		DurationMs:       t.DurationMs,
+		SizeBytes:        t.SizeBytes,
+		MimeType:         t.MimeType,
+		Codec:            t.Codec,
+		Bitrate:          t.Bitrate,
+		SampleRate:       t.SampleRate,
+		Channels:         t.Channels,
+		Lyrics:           t.Lyrics,
+		CoverArt:         coverArt,
+		AddedAt:          t.AddedAt,
+		ModifiedAt:       t.ModifiedAt,
+		PlayCount:        t.PlayCount,
+		LastPlayed:       t.LastPlayed,
+		ReplayGainTrack:  t.ReplayGainTrack,
+		ReplayGainAlbum:  t.ReplayGainAlbum,
+		ContentHash:      t.ContentHash,
+	}
 }
 
 func (t *Track) Duration() time.Duration {

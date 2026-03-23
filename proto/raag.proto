@@ -8,9 +8,12 @@ message Track {
   string id = 1;
   string path = 2;
   string title = 3;
+  string normalized_title = 27;
   string artist = 4;
+  string normalized_artist = 28;
   string album_artist = 5;
   string album = 6;
+  string normalized_album = 29;
   uint32 track_number = 7;
   uint32 disc_number = 8;
   uint32 year = 9;

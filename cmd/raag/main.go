@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/infra/ipc"
@@ -41,33 +43,30 @@ func main() {
 	}
 }
 
-func getClient() (*ipc.Client, func(), error) {
+func getClient() (*ipc.Client, error) {
 	socket := socketPath
 	if socket == "" {
 		cfg, err := config.Load()
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to load config: %w", err)
+			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
 		socket = config.ExpandHome(cfg.Daemon.SocketPath)
 	}
-
-	client := ipc.NewClient(socket)
-	return client, func() {}, nil
+	return ipc.NewClient(socket), nil
 }
 
 func call(fn func(*ipc.Client) (*pb.Response, error)) error {
-	client, cleanup, err := getClient()
+	client, err := getClient()
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 
 	resp, err := fn(client)
 	if err != nil {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf("%s", resp.Error)
+		return errors.New(resp.Error)
 	}
 	return nil
 }
@@ -172,17 +171,15 @@ func newSeekCmd() *cobra.Command {
 		Short: "Seek to position in seconds",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var seconds int
-			if _, err := fmt.Sscanf(args[0], "%d", &seconds); err != nil {
+			seconds, err := strconv.Atoi(args[0])
+			if err != nil {
 				return fmt.Errorf("invalid seconds: %s", args[0])
 			}
 
-			client, cleanup, err := getClient()
+			client, err := getClient()
 			if err != nil {
 				return err
 			}
-			defer cleanup()
-
 			return withSuccess(client.SeekTo(int64(seconds)*1000), fmt.Sprintf("seeked %ds", seconds))
 		},
 	}
@@ -194,19 +191,17 @@ func newVolumeCmd() *cobra.Command {
 		Short: "Get or set volume",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
+			client, err := getClient()
 			if err != nil {
 				return err
 			}
-			defer cleanup()
-
 			if len(args) == 0 {
 				resp, err := client.Status()
 				if err != nil {
 					return err
 				}
 				if !resp.Success {
-					return fmt.Errorf("%s", resp.Error)
+					return errors.New(resp.Error)
 				}
 				if status := resp.GetStatus(); status != nil {
 					slog.Info("volume", "level", status.Volume)
@@ -215,13 +210,13 @@ func newVolumeCmd() *cobra.Command {
 			}
 
 			var volume int
-			if _, err := fmt.Sscanf(args[0], "%d", &volume); err != nil {
+			volume, err = strconv.Atoi(args[0])
+			if err != nil {
 				return fmt.Errorf("invalid volume: %s", args[0])
 			}
 			if volume < 0 || volume > 100 {
 				return fmt.Errorf("volume must be 0-100")
 			}
-
 			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
 				return c.SetVolume(int32(volume))
 			}), fmt.Sprintf("volume set to %d", volume))
@@ -234,20 +229,18 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show playback status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
+			client, err := getClient()
 			if err != nil {
 				return err
 			}
-			defer cleanup()
 
 			resp, err := client.Status()
 			if err != nil {
 				return err
 			}
 			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
+				return errors.New(resp.Error)
 			}
-
 			if status := resp.GetStatus(); status != nil {
 				slog.Info("status", "state", status.State, "volume", status.Volume, "queue", status.QueueLength)
 				if status.CurrentTrack != nil {
@@ -265,20 +258,18 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search library for tracks",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, cleanup, err := getClient()
+			client, err := getClient()
 			if err != nil {
 				return err
 			}
-			defer cleanup()
 
 			resp, err := client.Search(args[0], 20)
 			if err != nil {
 				return err
 			}
 			if !resp.Success {
-				return fmt.Errorf("%s", resp.Error)
+				return errors.New(resp.Error)
 			}
-
 			if searchResp := resp.GetSearch(); searchResp != nil {
 				if len(searchResp.Tracks) == 0 {
 					slog.Info("no tracks found")

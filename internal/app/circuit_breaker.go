@@ -122,6 +122,10 @@ func NewCBRegistry(threshold int, cooldown time.Duration) *CBRegistry {
 }
 
 func (r *CBRegistry) Get(peerID domain.PeerID) *CircuitBreaker {
+	if val, ok := r.m.Load(peerID); ok {
+		return val.(*CircuitBreaker)
+	}
+
 	val, _ := r.m.LoadOrStore(peerID, NewCircuitBreaker(peerID, r.threshold, r.cooldown))
 	return val.(*CircuitBreaker)
 }

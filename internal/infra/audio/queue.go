@@ -161,6 +161,8 @@ func (q *Queue) Remove(position int) {
 	}
 }
 
+// Clear removes all tracks from the queue and resets the position.
+// The underlying capacity is retained to avoid reallocations when the queue is refilled.
 func (q *Queue) Clear() {
 	q.mu.Lock()
 	defer q.mu.Unlock()

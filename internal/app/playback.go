@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -39,31 +40,39 @@ func NewPlaybackController(
 	}
 }
 
-func (u *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) error {
-	track, err := u.libraryRepo.FindByID(ctx, trackID)
+func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) error {
+	track, err := c.libraryRepo.FindByID(ctx, trackID)
 	if err != nil {
 		return err
 	}
-	if err := u.fsm.Send(ctx, EventPlay); err != nil {
+	if err := c.fsm.Send(ctx, EventPlay); err != nil {
 		return err
 	}
 
-	u.mu.Lock()
-	u.currentTrack = track
-	u.mu.Unlock()
+	c.mu.Lock()
+	c.currentTrack = track
+	c.mu.Unlock()
 
-	reader, err := u.resolve(ctx, trackID)
+	reader, err := c.resolve(ctx, trackID)
 	if err != nil {
-		_ = u.fsm.Send(ctx, EventBufferFail)
+		_ = c.fsm.Send(ctx, EventBufferFail)
+		c.mu.Lock()
+		c.currentTrack = nil
+		c.mu.Unlock()
 		return err
 	}
-	if err := u.player.Play(ctx, reader, track.MimeType); err != nil {
-		_ = u.fsm.Send(ctx, EventBufferFail)
+	if err := c.player.Play(ctx, reader, track.MimeType); err != nil {
+		_ = c.fsm.Send(ctx, EventBufferFail)
+		c.mu.Lock()
+		c.currentTrack = nil
+		c.mu.Unlock()
 		return err
+	}
+	if err := c.fsm.Send(ctx, EventBufferReady); err != nil {
+		slog.Error("FSM transition to playing failed", "error", err)
 	}
 
-	_ = u.fsm.Send(ctx, EventBufferReady)
-	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
+	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
 		TrackID:  track.ID,
 		Title:    track.Title,
 		Artist:   track.Artist,
@@ -73,95 +82,110 @@ func (u *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	return nil
 }
 
-func (u *PlaybackController) PlayQuery(ctx context.Context, query string) error {
-	results, err := u.search(ctx, query, 1)
+func (c *PlaybackController) PlayQuery(ctx context.Context, query string) error {
+	results, err := c.search(ctx, query, 1)
 	if err != nil {
 		return err
 	}
 	if len(results) == 0 {
 		return domain.ErrTrackNotFound
 	}
-	return u.Play(ctx, results[0].ID)
+	return c.Play(ctx, results[0].ID)
 }
 
-func (u *PlaybackController) Pause(ctx context.Context) error {
-	if err := u.fsm.Send(ctx, EventPause); err != nil {
+func (c *PlaybackController) Pause(ctx context.Context) error {
+	if err := c.fsm.Send(ctx, EventPause); err != nil {
 		return err
 	}
-	if err := u.player.Pause(ctx); err != nil {
+	if err := c.player.Pause(ctx); err != nil {
+		_ = c.fsm.Send(ctx, EventResume)
 		return err
 	}
 
-	u.mu.Lock()
+	c.mu.Lock()
 	var trackID domain.TrackID
-	if u.currentTrack != nil {
-		trackID = u.currentTrack.ID
+	if c.currentTrack != nil {
+		trackID = c.currentTrack.ID
 	}
 
-	u.mu.Unlock()
-	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackPaused, domain.TrackPausedPayload{
+	c.mu.Unlock()
+	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackPaused, domain.TrackPausedPayload{
 		TrackID:  trackID,
-		Position: u.player.GetPosition(),
+		Position: c.player.GetPosition(),
 	}))
 	return nil
 }
 
-func (u *PlaybackController) Resume(ctx context.Context) error {
-	if err := u.fsm.Send(ctx, EventResume); err != nil {
+func (c *PlaybackController) Resume(ctx context.Context) error {
+	if err := c.fsm.Send(ctx, EventResume); err != nil {
 		return err
 	}
-	if err := u.player.Resume(ctx); err != nil {
+	if err := c.player.Resume(ctx); err != nil {
+		_ = c.fsm.Send(ctx, EventPause)
 		return err
 	}
 
-	u.mu.Lock()
+	c.mu.Lock()
 	var trackID domain.TrackID
-	if u.currentTrack != nil {
-		trackID = u.currentTrack.ID
+	if c.currentTrack != nil {
+		trackID = c.currentTrack.ID
 	}
 
-	u.mu.Unlock()
-	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackResumed, domain.TrackResumedPayload{
+	c.mu.Unlock()
+	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackResumed, domain.TrackResumedPayload{
 		TrackID:  trackID,
-		Position: u.player.GetPosition(),
+		Position: c.player.GetPosition(),
 	}))
 	return nil
 }
 
-func (u *PlaybackController) Stop(ctx context.Context) error {
-	if err := u.fsm.Send(ctx, EventStop); err != nil {
+func (c *PlaybackController) Stop(ctx context.Context) error {
+	if c.fsm.State() == domain.PlayerStateIdle {
+		c.mu.Lock()
+		c.currentTrack = nil
+		c.mu.Unlock()
+		return nil
+	}
+	if err := c.fsm.Send(ctx, EventStop); err != nil {
 		return err
 	}
-	if err := u.player.Stop(ctx); err != nil {
+	if err := c.player.Stop(ctx); err != nil {
 		return err
 	}
 
-	u.mu.Lock()
-	u.currentTrack = nil
-	u.mu.Unlock()
+	c.mu.Lock()
+	c.currentTrack = nil
+	c.mu.Unlock()
 	return nil
 }
 
-func (u *PlaybackController) Seek(ctx context.Context, position time.Duration) error {
-	prevPos := u.player.GetPosition()
-	if err := u.fsm.Send(ctx, EventSeek); err != nil {
+func (c *PlaybackController) Seek(ctx context.Context, position time.Duration) error {
+	prevState := c.fsm.State()
+	prevPos := c.player.GetPosition()
+	if err := c.fsm.Send(ctx, EventSeek); err != nil {
 		return err
 	}
-	if err := u.player.Seek(ctx, position); err != nil {
+	if err := c.player.Seek(ctx, position); err != nil {
+		// Roll back to the previous stable state.
+		// We are currently in Seeking; SeekDone returns to Playing.
+		_ = c.fsm.Send(ctx, EventSeekDone)
+		if prevState == domain.PlayerStatePaused {
+			_ = c.fsm.Send(ctx, EventPause)
+		}
 		return err
 	}
-	if err := u.fsm.Send(ctx, EventSeekDone); err != nil {
+	if err := c.fsm.Send(ctx, EventSeekDone); err != nil {
 		return err
 	}
+	c.mu.Lock()
 
-	u.mu.Lock()
 	var trackID domain.TrackID
-	if u.currentTrack != nil {
-		trackID = u.currentTrack.ID
+	if c.currentTrack != nil {
+		trackID = c.currentTrack.ID
 	}
 
-	u.mu.Unlock()
-	u.bus.Publish(ctx, domain.NewEvent(domain.EventTrackSeeked, domain.TrackSeekedPayload{
+	c.mu.Unlock()
+	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackSeeked, domain.TrackSeekedPayload{
 		TrackID: trackID,
 		From:    prevPos,
 		To:      position,
@@ -169,42 +193,42 @@ func (u *PlaybackController) Seek(ctx context.Context, position time.Duration) e
 	return nil
 }
 
-func (u *PlaybackController) SetVolume(ctx context.Context, volume int) error {
+func (c *PlaybackController) SetVolume(ctx context.Context, volume int) error {
 	if volume < 0 || volume > 100 {
 		return fmt.Errorf("volume must be between 0 and 100, got %d", volume)
 	}
-
-	u.mu.Lock()
-	prevVolume := u.volume
-	u.volume = volume
-	u.mu.Unlock()
-	if err := u.player.SetVolume(ctx, volume); err != nil {
+	if err := c.player.SetVolume(ctx, volume); err != nil {
 		return err
 	}
 
-	u.bus.Publish(ctx, domain.NewEvent(domain.EventVolumeChanged, domain.VolumeChangedPayload{
+	c.mu.Lock()
+	prevVolume := c.volume
+	c.volume = volume
+	c.mu.Unlock()
+
+	c.bus.Publish(ctx, domain.NewEvent(domain.EventVolumeChanged, domain.VolumeChangedPayload{
 		Volume:   volume,
 		Previous: prevVolume,
 	}))
 	return nil
 }
 
-func (u *PlaybackController) GetVolume() int {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.volume
+func (c *PlaybackController) GetVolume() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.volume
 }
 
-func (u *PlaybackController) GetState() PlayerState {
-	return u.fsm.State()
+func (c *PlaybackController) GetState() domain.PlayerState {
+	return c.fsm.State()
 }
 
-func (u *PlaybackController) GetCurrentTrack() *domain.Track {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.currentTrack
+func (c *PlaybackController) GetCurrentTrack() *domain.Track {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currentTrack
 }
 
-func (u *PlaybackController) search(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
-	return u.searchHandler.Search(ctx, query, limit)
+func (c *PlaybackController) search(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
+	return c.searchHandler.Search(ctx, query, limit)
 }

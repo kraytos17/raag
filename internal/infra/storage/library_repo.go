@@ -84,7 +84,7 @@ func (r *libraryRepo) setTrackEntry(set func([]byte, []byte) error, track *domai
 
 func (r *libraryRepo) FindByID(ctx context.Context, id domain.TrackID) (*domain.Track, error) {
 	if track, ok := r.cache.Get(string(id)); ok {
-		return track, nil
+		return track.Copy(), nil
 	}
 
 	var result *domain.Track
@@ -125,7 +125,7 @@ func (r *libraryRepo) FindByIDs(ctx context.Context, ids []domain.TrackID) ([]*d
 	for _, id := range ids {
 		idSet[id] = true
 		if track, ok := r.cache.Get(string(id)); ok {
-			results = append(results, track)
+			results = append(results, track.Copy())
 			delete(idSet, id)
 		}
 	}
@@ -362,7 +362,20 @@ func (r *libraryRepo) InvalidateCache() {
 
 func matchesQuery(query string, track *domain.Track) bool {
 	q := domain.Normalize(query)
-	return strings.Contains(domain.Normalize(track.Title), q) ||
-		strings.Contains(domain.Normalize(track.Artist), q) ||
-		strings.Contains(domain.Normalize(track.Album), q)
+	title := track.NormalizedTitle
+	if title == "" {
+		title = domain.Normalize(track.Title)
+	}
+	artist := track.NormalizedArtist
+	if artist == "" {
+		artist = domain.Normalize(track.Artist)
+	}
+	album := track.NormalizedAlbum
+	if album == "" {
+		album = domain.Normalize(track.Album)
+	}
+
+	return strings.Contains(title, q) ||
+		strings.Contains(artist, q) ||
+		strings.Contains(album, q)
 }

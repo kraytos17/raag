@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 )
@@ -21,39 +22,50 @@ var (
 type LifecycleManager struct {
 	mu         sync.Mutex
 	components []Component
+	names      map[string]struct{}
 }
 
 func NewLifecycleManager() *LifecycleManager {
 	return &LifecycleManager{
-		components: make([]Component, 0),
+		names: make(map[string]struct{}),
 	}
 }
 
-func (m *LifecycleManager) Register(component Component) {
+func (m *LifecycleManager) Register(component Component) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	for _, c := range m.components {
-		if c.Name() == component.Name() {
-			slog.Warn("component already registered", "name", component.Name())
-			return
-		}
+	name := component.Name()
+	if _, ok := m.names[name]; ok {
+		return fmt.Errorf("component already registered: %s", name)
 	}
+
 	m.components = append(m.components, component)
+	m.names[name] = struct{}{}
+	return nil
 }
 
 func (m *LifecycleManager) StartAll(ctx context.Context) error {
 	m.mu.Lock()
-	comps := make([]Component, len(m.components))
-	copy(comps, m.components)
+	comps := make([]Component, 0, len(m.components))
+	comps = append(comps, m.components...)
 	m.mu.Unlock()
 
+	var started []Component
 	for _, c := range comps {
 		slog.Info("starting component", "name", c.Name())
 		if err := c.Start(ctx); err != nil {
 			slog.Error("component start failed", "name", c.Name(), "error", err)
+			for i := len(started) - 1; i >= 0; i-- {
+				comp := started[i]
+				slog.Info("stopping component", "name", comp.Name(), "reason", "rollback")
+				if stopErr := comp.Stop(ctx); stopErr != nil {
+					slog.Error("component stop failed", "name", comp.Name(), "error", stopErr)
+				}
+			}
 			return errors.Join(ErrStartupFailed, err)
 		}
+
+		started = append(started, c)
 		slog.Info("component started", "name", c.Name())
 	}
 	return nil
@@ -61,8 +73,8 @@ func (m *LifecycleManager) StartAll(ctx context.Context) error {
 
 func (m *LifecycleManager) StopAll(ctx context.Context) error {
 	m.mu.Lock()
-	comps := make([]Component, len(m.components))
-	copy(comps, m.components)
+	comps := make([]Component, 0, len(m.components))
+	comps = append(comps, m.components...)
 	m.mu.Unlock()
 
 	var errs []error

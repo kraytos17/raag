@@ -16,6 +16,7 @@ func NewResolveFunc(libraryRepo LibraryRepository) ResolveFunc {
 		if err != nil {
 			return nil, err
 		}
+
 		file, err := os.Open(track.Path)
 		if err != nil {
 			return nil, err

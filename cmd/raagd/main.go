@@ -16,9 +16,11 @@ import (
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/ipc"
 	db "github.com/p-society/raag/internal/infra/storage"
+	"golang.org/x/term"
 )
 
 func main() {
+	setup := flag.Bool("setup", false, "Run first-time setup wizard")
 	musicPath := flag.String("music-path", "", "Music directory path")
 	socketPath := flag.String("socket", "", "IPC socket path (overrides config)")
 	dataDir := flag.String("data-dir", "", "Data directory (overrides config)")
@@ -33,7 +35,12 @@ func main() {
 	} else {
 		cfg, err = config.Load()
 	}
-	if err != nil || len(cfg.Library.Paths) == 0 {
+	if *setup || err != nil || (cfg != nil && len(cfg.Library.Paths) == 0) {
+		if !isInteractive() && !*setup {
+			fmt.Fprintf(os.Stderr, "error: no config found and not running in interactive mode. Run with --setup to run the setup wizard.\n")
+			os.Exit(1)
+		}
+
 		slog.Info("No configuration found. Running first-time setup...")
 		if err := config.RunSetup(); err != nil {
 			slog.Error("setup failed", "error", err)
@@ -105,8 +112,16 @@ func main() {
 	}
 
 	lc := app.NewLifecycleManager()
-	lc.Register(scanner)
-	lc.Register(ipc.AsComponent(ipcServer))
+	if err := lc.Register(scanner); err != nil {
+		slog.Error("failed to register component", "error", err)
+		_ = database.Close()
+		os.Exit(1)
+	}
+	if err := lc.Register(ipc.AsComponent(ipcServer)); err != nil {
+		slog.Error("failed to register component", "error", err)
+		_ = database.Close()
+		os.Exit(1)
+	}
 	if err := lc.StartAll(context.Background()); err != nil {
 		slog.Error("failed to start components", "error", err)
 		_ = database.Close()
@@ -140,6 +155,7 @@ func main() {
 	}
 
 	_ = lc.StopAll(shutdownCtx)
+	bus.Close()
 	_ = database.Close()
 	slog.Info("raag daemon stopped")
 }
@@ -168,14 +184,13 @@ Examples:
 }
 
 func logLevel(level string) slog.Level {
-	switch level {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(level)); err != nil {
 		return slog.LevelInfo
 	}
+	return l
+}
+
+func isInteractive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }

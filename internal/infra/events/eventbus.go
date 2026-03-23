@@ -66,6 +66,9 @@ type subscription struct {
 	eventType domain.EventType
 	rb        *ringBuffer
 	handler   domain.EventHandler
+	stop      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 type EventBus struct {
@@ -103,23 +106,29 @@ func (eb *EventBus) Subscribe(eventType domain.EventType, handler domain.EventHa
 	}
 
 	id := subscriptionID.Add(1)
+	stop := make(chan struct{})
 	sub := &subscription{
 		id:        id,
 		eventType: eventType,
 		rb:        newRingBuffer(eventChannelSize),
 		handler:   handler,
+		stop:      stop,
 	}
 
 	eb.subs[id] = sub
-	go eb.dispatch(sub)
+	sub.wg.Go(func() {
+		eb.dispatch(sub, stop)
+	})
 	return func() {
+		sub.closeOnce.Do(func() { close(stop) })
 		eb.mu.Lock()
-		defer eb.mu.Unlock()
 		delete(eb.subs, id)
+		eb.mu.Unlock()
+		sub.wg.Wait()
 	}
 }
 
-func (eb *EventBus) dispatch(sub *subscription) {
+func (eb *EventBus) dispatch(sub *subscription, stop chan struct{}) {
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 
@@ -132,6 +141,7 @@ func (eb *EventBus) dispatch(sub *subscription) {
 			select {
 			case <-sub.rb.notify:
 			case <-timer.C:
+			case <-stop:
 				return
 			}
 			continue
@@ -152,11 +162,21 @@ func (eb *EventBus) dispatch(sub *subscription) {
 
 func (eb *EventBus) Close() {
 	eb.mu.Lock()
-	defer eb.mu.Unlock()
 	if eb.closed {
+		eb.mu.Unlock()
 		return
+	}
+	subs := make([]*subscription, 0, len(eb.subs))
+	for _, sub := range eb.subs {
+		sub.closeOnce.Do(func() { close(sub.stop) })
+		subs = append(subs, sub)
 	}
 
 	eb.closed = true
 	eb.subs = make(map[uint64]*subscription)
+	eb.mu.Unlock()
+
+	for _, sub := range subs {
+		sub.wg.Wait()
+	}
 }

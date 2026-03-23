@@ -12,7 +12,6 @@ func TestSearchService_New(t *testing.T) {
 	idx := NewSearchIndex(nil)
 	repo := &mockEmptyLibraryRepo{}
 	svc := NewSearchService(idx, repo)
-
 	if svc.index != idx {
 		t.Error("NewSearchService() should set index")
 	}
@@ -22,7 +21,7 @@ func TestSearchService_New(t *testing.T) {
 }
 
 func TestSearchService_Search_LimitValidation(t *testing.T) {
-	idx := NewSearchIndex(nil)
+	idx := &spySearchIndex{}
 	repo := &mockEmptyLibraryRepo{}
 	svc := NewSearchService(idx, repo)
 	ctx := context.Background()
@@ -39,7 +38,11 @@ func TestSearchService_Search_LimitValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			idx.lastLimit = 0
 			_, _ = svc.Search(ctx, "test", tt.inputLimit)
+			if idx.lastLimit != tt.wantLimit {
+				t.Errorf("Search(limit=%d) passed limit=%d to index, want %d", tt.inputLimit, idx.lastLimit, tt.wantLimit)
+			}
 		})
 	}
 }
@@ -49,7 +52,6 @@ func TestSearchService_Search_EmptyIndex(t *testing.T) {
 	repo := &mockEmptyLibraryRepo{}
 	svc := NewSearchService(idx, repo)
 	ctx := context.Background()
-
 	results, err := svc.Search(ctx, "rock", 10)
 	if err != nil {
 		t.Errorf("Search() error = %v", err)
@@ -59,28 +61,19 @@ func TestSearchService_Search_EmptyIndex(t *testing.T) {
 	}
 }
 
-func TestSearchService_SearchFuzzy_LimitValidation(t *testing.T) {
-	idx := NewSearchIndex(nil)
-	repo := &mockEmptyLibraryRepo{}
-	svc := NewSearchService(idx, repo)
-	ctx := context.Background()
-
-	tests := []struct {
-		name       string
-		inputLimit int
-		wantLimit  int
-	}{
-		{"positive limit", 10, 10},
-		{"zero limit", 0, 20},
-		{"negative limit", -5, 20},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, _ = svc.SearchFuzzy(ctx, "test", tt.inputLimit)
-		})
-	}
+type spySearchIndex struct {
+	lastLimit int
 }
+
+func (s *spySearchIndex) Index(ctx context.Context, track *domain.Track) error         { return nil }
+func (s *spySearchIndex) IndexBatch(ctx context.Context, tracks []*domain.Track) error { return nil }
+func (s *spySearchIndex) Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
+	s.lastLimit = limit
+	return nil, nil
+}
+func (s *spySearchIndex) Delete(ctx context.Context, id domain.TrackID) error       { return nil }
+func (s *spySearchIndex) Stats(ctx context.Context) (IndexStats, error)             { return IndexStats{}, nil }
+func (s *spySearchIndex) Rebuild(ctx context.Context, repo LibraryRepository) error { return nil }
 
 func TestSearchService_CalculateMatchScore(t *testing.T) {
 	idx := NewSearchIndex(nil)

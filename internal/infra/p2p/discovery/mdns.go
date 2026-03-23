@@ -16,8 +16,8 @@ type PeerHandler func(peer.AddrInfo)
 type MdnsDiscovery struct {
 	host       host.Host
 	handlePeer PeerHandler
-	ctx        context.Context
 	cancel     context.CancelFunc
+	done       chan struct{}
 	wg         sync.WaitGroup
 	started    bool
 	mu         sync.Mutex
@@ -25,12 +25,18 @@ type MdnsDiscovery struct {
 
 func NewMdnsDiscovery(h host.Host, onPeer PeerHandler) *MdnsDiscovery {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &MdnsDiscovery{
+	done := make(chan struct{})
+	m := &MdnsDiscovery{
 		host:       h,
 		handlePeer: onPeer,
-		ctx:        ctx,
 		cancel:     cancel,
+		done:       done,
 	}
+	m.wg.Go(func() {
+		<-ctx.Done()
+		close(done)
+	})
+	return m
 }
 
 func (m *MdnsDiscovery) Start() error {
@@ -56,7 +62,7 @@ func (m *MdnsDiscovery) scanPeers() {
 
 	for {
 		select {
-		case <-m.ctx.Done():
+		case <-m.done:
 			return
 		case <-ticker.C:
 			m.discoverPeers()
@@ -82,11 +88,16 @@ func (m *MdnsDiscovery) discoverPeers() {
 
 		m.mu.Lock()
 		handle := m.handlePeer
-		ctx := m.ctx
 		m.mu.Unlock()
 
-		if handle == nil || ctx.Err() != nil {
+		if handle == nil {
 			return
+		}
+
+		select {
+		case <-m.done:
+			return
+		default:
 		}
 
 		slog.Debug("discovered peer", "peer", pid)
@@ -118,14 +129,16 @@ func NewPeerCache(maxSize int) *PeerCache {
 	}
 }
 
-func (c *PeerCache) Add(pi peer.AddrInfo) {
+func (c *PeerCache) Add(pi peer.AddrInfo) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if len(c.peers) >= c.maxSize {
-		return
+		return false
 	}
+
 	c.peers[pi.ID] = pi
+	return true
 }
 
 func (c *PeerCache) Get(id peer.ID) (peer.AddrInfo, bool) {

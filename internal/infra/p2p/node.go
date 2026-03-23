@@ -86,7 +86,9 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 	n.host.SetStreamHandler(protocols.StreamProtocol, n.streamHandler.Handle)
 	mdns := discovery.NewMdnsDiscovery(n.host, func(pi peer.AddrInfo) {
 		slog.Info("peer discovered", "peer", pi.ID)
-		n.peerCache.Add(pi)
+		if !n.peerCache.Add(pi) {
+			slog.Warn("peer cache full, could not add peer", "peer", pi.ID)
+		}
 		bus.Publish(ctx, domain.NewEvent(domain.EventPeerConnected, domain.PeerConnectedPayload{
 			PeerID: pi.ID,
 		}))
