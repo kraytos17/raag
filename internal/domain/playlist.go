@@ -45,12 +45,14 @@ func NewPlaylist(name string) (*Playlist, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	now := time.Now().Unix()
 	return &Playlist{
 		ID:         id,
 		Name:       name,
 		TrackIDs:   []TrackID{},
-		CreatedAt:  time.Now().Unix(),
-		ModifiedAt: time.Now().Unix(),
+		CreatedAt:  now,
+		ModifiedAt: now,
 	}, nil
 }
 

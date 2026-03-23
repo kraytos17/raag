@@ -2,6 +2,7 @@ package domain
 
 import (
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -73,6 +74,7 @@ func NewPeerCapabilities() *PeerCapabilities {
 }
 
 type PeerScore struct {
+	mu           sync.Mutex
 	PeerID       PeerID
 	AvgLatency   time.Duration
 	AvgBandwidth int64
@@ -91,6 +93,9 @@ func NewPeerScore(peerID PeerID) *PeerScore {
 }
 
 func (s *PeerScore) Score() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	latencyScore := 1.0 / (1.0 + s.AvgLatency.Seconds())
 	totalAttempts := s.SuccessCount + s.FailureCount
 	if totalAttempts == 0 {
@@ -103,6 +108,9 @@ func (s *PeerScore) Score() float64 {
 }
 
 func (s *PeerScore) RecordLatency(latency time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	const latencyAlpha = 0.2
 	if s.AvgLatency == 0 {
 		s.AvgLatency = latency
@@ -112,6 +120,9 @@ func (s *PeerScore) RecordLatency(latency time.Duration) {
 }
 
 func (s *PeerScore) RecordBandwidth(bytes int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	const bandwidthAlpha = 0.2
 	if s.AvgBandwidth == 0 {
 		s.AvgBandwidth = bytes
@@ -121,16 +132,25 @@ func (s *PeerScore) RecordBandwidth(bytes int64) {
 }
 
 func (s *PeerScore) RecordSuccess() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.SuccessCount++
 	s.LastSeen = time.Now()
 }
 
 func (s *PeerScore) RecordFailure() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.FailureCount++
 	s.LastSeen = time.Now()
 }
 
 func (s *PeerScore) SuccessRate() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	total := s.SuccessCount + s.FailureCount
 	if total == 0 {
 		return 1.0
@@ -139,6 +159,9 @@ func (s *PeerScore) SuccessRate() float64 {
 }
 
 func (s *PeerScore) IsHealthy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	return s.SuccessRate() > 0.5 && s.AvgLatency < 5*time.Second
 }
 

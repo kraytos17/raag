@@ -90,7 +90,7 @@ func newPlayCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			slog.Info("playing")
+			fmt.Fprintln(os.Stdout, "Playing")
 			return nil
 		},
 	}
@@ -160,7 +160,7 @@ func newPrevCmd() *cobra.Command {
 
 func withSuccess(err error, msg string) error {
 	if err == nil {
-		slog.Info(msg)
+		fmt.Fprintln(os.Stdout, msg)
 	}
 	return err
 }

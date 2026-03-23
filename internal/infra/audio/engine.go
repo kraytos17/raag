@@ -340,10 +340,11 @@ func decode(rc io.ReadCloser, mimeType string) (beep.StreamSeekCloser, beep.Form
 	default:
 		slog.Warn("unknown mime type; attempting mp3 decode", "mime", mimeType)
 		streamer, format, err = mp3.Decode(rc)
-		if err != nil {
-			_ = rc.Close()
-			return nil, format, err
-		}
+	}
+
+	if err != nil {
+		_ = rc.Close()
+		return nil, format, err
 	}
 	return streamer, format, err
 }

@@ -7,12 +7,11 @@
 package gen
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -100,7 +99,6 @@ type Track struct {
 	SampleRate       uint32                 `protobuf:"varint,16,opt,name=sample_rate,json=sampleRate,proto3" json:"sample_rate,omitempty"`
 	Channels         uint32                 `protobuf:"varint,17,opt,name=channels,proto3" json:"channels,omitempty"`
 	Lyrics           string                 `protobuf:"bytes,18,opt,name=lyrics,proto3" json:"lyrics,omitempty"`
-	CoverArt         []byte                 `protobuf:"bytes,19,opt,name=cover_art,json=coverArt,proto3" json:"cover_art,omitempty"`
 	AddedAt          int64                  `protobuf:"varint,20,opt,name=added_at,json=addedAt,proto3" json:"added_at,omitempty"`
 	ModifiedAt       int64                  `protobuf:"varint,21,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"`
 	PlayCount        uint64                 `protobuf:"varint,22,opt,name=play_count,json=playCount,proto3" json:"play_count,omitempty"`
@@ -108,6 +106,8 @@ type Track struct {
 	ReplayGainTrack  float32                `protobuf:"fixed32,24,opt,name=replay_gain_track,json=replayGainTrack,proto3" json:"replay_gain_track,omitempty"`
 	ReplayGainAlbum  float32                `protobuf:"fixed32,25,opt,name=replay_gain_album,json=replayGainAlbum,proto3" json:"replay_gain_album,omitempty"`
 	ContentHash      string                 `protobuf:"bytes,26,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	IsDuplicate      bool                   `protobuf:"varint,30,opt,name=is_duplicate,json=isDuplicate,proto3" json:"is_duplicate,omitempty"`
+	DuplicateOf      string                 `protobuf:"bytes,31,opt,name=duplicate_of,json=duplicateOf,proto3" json:"duplicate_of,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -289,13 +289,6 @@ func (x *Track) GetLyrics() string {
 	return ""
 }
 
-func (x *Track) GetCoverArt() []byte {
-	if x != nil {
-		return x.CoverArt
-	}
-	return nil
-}
-
 func (x *Track) GetAddedAt() int64 {
 	if x != nil {
 		return x.AddedAt
@@ -341,6 +334,20 @@ func (x *Track) GetReplayGainAlbum() float32 {
 func (x *Track) GetContentHash() string {
 	if x != nil {
 		return x.ContentHash
+	}
+	return ""
+}
+
+func (x *Track) GetIsDuplicate() bool {
+	if x != nil {
+		return x.IsDuplicate
+	}
+	return false
+}
+
+func (x *Track) GetDuplicateOf() string {
+	if x != nil {
+		return x.DuplicateOf
 	}
 	return ""
 }
@@ -3422,7 +3429,7 @@ var File_raag_proto protoreflect.FileDescriptor
 const file_raag_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"raag.proto\x12\x04raag\"\xfb\x06\n" +
+	"raag.proto\x12\x04raag\"\xa4\a\n" +
 	"\x05Track\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x14\n" +
@@ -3449,8 +3456,7 @@ const file_raag_proto_rawDesc = "" +
 	"\vsample_rate\x18\x10 \x01(\rR\n" +
 	"sampleRate\x12\x1a\n" +
 	"\bchannels\x18\x11 \x01(\rR\bchannels\x12\x16\n" +
-	"\x06lyrics\x18\x12 \x01(\tR\x06lyrics\x12\x1b\n" +
-	"\tcover_art\x18\x13 \x01(\fR\bcoverArt\x12\x19\n" +
+	"\x06lyrics\x18\x12 \x01(\tR\x06lyrics\x12\x19\n" +
 	"\badded_at\x18\x14 \x01(\x03R\aaddedAt\x12\x1f\n" +
 	"\vmodified_at\x18\x15 \x01(\x03R\n" +
 	"modifiedAt\x12\x1d\n" +
@@ -3460,7 +3466,9 @@ const file_raag_proto_rawDesc = "" +
 	"lastPlayed\x12*\n" +
 	"\x11replay_gain_track\x18\x18 \x01(\x02R\x0freplayGainTrack\x12*\n" +
 	"\x11replay_gain_album\x18\x19 \x01(\x02R\x0freplayGainAlbum\x12!\n" +
-	"\fcontent_hash\x18\x1a \x01(\tR\vcontentHash\"\x8b\x01\n" +
+	"\fcontent_hash\x18\x1a \x01(\tR\vcontentHash\x12!\n" +
+	"\fis_duplicate\x18\x1e \x01(\bR\visDuplicate\x12!\n" +
+	"\fduplicate_of\x18\x1f \x01(\tR\vduplicateOf\"\x8b\x01\n" +
 	"\bPlaylist\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1b\n" +

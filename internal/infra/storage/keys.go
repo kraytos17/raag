@@ -21,6 +21,7 @@ const (
 	PrefixPeerLib      = "peer:lib:"
 	PrefixPeerScore    = "peer:score:"
 	PrefixTrackCover   = "trk:cover:"
+	PrefixContentHash  = "hash:content:" // For deduplication lookup
 
 	KeyIdentity = "cfg:identity"
 )
@@ -71,6 +72,10 @@ func PeerScoreKey(id domain.PeerID) []byte {
 
 func CoverArtKey(id domain.TrackID) []byte {
 	return []byte(PrefixTrackCover + string(id))
+}
+
+func ContentHashKey(hash string) []byte {
+	return []byte(PrefixContentHash + hash)
 }
 
 func pathHash(path string) string {

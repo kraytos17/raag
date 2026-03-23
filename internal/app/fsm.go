@@ -126,7 +126,3 @@ func NewPlaybackFSM(bus domain.EventBus) *PlaybackFSM {
 		bus: bus,
 	}
 }
-
-func (p *PlaybackFSM) State() domain.PlayerState {
-	return p.FSM.State()
-}

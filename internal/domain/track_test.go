@@ -126,15 +126,3 @@ func TestTrack_Duration(t *testing.T) {
 		t.Errorf("Track.Duration() = %v, want 180s", duration)
 	}
 }
-
-func TestTrack_HasCoverArt(t *testing.T) {
-	track := NewTrack("/path/to/song.mp3")
-	if track.HasCoverArt() {
-		t.Errorf("Track with no cover art should return false")
-	}
-
-	track.CoverArt = []byte{0xFF, 0xD8}
-	if !track.HasCoverArt() {
-		t.Errorf("Track with cover art should return true")
-	}
-}

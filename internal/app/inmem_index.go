@@ -26,6 +26,7 @@ type inmemoryIndex struct {
 	charIndex     map[rune][]string
 	library       LibraryRepository
 	lastUpdated   atomic.Int64
+	rebuilding    atomic.Bool
 }
 
 type fuzzyMatch struct {
@@ -89,14 +90,11 @@ func (idx *inmemoryIndex) insertSorted(list []domain.TrackID, id domain.TrackID)
 func (idx *inmemoryIndex) removeExistingLocked(id domain.TrackID) {
 	if tokens, ok := idx.trackToks[id]; ok {
 		for _, token := range tokens {
-			idx.terms[token] = removeTrackID(idx.terms[token], id)
-			idx.termDF[token]--
-			if len(idx.terms[token]) == 0 {
+			newList := removeTrackID(idx.terms[token], id)
+			idx.terms[token] = newList
+			if len(newList) == 0 {
 				delete(idx.terms, token)
-				if idx.termDF[token] <= 0 {
-					delete(idx.termDF, token)
-				}
-
+				delete(idx.termDF, token)
 				idx.termKeys = removeString(idx.termKeys, token)
 				for _, r := range token {
 					list := idx.charIndex[r]
@@ -110,8 +108,9 @@ func (idx *inmemoryIndex) removeExistingLocked(id domain.TrackID) {
 	}
 	if tris, ok := idx.trackTris[id]; ok {
 		for _, tri := range tris {
-			idx.trigram[tri] = removeTrackID(idx.trigram[tri], id)
-			if len(idx.trigram[tri]) == 0 {
+			newList := removeTrackID(idx.trigram[tri], id)
+			idx.trigram[tri] = newList
+			if len(newList) == 0 {
 				delete(idx.trigram, tri)
 			}
 		}
@@ -191,6 +190,10 @@ func (idx *inmemoryIndex) IndexBatch(ctx context.Context, tracks []*domain.Track
 }
 
 func (idx *inmemoryIndex) Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
+	if idx.rebuilding.Load() {
+		return nil, nil
+	}
+
 	normalized := domain.Normalize(query)
 	if normalized == "" {
 		return nil, nil
@@ -652,6 +655,9 @@ func (idx *inmemoryIndex) Stats(ctx context.Context) (IndexStats, error) {
 }
 
 func (idx *inmemoryIndex) Rebuild(ctx context.Context, repo LibraryRepository) error {
+	idx.rebuilding.Store(true)
+	defer idx.rebuilding.Store(false)
+
 	tracks, err := repo.ListAll(ctx)
 	if err != nil {
 		return err
@@ -724,14 +730,7 @@ func uniqueStrings(in []string) []string {
 	out := make([]string, len(in))
 	copy(out, in)
 	slices.Sort(out)
-
-	uniq := make([]string, 0, len(out))
-	for i, s := range out {
-		if i == 0 || s != out[i-1] {
-			uniq = append(uniq, s)
-		}
-	}
-	return uniq
+	return slices.Compact(out)
 }
 
 func maxEdits(tokenLen int) int {

@@ -1,14 +1,11 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"image"
-	"image/jpeg"
 	"io"
 	"io/fs"
 	"iter"
@@ -23,9 +20,12 @@ import (
 	"github.com/dhowden/tag"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/hashing"
-	"golang.org/x/image/draw"
 	"golang.org/x/sync/errgroup"
 )
+
+const sampleSize = 64 * 1024 // 64KB sample chunks
+
+var ErrDuplicateSkipped = errors.New("duplicate track, skipped by policy")
 
 var AudioExtensions = []string{".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".opus", ".wma"}
 
@@ -70,13 +70,14 @@ func isAudioExt(ext string) bool {
 }
 
 type LibraryScanner struct {
-	libraryRepo LibraryRepository
-	statStore   FileStatStore
-	index       SearchIndex
-	bus         domain.EventBus
-	paths       []string
-	onProgress  func(ScanProgress)
-	hashWorker  *hashing.HashWorker
+	libraryRepo    LibraryRepository
+	statStore      FileStatStore
+	index          SearchIndex
+	bus            domain.EventBus
+	paths          []string
+	onProgress     func(ScanProgress)
+	hashWorker     *hashing.HashWorker
+	duplicateCheck func(ctx context.Context, hash string, trackID domain.TrackID, path string) (domain.TrackID, bool, bool, error)
 }
 
 func NewLibraryScanner(
@@ -93,6 +94,10 @@ func NewLibraryScanner(
 		bus:         bus,
 		paths:       paths,
 	}
+}
+
+func (s *LibraryScanner) SetDuplicateCheck(fn func(ctx context.Context, hash string, trackID domain.TrackID, path string) (domain.TrackID, bool, bool, error)) {
+	s.duplicateCheck = fn
 }
 
 func (s *LibraryScanner) EnableHashing(workers int) {
@@ -175,6 +180,7 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 	var totalScanned int
 	var totalAdded int
 	var totalRemoved int
+	var scanErrs []error
 	existingPathsList, err := s.libraryRepo.ListAllPaths(ctx)
 	if err != nil {
 		slog.Warn("failed to list existing paths", "error", err)
@@ -187,6 +193,7 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 	for _, scanPath := range s.paths {
 		scanned, added, removed, err := s.scanDirectory(ctx, scanPath, existingPaths)
 		if err != nil {
+			scanErrs = append(scanErrs, fmt.Errorf("scan directory %s: %w", scanPath, err))
 			slog.Error("scan directory failed", "path", scanPath, "error", err)
 			continue
 		}
@@ -197,12 +204,16 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 	}
 
 	duration := time.Since(startTime)
+	errMsgs := make([]string, len(scanErrs))
+	for i, e := range scanErrs {
+		errMsgs[i] = e.Error()
+	}
 	s.bus.Publish(ctx, domain.NewEvent(domain.EventScanComplete, domain.ScanCompletePayload{
 		Scanned:  totalScanned,
 		Added:    totalAdded,
 		Removed:  totalRemoved,
 		Duration: duration,
-		Errors:   []string{},
+		Errors:   errMsgs,
 	}))
 	return totalScanned, nil
 }
@@ -307,6 +318,16 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 	newFiles := make([]string, 0, len(files))
 	for _, file := range files {
 		foundPaths[file] = true
+		if existingPaths[file] {
+			stat, err := os.Stat(file)
+			if err == nil {
+				existing, err := s.libraryRepo.FindByPath(ctx, file)
+				if err == nil && existing.ModifiedAt == stat.ModTime().Unix() && int64(existing.SizeBytes) == stat.Size() {
+					scanned++
+					continue
+				}
+			}
+		}
 		newFiles = append(newFiles, file)
 	}
 
@@ -337,6 +358,10 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 
 			track, err := s.parseFile(filePath)
 			if err != nil {
+				if errors.Is(err, ErrDuplicateSkipped) {
+					slog.Info("skipping duplicate track", "file", filePath)
+					return nil
+				}
 				slog.Warn("failed to parse file", "file", filePath, "error", err)
 				return nil
 			}
@@ -381,12 +406,43 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 	return scanned, added, removed, nil
 }
 
-func computeSyncHash(file *os.File) string {
+func computeSampleHash(file *os.File, fileSize int64) string {
+	if fileSize <= sampleSize*2 {
+		hash := sha256.New()
+		if _, err := io.Copy(hash, file); err != nil {
+			return ""
+		}
+		return hex.EncodeToString(hash.Sum(nil))
+	}
+
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		slog.Warn("failed to hash file content", "error", err)
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return ""
 	}
+
+	head := make([]byte, sampleSize)
+	if _, err := io.ReadFull(file, head); err != nil {
+		return ""
+	}
+
+	hash.Write(head)
+	if _, err := file.Seek(-sampleSize, io.SeekEnd); err != nil {
+		return ""
+	}
+
+	tail := make([]byte, sampleSize)
+	if _, err := io.ReadFull(file, tail); err != nil {
+		return ""
+	}
+
+	hash.Write(tail)
+	sizeBytes := make([]byte, 8)
+	for i := 7; i >= 0; i-- {
+		sizeBytes[i] = byte(fileSize & 0xFF)
+		fileSize >>= 8
+	}
+
+	hash.Write(sizeBytes)
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
@@ -440,9 +496,6 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 			track.Genres = []string{genre}
 		}
 		track.Lyrics = metadata.Lyrics()
-		if cover := extractCoverArt(metadata); len(cover) > 0 {
-			track.CoverArt = cover
-		}
 	}
 
 	// Fallback: use filename as title if metadata fields are empty
@@ -474,11 +527,22 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 		case <-hashTimer.C:
 			slog.Warn("hash worker timed out, using sync fallback", "path", path)
 			if _, err := file.Seek(0, io.SeekStart); err == nil {
-				track.ContentHash = computeSyncHash(file)
+				track.ContentHash = computeSampleHash(file, stat.Size())
 			}
 		}
 	} else {
-		track.ContentHash = computeSyncHash(file)
+		track.ContentHash = computeSampleHash(file, stat.Size())
+	}
+	if s.duplicateCheck != nil && track.ContentHash != "" {
+		originalID, isDup, shouldSkip, err := s.duplicateCheck(context.Background(), track.ContentHash, track.ID, path)
+		if err == nil && isDup {
+			track.IsDuplicate = true
+			track.DuplicateOf = originalID
+			slog.Info("duplicate track detected", "path", path, "original", originalID)
+		}
+		if shouldSkip {
+			return track, ErrDuplicateSkipped
+		}
 	}
 
 	slog.Info("parsed track", "path", path, "title", track.Title, "id", track.ID)
@@ -553,56 +617,6 @@ func codecFromExtension(ext string) string {
 	default:
 		return "unknown"
 	}
-}
-
-func extractCoverArt(m tag.Metadata) []byte {
-	if m == nil {
-		return nil
-	}
-
-	picture := m.Picture()
-	if picture == nil {
-		return nil
-	}
-
-	data := picture.Data
-	if len(data) > 256*1024 {
-		data = resizeCoverArt(data)
-	}
-	return data
-}
-
-func resizeCoverArt(data []byte) []byte {
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		slog.Warn("cover art decode failed, discarding", "error", err)
-		return nil
-	}
-
-	bounds := img.Bounds()
-	const maxDim = 500
-	scale := 1.0
-	if bounds.Dx() > maxDim || bounds.Dy() > maxDim {
-		sx := float64(maxDim) / float64(bounds.Dx())
-		sy := float64(maxDim) / float64(bounds.Dy())
-		if sx < sy {
-			scale = sx
-		} else {
-			scale = sy
-		}
-	}
-
-	newW := int(float64(bounds.Dx()) * scale)
-	newH := int(float64(bounds.Dy()) * scale)
-	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
-	draw.BiLinear.Scale(dst, dst.Bounds(), img, bounds, draw.Over, nil)
-
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 80}); err != nil {
-		slog.Warn("cover art encode failed", "error", err)
-		return nil
-	}
-	return buf.Bytes()
 }
 
 func (s *LibraryScanner) getFileStat(path string) (*domain.FileStat, error) {
