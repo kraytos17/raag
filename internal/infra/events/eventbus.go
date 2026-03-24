@@ -34,6 +34,7 @@ func (rb *ringBuffer) Push(event domain.Event) {
 	if rb.count < rb.size {
 		rb.count++
 	}
+
 	select {
 	case rb.notify <- struct{}{}:
 	default:
@@ -130,9 +131,7 @@ func (eb *EventBus) dispatch(sub *subscription, stop chan struct{}) {
 	for {
 		event, ok := sub.rb.Pop()
 		if !ok {
-			if !timer.Reset(5 * time.Second) {
-				timer = time.NewTimer(5 * time.Second)
-			}
+			timer.Reset(5 * time.Second)
 			select {
 			case <-sub.rb.notify:
 			case <-timer.C:
@@ -141,9 +140,8 @@ func (eb *EventBus) dispatch(sub *subscription, stop chan struct{}) {
 			}
 			continue
 		}
-		if !timer.Reset(5 * time.Second) {
-			timer = time.NewTimer(5 * time.Second)
-		}
+
+		timer.Reset(5 * time.Second)
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -161,6 +159,7 @@ func (eb *EventBus) Close() {
 		eb.mu.Unlock()
 		return
 	}
+
 	subs := make([]*subscription, 0, len(eb.subs))
 	for _, sub := range eb.subs {
 		sub.closeOnce.Do(func() { close(sub.stop) })

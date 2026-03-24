@@ -161,7 +161,6 @@ func (s *PeerScore) SuccessRate() float64 {
 func (s *PeerScore) IsHealthy() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	return s.SuccessRate() > 0.5 && s.AvgLatency < 5*time.Second
 }
 

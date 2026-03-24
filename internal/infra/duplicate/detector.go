@@ -55,7 +55,6 @@ func (d *Detector) CheckDuplicate(ctx context.Context, hash string, trackID doma
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
 	d.paths[trackID] = path
 
 	var existingID string

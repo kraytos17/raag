@@ -346,15 +346,16 @@ func matchesQuery(query string, track *domain.Track) bool {
 	if title == "" {
 		title = domain.Normalize(track.Title)
 	}
+	
 	artist := track.NormalizedArtist
 	if artist == "" {
 		artist = domain.Normalize(track.Artist)
 	}
+	
 	album := track.NormalizedAlbum
 	if album == "" {
 		album = domain.Normalize(track.Album)
 	}
-
 	return strings.Contains(title, q) ||
 		strings.Contains(artist, q) ||
 		strings.Contains(album, q)
