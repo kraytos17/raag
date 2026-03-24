@@ -78,7 +78,7 @@ func (h *SyncHandler) Handle(stream network.Stream) {
 		stream.Reset()
 		return
 	}
-	
+
 	stream.SetReadDeadline(time.Time{})
 	peerID := stream.Conn().RemotePeer()
 	if !h.isAllowed(peerID) {

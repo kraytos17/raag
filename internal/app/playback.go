@@ -158,7 +158,7 @@ func (c *PlaybackController) Stop(ctx context.Context) error {
 		c.advanceCancel()
 		c.advanceCancel = nil
 	}
-	
+
 	state := c.fsm.State()
 	if state == domain.PlayerStateIdle {
 		c.currentTrack = nil
@@ -260,7 +260,7 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 	if c.advanceCancel != nil {
 		c.advanceCancel()
 	}
-	
+
 	watchCtx, cancel := context.WithCancel(ctx)
 	c.advanceCancel = cancel
 	go func() {
@@ -269,7 +269,7 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		case <-watchCtx.Done():
 			return
 		}
-		
+
 		c.mu.Lock()
 		state := c.fsm.State()
 		queue := c.queue
@@ -281,7 +281,7 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		if queue == nil {
 			return
 		}
-		
+
 		next := queue.Next()
 		if next == nil {
 			return
