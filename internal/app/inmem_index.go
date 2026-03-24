@@ -90,12 +90,12 @@ func (idx *inmemoryIndex) insertSorted(list []domain.TrackID, id domain.TrackID)
 func (idx *inmemoryIndex) removeExistingLocked(id domain.TrackID) {
 	if tokens, ok := idx.trackToks[id]; ok {
 		for _, token := range tokens {
-			newList := removeTrackID(idx.terms[token], id)
+			newList := removeFromSorted(idx.terms[token], id)
 			idx.terms[token] = newList
 			if len(newList) == 0 {
 				delete(idx.terms, token)
 				delete(idx.termDF, token)
-				idx.termKeys = removeString(idx.termKeys, token)
+				idx.termKeys = removeFromSorted(idx.termKeys, token)
 				for _, r := range token {
 					list := idx.charIndex[r]
 					if pos, found := slices.BinarySearch(list, token); found {
@@ -108,7 +108,7 @@ func (idx *inmemoryIndex) removeExistingLocked(id domain.TrackID) {
 	}
 	if tris, ok := idx.trackTris[id]; ok {
 		for _, tri := range tris {
-			newList := removeTrackID(idx.trigram[tri], id)
+			newList := removeFromSorted(idx.trigram[tri], id)
 			idx.trigram[tri] = newList
 			if len(newList) == 0 {
 				delete(idx.trigram, tri)
@@ -256,6 +256,7 @@ func (idx *inmemoryIndex) searchLongQuery(normalized string, limit int) []domain
 			}
 			return cmp.Compare(a.id, b.id)
 		})
+
 		ids := make([]domain.TrackID, 0, len(exactMatches))
 		for i, s := range exactMatches {
 			if limit > 0 && i >= limit {
@@ -306,6 +307,7 @@ func (idx *inmemoryIndex) searchLongQuery(normalized string, limit int) []domain
 		}
 		return ids
 	}
+
 	fuzzyResults := idx.trigramSearchLocked(normalized, limit)
 	ids := make([]domain.TrackID, 0, len(fuzzyResults))
 	for i, fm := range fuzzyResults {
@@ -353,8 +355,8 @@ func (idx *inmemoryIndex) assistTrigramSearchLocked(tokens []string) []fuzzyMatc
 	if len(tokens) == 0 {
 		return nil
 	}
-
 	seen := make(map[string]struct{})
+
 	var allTris []string
 	for _, token := range tokens {
 		for _, tri := range trigramsFromNormalizedString(token) {
@@ -407,8 +409,8 @@ func (idx *inmemoryIndex) trigramSearchLocked(query string, limit int) []fuzzyMa
 	if len(rawTris) == 0 {
 		return nil
 	}
-
 	seen := make(map[string]struct{}, len(rawTris))
+
 	var queryTris []string
 	for _, tri := range rawTris {
 		if _, ok := seen[tri]; !ok {
@@ -607,7 +609,7 @@ func (idx *inmemoryIndex) Delete(ctx context.Context, id domain.TrackID) error {
 
 	if tokens, ok := idx.trackToks[id]; ok {
 		for _, token := range tokens {
-			idx.terms[token] = removeTrackID(idx.terms[token], id)
+			idx.terms[token] = removeFromSorted(idx.terms[token], id)
 			idx.termDF[token]--
 			if len(idx.terms[token]) == 0 {
 				delete(idx.terms, token)
@@ -615,7 +617,7 @@ func (idx *inmemoryIndex) Delete(ctx context.Context, id domain.TrackID) error {
 					delete(idx.termDF, token)
 				}
 
-				idx.termKeys = removeString(idx.termKeys, token)
+				idx.termKeys = removeFromSorted(idx.termKeys, token)
 				for _, r := range token {
 					list := idx.charIndex[r]
 					if pos, found := slices.BinarySearch(list, token); found {
@@ -628,7 +630,7 @@ func (idx *inmemoryIndex) Delete(ctx context.Context, id domain.TrackID) error {
 	}
 	if tris, ok := idx.trackTris[id]; ok {
 		for _, tri := range tris {
-			idx.trigram[tri] = removeTrackID(idx.trigram[tri], id)
+			idx.trigram[tri] = removeFromSorted(idx.trigram[tri], id)
 			if len(idx.trigram[tri]) == 0 {
 				delete(idx.trigram, tri)
 			}
@@ -706,16 +708,8 @@ func trigramsFromNormalizedString(s string) []string {
 	return result
 }
 
-func removeTrackID(list []domain.TrackID, id domain.TrackID) []domain.TrackID {
-	pos, found := slices.BinarySearch(list, id)
-	if found {
-		return slices.Delete(list, pos, pos+1)
-	}
-	return list
-}
-
-func removeString(list []string, s string) []string {
-	pos, found := slices.BinarySearch(list, s)
+func removeFromSorted[S ~[]E, E cmp.Ordered](list S, target E) S {
+	pos, found := slices.BinarySearch(list, target)
 	if found {
 		return slices.Delete(list, pos, pos+1)
 	}

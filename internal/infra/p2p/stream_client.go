@@ -13,8 +13,6 @@ import (
 	pb "github.com/p-society/raag/proto/gen"
 )
 
-const MaxMessageSize = wire.MaxMessageSize
-
 type StreamClient struct {
 	peerID     peer.ID
 	pool       *StreamPool
@@ -122,6 +120,7 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 		if r.totalSize > 0 && r.offset+length > r.totalSize {
 			length = r.totalSize - r.offset
 		}
+		
 		req := &pb.ChunkRequest{
 			TrackId: r.trackID,
 			Offset:  r.offset,

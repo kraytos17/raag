@@ -102,6 +102,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		mdnsServiceName: cfg.MdnsServiceName,
 		shareManifest:   cfg.ShareManifest,
 	}
+	
 	ctx, cancel := context.WithCancel(context.Background())
 	node.cancel = cancel
 	node.done = ctx.Done()

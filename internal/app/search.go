@@ -129,9 +129,6 @@ func (s *SearchService) calculateRecencyScore(track *domain.Track) float64 {
 		return 0.5
 	}
 
-	hoursSince := time.Since(time.Unix(track.LastPlayed, 0)).Hours()
-	if hoursSince < 0 {
-		hoursSince = 0
-	}
+	hoursSince := max(0, time.Since(time.Unix(track.LastPlayed, 0)).Hours())
 	return 1.0 / (1.0 + hoursSince/24.0)
 }

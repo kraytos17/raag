@@ -73,6 +73,7 @@ func (m *MockLibraryRepository) GetCoverArt(ctx context.Context, id domain.Track
 func (m *MockLibraryRepository) Search(ctx context.Context, query app.SearchQuery) ([]*domain.Track, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	
 	var results []*domain.Track
 	for _, track := range m.tracks {
 		if len(results) >= query.Limit {
@@ -89,6 +90,7 @@ func (m *MockLibraryRepository) Delete(ctx context.Context, id domain.TrackID) e
 	if track, ok := m.tracks[id]; ok {
 		delete(m.byPath, track.Path)
 	}
+	
 	delete(m.tracks, id)
 	return nil
 }

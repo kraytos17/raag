@@ -67,11 +67,10 @@ func (h *SyncHandler) Deny(peerID peer.ID) {
 
 func (h *SyncHandler) Handle(stream network.Stream) {
 	defer stream.Close()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
 	stream.SetReadDeadline(time.Now().Add(30 * time.Second))
+	
 	var req pb.SyncRequest
 	if err := wire.ReadMsg(stream, &req); err != nil {
 		slog.Error("failed to read sync request", "err", err)

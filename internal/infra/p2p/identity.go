@@ -67,7 +67,6 @@ func (m *IdentityManager) tryKeychain() (crypto.PrivKey, peer.ID, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate peer ID: %w", err)
 	}
-
 	return key, id, nil
 }
 

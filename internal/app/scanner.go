@@ -166,9 +166,7 @@ func (s *LibraryScanner) Scan(ctx context.Context) (int, error) {
 		StartTime: startTime,
 	}))
 
-	var totalScanned int
-	var totalAdded int
-	var totalRemoved int
+	var totalScanned, totalAdded, totalRemoved int
 	var scanErrs []error
 	existingPathsList, err := s.libraryRepo.ListAllPaths(ctx)
 	if err != nil {
@@ -292,9 +290,7 @@ func (s *LibraryScanner) ScanIncremental(ctx context.Context) (added int, modifi
 func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, existingPaths map[string]bool) (int, int, int, error) {
 	slog.Info("scanDirectory called", "dir", dirPath, "existingPathsCount", len(existingPaths))
 
-	var scanned int
-	var added int
-	var removed int
+	var scanned, added, removed int
 	var files []string
 	for path, err := range WalkAudioFiles(ctx, dirPath) {
 		if err != nil {
@@ -543,6 +539,7 @@ func (s *LibraryScanner) indexTrack(ctx context.Context, track *domain.Track) er
 		slog.Warn("failed to save track to repo", "track", track.ID, "error", err)
 		return err
 	}
+	
 	slog.Info("track saved to repo", "track", track.ID, "title", track.Title)
 	if err := s.index.Index(ctx, track); err != nil {
 		slog.Warn("failed to index track", "track", track.ID, "error", err)

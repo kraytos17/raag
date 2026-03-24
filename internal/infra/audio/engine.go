@@ -67,6 +67,7 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 		e.state = domain.PlayerStateError
 		return fmt.Errorf("failed to read audio data: %w", err)
 	}
+	
 	streamer, format, err := decode(rc, mimeType)
 	if err != nil {
 		e.state = domain.PlayerStateError
@@ -104,6 +105,7 @@ func (e *Engine) Play(ctx context.Context, reader io.Reader, mimeType string) er
 		e.ctrl = nil
 		e.vol = nil
 		e.mu.Unlock()
+		
 		select {
 		case e.done <- struct{}{}:
 		default:
