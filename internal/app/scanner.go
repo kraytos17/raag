@@ -23,7 +23,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var AudioExtensions = domain.AudioExtensions
+var audioExtensions = domain.AudioExtensions
 
 type ScanProgress struct {
 	Scanned     int
@@ -55,7 +55,7 @@ func WalkAudioFiles(ctx context.Context, dirPath string) iter.Seq2[string, error
 
 func isAudioExt(ext string) bool {
 	ext = strings.ToLower(ext)
-	return slices.Contains(AudioExtensions, ext)
+	return slices.Contains(audioExtensions, ext)
 }
 
 type LibraryScanner struct {

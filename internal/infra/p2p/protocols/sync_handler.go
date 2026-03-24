@@ -20,11 +20,17 @@ const (
 	StreamProtocol = "/raag/stream/1.0.0"
 )
 
+type CapabilitiesProvider interface {
+	GetLocalCapabilities() *pb.PeerCapabilities
+}
+
 type SyncHandler struct {
-	mu          sync.RWMutex
-	library     app.LibraryRepository
-	allowed     map[peer.ID]bool
-	localPeerID peer.ID
+	mu              sync.RWMutex
+	library         app.LibraryRepository
+	allowed         map[peer.ID]bool
+	localPeerID     peer.ID
+	capsProvider    CapabilitiesProvider
+	announceLibrary bool
 }
 
 func NewSyncHandler(library app.LibraryRepository, localPeerID peer.ID) *SyncHandler {
@@ -33,6 +39,18 @@ func NewSyncHandler(library app.LibraryRepository, localPeerID peer.ID) *SyncHan
 		allowed:     make(map[peer.ID]bool),
 		localPeerID: localPeerID,
 	}
+}
+
+func (h *SyncHandler) SetCapabilitiesProvider(provider CapabilitiesProvider) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.capsProvider = provider
+}
+
+func (h *SyncHandler) SetAnnounceLibrary(announce bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.announceLibrary = announce
 }
 
 func (h *SyncHandler) Allow(peerID peer.ID) {
@@ -53,13 +71,15 @@ func (h *SyncHandler) Handle(stream network.Stream) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	stream.SetReadDeadline(time.Now().Add(30 * time.Second))
 	var req pb.SyncRequest
 	if err := wire.ReadMsg(stream, &req); err != nil {
 		slog.Error("failed to read sync request", "err", err)
 		stream.Reset()
 		return
 	}
-
+	
+	stream.SetReadDeadline(time.Time{})
 	peerID := stream.Conn().RemotePeer()
 	if !h.isAllowed(peerID) {
 		h.sendError(stream, "permission denied")
@@ -73,6 +93,8 @@ func (h *SyncHandler) Handle(stream network.Stream) {
 		h.handleTrackDetailRequest(ctx, stream, payload.TrackDetailRequest.TrackId)
 	case *pb.SyncRequest_CapabilitiesRequest:
 		h.handleCapabilitiesRequest(ctx, stream)
+	default:
+		h.sendError(stream, "unknown request type")
 	}
 }
 
@@ -83,6 +105,16 @@ func (h *SyncHandler) isAllowed(peerID peer.ID) bool {
 }
 
 func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.Stream, _ peer.ID) {
+	h.mu.RLock()
+	announce := h.announceLibrary
+	h.mu.RUnlock()
+
+	if !announce {
+		slog.Debug("manifest request denied: library sharing disabled")
+		h.sendError(stream, "library sharing disabled")
+		return
+	}
+
 	tracks, err := h.library.ListAll(ctx)
 	if err != nil {
 		h.sendError(stream, "failed to get track list")
@@ -97,14 +129,16 @@ func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.
 	resp := &pb.SyncResponse{
 		Payload: &pb.SyncResponse_Manifest{
 			Manifest: &pb.LibraryManifest{
-				PeerId:   h.localPeerID.String(),
-				TrackIds: trackIDs,
+				PeerId:    h.localPeerID.String(),
+				TrackIds:  trackIDs,
+				Timestamp: time.Now().Unix(),
 			},
 		},
 	}
 	if err := wire.WriteMsg(stream, resp); err != nil {
 		slog.Error("failed to send manifest", "err", err)
 	}
+	slog.Debug("manifest sent", "tracks", len(trackIDs))
 }
 
 func (h *SyncHandler) handleTrackDetailRequest(ctx context.Context, stream network.Stream, trackID string) {
@@ -125,13 +159,25 @@ func (h *SyncHandler) handleTrackDetailRequest(ctx context.Context, stream netwo
 }
 
 func (h *SyncHandler) handleCapabilitiesRequest(_ context.Context, stream network.Stream) {
+	h.mu.RLock()
+	provider := h.capsProvider
+	h.mu.RUnlock()
+
+	var caps *pb.PeerCapabilities
+	if provider != nil {
+		caps = provider.GetLocalCapabilities()
+	}
+	if caps == nil {
+		caps = &pb.PeerCapabilities{
+			SupportedCodecs:   domain.AudioExtensions,
+			SupportedBitrates: domain.SupportedBitrates,
+			ProtocolVersion:   "1.0.0",
+		}
+	}
+
 	resp := &pb.SyncResponse{
 		Payload: &pb.SyncResponse_Capabilities{
-			Capabilities: &pb.PeerCapabilities{
-				SupportedCodecs:   app.AudioExtensions,
-				SupportedBitrates: domain.SupportedBitrates,
-				ProtocolVersion:   "1.0.0",
-			},
+			Capabilities: caps,
 		},
 	}
 	if err := wire.WriteMsg(stream, resp); err != nil {

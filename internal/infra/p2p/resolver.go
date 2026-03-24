@@ -3,6 +3,7 @@ package p2p
 import (
 	"cmp"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -12,7 +13,11 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/app"
+	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
+	 "github.com/p-society/raag/internal/infra/p2p/protocols"
+	"github.com/p-society/raag/internal/infra/wire"
+	pb "github.com/p-society/raag/proto/gen"
 )
 
 type PeerManager interface {
@@ -22,6 +27,8 @@ type PeerManager interface {
 	RecordFailure(pid peer.ID)
 	IsBanned(pid peer.ID) bool
 	GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
+	GetTrackOwners(trackID string) []peer.ID
+	GetPeerLatency(pid peer.ID) time.Duration
 }
 
 type P2PResolver struct {
@@ -29,15 +36,42 @@ type P2PResolver struct {
 	pool        *StreamPool
 	peerMgr     PeerManager
 	scorer      *PeerScorer
+	lastPeerID  peer.ID
+	host        StreamOpener
 }
 
-func NewP2PResolver(libraryRepo app.LibraryRepository, pool *StreamPool, peerMgr PeerManager, scorer *PeerScorer) *P2PResolver {
+func NewP2PResolver(libraryRepo app.LibraryRepository, pool *StreamPool, peerMgr PeerManager, scorer *PeerScorer, host StreamOpener) *P2PResolver {
 	return &P2PResolver{
 		libraryRepo: libraryRepo,
 		pool:        pool,
 		peerMgr:     peerMgr,
 		scorer:      scorer,
+		host:        host,
 	}
+}
+
+func (r *P2PResolver) LastPeerID() peer.ID {
+	return r.lastPeerID
+}
+
+func (r *P2PResolver) LastPeerIDString() string {
+	return r.lastPeerID.String()
+}
+
+func (r *P2PResolver) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []string {
+	pids := r.peerMgr.GetTrackOwners(string(trackID))
+	result := make([]string, len(pids))
+	for i, p := range pids {
+		result[i] = p.String()
+	}
+	return result
+}
+
+func (r *P2PResolver) GetPeerLatency(pid peer.ID) time.Duration {
+	if r.scorer == nil {
+		return 0
+	}
+	return r.scorer.AvgLatency(pid)
 }
 
 func (r *P2PResolver) Resolve(ctx context.Context, trackID domain.TrackID) (io.ReadCloser, error) {
@@ -128,6 +162,7 @@ func (r *P2PResolver) tryPeers(ctx context.Context, trackID domain.TrackID, scor
 		}
 
 		r.peerMgr.RecordSuccess(sp.pid)
+		r.lastPeerID = sp.pid
 		slog.Info("streaming track from peer", "track", trackID, "peer", sp.pid, "score", sp.score)
 		return &streamingReader{
 			reader:  reader,
@@ -165,6 +200,7 @@ type PeerScorer struct {
 	failures    map[peer.ID]int
 	lastFailure map[peer.ID]time.Time
 	banned      map[peer.ID]bool
+	latencies   map[peer.ID][]time.Duration
 	failLimit   int
 	cooldown    time.Duration
 }
@@ -178,9 +214,36 @@ func NewPeerScorerWithConfig(failLimit int, cooldown time.Duration) *PeerScorer 
 		failures:    make(map[peer.ID]int),
 		lastFailure: make(map[peer.ID]time.Time),
 		banned:      make(map[peer.ID]bool),
+		latencies:   make(map[peer.ID][]time.Duration),
 		failLimit:   failLimit,
 		cooldown:    cooldown,
 	}
+}
+
+func (s *PeerScorer) RecordLatency(pid peer.ID, rtt time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.latencies[pid] = append(s.latencies[pid], rtt)
+	if len(s.latencies[pid]) > 5 {
+		s.latencies[pid] = s.latencies[pid][1:]
+	}
+}
+
+func (s *PeerScorer) AvgLatency(pid peer.ID) time.Duration {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	lats := s.latencies[pid]
+	if len(lats) == 0 {
+		return 0
+	}
+
+	var sum time.Duration
+	for _, l := range lats {
+		sum += l
+	}
+	return sum / time.Duration(len(lats))
 }
 
 func (s *PeerScorer) RecordSuccess(pid peer.ID) {
@@ -234,4 +297,60 @@ func (s *PeerScorer) Score(pid peer.ID, latency time.Duration, bandwidth int64, 
 	latencyScore := 1.0 / (1.0 + latency.Seconds())
 	bandwidthScore := float64(bandwidth) / 1e6 * 0.1
 	return latencyScore*0.5 + successRate*0.4 + bandwidthScore*0.1
+}
+
+type P2PResolverAdapter struct {
+	resolver *P2PResolver
+}
+
+func NewP2PResolverAdapter(resolver *P2PResolver) *P2PResolverAdapter {
+	return &P2PResolverAdapter{resolver: resolver}
+}
+
+func (a *P2PResolverAdapter) Resolve(ctx context.Context, trackID domain.TrackID) (io.ReadCloser, error) {
+	return a.resolver.Resolve(ctx, trackID)
+}
+
+func (a *P2PResolverAdapter) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []string {
+	return a.resolver.FindPeersWithTrack(ctx, trackID)
+}
+
+func (a *P2PResolverAdapter) LastPeerID() string {
+	return a.resolver.LastPeerIDString()
+}
+
+func (a *P2PResolverAdapter) FetchTrackMetadata(ctx context.Context, trackID domain.TrackID, peerID string) (*domain.Track, error) {
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	stream, err := a.resolver.host.NewStream(ctx, pid, protocols.SyncProtocol)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	req := &pb.SyncRequest{
+		Payload: &pb.SyncRequest_TrackDetailRequest{
+			TrackDetailRequest: &pb.TrackDetailRequest{
+				TrackId: string(trackID),
+			},
+		},
+	}
+	if err := wire.WriteMsg(stream, req); err != nil {
+		return nil, err
+	}
+
+	var resp pb.SyncResponse
+	if err := wire.ReadMsg(stream, &resp); err != nil {
+		return nil, err
+	}
+	if tr, ok := resp.GetPayload().(*pb.SyncResponse_Track); ok {
+		return convert.ProtoToTrack(tr.Track), nil
+	}
+	return nil, errors.New("unexpected response type")
 }

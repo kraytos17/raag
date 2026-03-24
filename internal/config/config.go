@@ -260,6 +260,7 @@ func RunSetup() error {
 		P2P: P2PConfig{
 			Enabled:          false,
 			ListenAddrs:      []string{"/ip4/0.0.0.0/tcp/7844"},
+			BootstrapPeers:   []string{},
 			MDNSServiceTag:   "raag-local",
 			MaxPeers:         20,
 			StreamPort:       7845,
@@ -330,6 +331,7 @@ type DaemonConfig struct {
 type P2PConfig struct {
 	Enabled            bool          `mapstructure:"enabled"`
 	ListenAddrs        []string      `mapstructure:"listen_addrs"`
+	BootstrapPeers     []string      `mapstructure:"bootstrap_peers"`
 	MDNSServiceTag     string        `mapstructure:"mdns_service_tag"`
 	MaxPeers           int           `mapstructure:"max_peers"`
 	StreamPort         int           `mapstructure:"stream_port"`
@@ -338,6 +340,9 @@ type P2PConfig struct {
 	UploadBandwidth    int           `mapstructure:"upload_bandwidth"`
 	CBFailureThreshold int           `mapstructure:"cb_failure_threshold"`
 	CBCooldown         time.Duration `mapstructure:"cb_cooldown"`
+	ConnMgrLowMark     int           `mapstructure:"conn_mgr_low_mark"`
+	ConnMgrHighMark    int           `mapstructure:"conn_mgr_high_mark"`
+	ConnMgrGrace       time.Duration `mapstructure:"conn_mgr_grace"`
 }
 
 type TranscoderConfig struct {

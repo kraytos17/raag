@@ -49,13 +49,15 @@ func (h *StreamHandler) Handle(stream network.Stream) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	stream.SetReadDeadline(time.Now().Add(30 * time.Second))
 	var req pb.ChunkRequest
 	if err := wire.ReadMsg(stream, &req); err != nil {
 		slog.Error("failed to read chunk request", "err", err)
 		stream.Reset()
 		return
 	}
-
+	
+	stream.SetReadDeadline(time.Time{})
 	peerID := stream.Conn().RemotePeer()
 	if !h.isAllowed(peerID) {
 		slog.Warn("unauthorized stream request", "peer", peerID)
@@ -121,13 +123,10 @@ func (h *StreamHandler) serveChunk(ctx context.Context, stream network.Stream, r
 
 func (h *StreamHandler) sendError(stream network.Stream, trackID string, msg string, code pb.ErrorCode) {
 	slog.Debug("stream error", "track_id", trackID, "error", msg, "code", code)
-	resp := &pb.SyncResponse{
-		Payload: &pb.SyncResponse_Error{
-			Error: &pb.ErrorResponse{
-				Message: msg,
-				Code:    code,
-			},
-		},
+	resp := &pb.ChunkResponse{
+		TrackId:   trackID,
+		Error:     msg,
+		LastChunk: true,
 	}
 
 	_ = wire.WriteMsg(stream, resp)

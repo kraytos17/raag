@@ -266,6 +266,7 @@ message ChunkResponse {
   bool last_chunk = 4;
   int64 total_size = 5;
   string mime_type = 6;
+  string error = 7;
 }
 
 message SyncRequest {

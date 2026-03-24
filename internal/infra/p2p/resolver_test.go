@@ -55,6 +55,19 @@ func (m *mockPeerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilit
 	return m.caps[pid]
 }
 
+func (m *mockPeerManager) GetTrackOwners(trackID string) []peer.ID {
+	for tid, owners := range m.findResults {
+		if string(tid) == trackID {
+			return owners
+		}
+	}
+	return nil
+}
+
+func (m *mockPeerManager) GetPeerLatency(pid peer.ID) time.Duration {
+	return 0
+}
+
 type mockLibraryRepo struct {
 	tracks map[domain.TrackID]*domain.Track
 }
@@ -113,8 +126,7 @@ func TestP2PResolver_ResolveLocal(t *testing.T) {
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
-	resolver := NewP2PResolver(repo, pool, peerMgr, scorer)
-
+	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
 	trackID := domain.GenerateTrackID("/music/test.mp3")
 	tmpFile := t.TempDir() + "/test.mp3"
 	if err := os.WriteFile(tmpFile, []byte("test data"), 0o644); err != nil {
@@ -142,11 +154,9 @@ func TestP2PResolver_ResolveRemote(t *testing.T) {
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
-	resolver := NewP2PResolver(repo, pool, peerMgr, scorer)
-
+	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
 	trackID := domain.GenerateTrackID("/music/remote.mp3")
 	pid := peer.ID("remote-peer")
-
 	peerMgr.findResults[trackID] = []peer.ID{pid}
 	peerMgr.scores[pid] = &domain.PeerScore{
 		PeerID:       pid,
@@ -176,10 +186,8 @@ func TestP2PResolver_TrackNotFound(t *testing.T) {
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
-	resolver := NewP2PResolver(repo, pool, peerMgr, scorer)
-
+	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
 	trackID := domain.GenerateTrackID("/music/nonexistent.mp3")
-
 	_, err := resolver.Resolve(context.Background(), trackID)
 	if !errors.Is(err, domain.ErrTrackNotFound) {
 		t.Errorf("Resolve() error = %v, want ErrTrackNotFound", err)

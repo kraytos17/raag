@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/audio"
 )
 
 type PlaybackController struct {
@@ -15,25 +16,27 @@ type PlaybackController struct {
 	libraryRepo   LibraryRepository
 	searchHandler SearchHandler
 	player        Player
-	resolve       ResolveFunc
+	resolver      Resolver
 	bus           domain.EventBus
 	fsm           *PlaybackFSM
 	currentTrack  *domain.Track
 	volume        int
+	queue         Queue
+	advanceCancel context.CancelFunc
 }
 
 func NewPlaybackController(
 	libraryRepo LibraryRepository,
 	searchHandler SearchHandler,
 	player Player,
-	resolve ResolveFunc,
+	resolver Resolver,
 	bus domain.EventBus,
 ) *PlaybackController {
 	return &PlaybackController{
 		libraryRepo:   libraryRepo,
 		searchHandler: searchHandler,
 		player:        player,
-		resolve:       resolve,
+		resolver:      resolver,
 		bus:           bus,
 		fsm:           NewPlaybackFSM(bus),
 		volume:        80,
@@ -41,9 +44,18 @@ func NewPlaybackController(
 }
 
 func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) error {
-	track, err := c.libraryRepo.FindByID(ctx, trackID)
+	resolved, err := c.resolver.Resolve(ctx, trackID)
 	if err != nil {
 		return err
+	}
+
+	track := resolved.Track
+	if track == nil {
+		track, err = c.libraryRepo.FindByID(ctx, trackID)
+		if err != nil {
+			_ = resolved.Reader.Close()
+			return err
+		}
 	}
 	if err := c.fsm.Send(ctx, domain.EventPlay); err != nil {
 		return err
@@ -53,25 +65,26 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	c.currentTrack = track
 	c.mu.Unlock()
 
-	reader, err := c.resolve(ctx, trackID)
-	if err != nil {
-		_ = c.fsm.Send(ctx, domain.EventBufferFail)
-		c.mu.Lock()
-		c.currentTrack = nil
-		c.mu.Unlock()
-		return err
+	var playErr error
+	if resolved.Source == SourceP2P {
+		src := audio.NewStreamingSource(resolved.Reader, audio.DefaultBufferSize)
+		playErr = c.player.PlayStreaming(ctx, src, track.MimeType)
+	} else {
+		playErr = c.player.Play(ctx, resolved.Reader, track.MimeType)
 	}
-	if err := c.player.Play(ctx, reader, track.MimeType); err != nil {
+
+	if playErr != nil {
 		_ = c.fsm.Send(ctx, domain.EventBufferFail)
 		c.mu.Lock()
 		c.currentTrack = nil
 		c.mu.Unlock()
-		return err
+		return playErr
 	}
 	if err := c.fsm.Send(ctx, domain.EventBufferReady); err != nil {
 		slog.Error("FSM transition to playing failed", "error", err)
 	}
 
+	c.startAdvanceWatcher(ctx)
 	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
 		TrackID:  track.ID,
 		Title:    track.Title,
@@ -141,6 +154,11 @@ func (c *PlaybackController) Resume(ctx context.Context) error {
 
 func (c *PlaybackController) Stop(ctx context.Context) error {
 	c.mu.Lock()
+	if c.advanceCancel != nil {
+		c.advanceCancel()
+		c.advanceCancel = nil
+	}
+	
 	state := c.fsm.State()
 	if state == domain.PlayerStateIdle {
 		c.currentTrack = nil
@@ -170,7 +188,7 @@ func (c *PlaybackController) Seek(ctx context.Context, position time.Duration) e
 	}
 	if err := c.player.Seek(ctx, position); err != nil {
 		// Roll back to the previous stable state.
-		// We are currently in Seeking; SeekDone returns to Playing.
+		// Currently in Seeking; SeekDone returns to Playing.
 		_ = c.fsm.Send(ctx, domain.EventSeekDone)
 		if prevState == domain.PlayerStatePaused {
 			_ = c.fsm.Send(ctx, domain.EventPause)
@@ -230,6 +248,46 @@ func (c *PlaybackController) GetCurrentTrack() *domain.Track {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.currentTrack
+}
+
+func (c *PlaybackController) SetQueue(q Queue) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queue = q
+}
+
+func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
+	if c.advanceCancel != nil {
+		c.advanceCancel()
+	}
+	
+	watchCtx, cancel := context.WithCancel(ctx)
+	c.advanceCancel = cancel
+	go func() {
+		select {
+		case <-c.player.Done():
+		case <-watchCtx.Done():
+			return
+		}
+		
+		c.mu.Lock()
+		state := c.fsm.State()
+		queue := c.queue
+		c.mu.Unlock()
+
+		if state != domain.PlayerStateIdle {
+			return
+		}
+		if queue == nil {
+			return
+		}
+		
+		next := queue.Next()
+		if next == nil {
+			return
+		}
+		_ = c.Play(context.Background(), next.ID)
+	}()
 }
 
 func (c *PlaybackController) search(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
