@@ -98,9 +98,8 @@ func NewPeerCache(maxSize int) *PeerCache {
 func (c *PeerCache) Add(pi peer.AddrInfo) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	c.cache.Add(pi.ID, pi)
-	return true
+	evicted := c.cache.Add(pi.ID, pi)
+	return !evicted
 }
 
 func (c *PeerCache) Get(id peer.ID) (peer.AddrInfo, bool) {
