@@ -68,6 +68,7 @@ func loadConfig() (*config.Config, bool) {
 	socketPath := flag.String("socket", "", "IPC socket path (overrides config)")
 	dataDir := flag.String("data-dir", "", "Data directory (overrides config)")
 	noScan := flag.Bool("no-scan", false, "Skip library scan on startup")
+	p2pEnabled := flag.Bool("p2p", false, "Enable P2P networking (overrides config)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -105,6 +106,11 @@ func loadConfig() (*config.Config, bool) {
 	}
 	if *dataDir != "" {
 		cfg.Daemon.DataDir = config.ExpandHome(*dataDir)
+	}
+	if flag.Lookup("p2p") != nil && flag.Parsed() {
+		if *p2pEnabled {
+			cfg.P2P.Enabled = true
+		}
 	}
 
 	slog.SetDefault(observability.NewLogger(observability.Config{
@@ -164,6 +170,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		PeerRepo:    peerRepo,
 		Queue:       queue,
 		CBRegistry:  cbRegistry,
+		P2PNode:     p2pNode,
 	})
 	if err != nil {
 		slog.Error("failed to create IPC server", "error", err)
@@ -241,6 +248,7 @@ Flags:
   --socket path       IPC socket path (default ~/.local/share/raag/raag.sock)
   --data-dir path     Data directory (default ~/.local/share/raag)
   --no-scan           Skip library scan on startup
+  --p2p               Enable P2P networking (overrides config)
   -h, --help          Show this help
 
 On First Run:

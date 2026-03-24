@@ -36,6 +36,8 @@ func main() {
 		newSearchCmd(),
 		newQueueCmd(),
 		newLibCmd(),
+		newPeersCmd(),
+		newNetworkCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -328,5 +330,98 @@ func newLibCmd() *cobra.Command {
 			}), "library scan complete")
 		},
 	})
+	return cmd
+}
+
+func newPeersCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "peers",
+		Short: "Manage P2P peers",
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List connected peers",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+
+			resp, err := client.ListPeers()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
+				return errors.New(resp.Error)
+			}
+
+			peersResp := resp.GetListPeers()
+			if peersResp == nil {
+				fmt.Fprintln(os.Stdout, "No peers connected")
+				return nil
+			}
+
+			peers := peersResp.Peers
+			if len(peers) == 0 {
+				fmt.Fprintln(os.Stdout, "No peers connected")
+				return nil
+			}
+
+			fmt.Fprintf(os.Stdout, "Connected peers (%d):\n", len(peers))
+			for _, peer := range peers {
+				fmt.Fprintf(os.Stdout, "  - %s", peer.Id)
+				if peer.Capabilities != nil {
+					fmt.Fprintf(os.Stdout, " (codecs: %v)", peer.Capabilities.SupportedCodecs)
+				}
+				fmt.Fprintln(os.Stdout)
+			}
+			return nil
+		},
+	})
+	return cmd
+}
+
+func newNetworkCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "network",
+		Short: "Show P2P network status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+
+			resp, err := client.NetworkStatus()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
+				return errors.New(resp.Error)
+			}
+
+			netStatus := resp.GetNetworkStatus()
+			if netStatus == nil {
+				fmt.Fprintln(os.Stdout, "P2P is not enabled")
+				return nil
+			}
+
+			fmt.Fprintln(os.Stdout, "=== Network Status ===")
+			fmt.Fprintf(os.Stdout, "Self Peer ID: %s\n", netStatus.PeerId)
+			fmt.Fprintf(os.Stdout, "Listen Addresses:\n")
+			for _, addr := range netStatus.ListenAddrs {
+				fmt.Fprintf(os.Stdout, "  - %s\n", addr)
+			}
+			
+			fmt.Fprintf(os.Stdout, "Connected Peers: %d\n", len(netStatus.ConnectedPeers))
+			for _, peer := range netStatus.ConnectedPeers {
+				fmt.Fprintf(os.Stdout, "  - %s\n", peer.PeerId)
+				for _, addr := range peer.Addrs {
+					fmt.Fprintf(os.Stdout, "      %s\n", addr)
+				}
+			}
+			return nil
+		},
+	}
 	return cmd
 }

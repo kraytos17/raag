@@ -164,6 +164,14 @@ func (c *Client) ListPeers() (*pb.Response, error) {
 	return c.send(req)
 }
 
+func (c *Client) NetworkStatus() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_NetworkStatus{NetworkStatus: &pb.NetworkStatusRequest{}},
+	}
+	return c.send(req)
+}
+
 func (c *Client) Status() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,

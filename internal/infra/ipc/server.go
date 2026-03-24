@@ -15,6 +15,7 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
+	p2p "github.com/p-society/raag/internal/infra/p2p"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
@@ -38,6 +39,7 @@ type Server struct {
 	queue        QueueHandler
 	playlistRepo app.PlaylistRepository
 	cbRegistry   *app.CBRegistry
+	p2pNode      *p2p.P2PNode
 }
 
 type ServerConfig struct {
@@ -49,6 +51,7 @@ type ServerConfig struct {
 	Queue        QueueHandler
 	PlaylistRepo app.PlaylistRepository
 	CBRegistry   *app.CBRegistry
+	P2PNode      *p2p.P2PNode
 }
 
 func (c *ServerConfig) Validate() error {
@@ -130,6 +133,7 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 		queue:        config.Queue,
 		playlistRepo: config.PlaylistRepo,
 		cbRegistry:   config.CBRegistry,
+		p2pNode:      config.P2PNode,
 	}, nil
 }
 
@@ -275,6 +279,8 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleGetTrack(ctx, p.GetTrack)
 	case *pb.Request_GetTrackByPath:
 		return s.handleGetTrackByPath(ctx, p.GetTrackByPath)
+	case *pb.Request_NetworkStatus:
+		return s.handleNetworkStatus()
 	default:
 		return &pb.Response{Success: false, Error: "unknown request type"}
 	}
@@ -438,6 +444,37 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 	return &pb.Response{
 		Success: true,
 		Payload: &pb.Response_ListPeers{ListPeers: &pb.ListPeersResponse{Peers: pbPeers}},
+	}
+}
+
+func (s *Server) handleNetworkStatus() *pb.Response {
+	if s.p2pNode == nil {
+		return &pb.Response{
+			Success: false,
+			Error:   "P2P is not enabled",
+		}
+	}
+	info := s.p2pNode.NetworkInfo()
+
+	var connectedPeers []*pb.ConnectedPeer
+	for _, p := range info.ConnectedPeers {
+		var addrs []string
+		for _, a := range p.Addrs {
+			addrs = append(addrs, a.String())
+		}
+		connectedPeers = append(connectedPeers, &pb.ConnectedPeer{
+			PeerId: p.ID.String(),
+			Addrs:  addrs,
+		})
+	}
+
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_NetworkStatus{NetworkStatus: &pb.NetworkStatusResponse{
+			PeerId:         info.PeerID,
+			ListenAddrs:    info.ListenAddrs,
+			ConnectedPeers: connectedPeers,
+		}},
 	}
 }
 

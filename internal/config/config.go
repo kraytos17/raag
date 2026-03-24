@@ -258,7 +258,7 @@ func RunSetup() error {
 			SampleRate:   44100,
 		},
 		P2P: P2PConfig{
-			Enabled:          false,
+			Enabled:          true,
 			ListenAddrs:      []string{"/ip4/0.0.0.0/tcp/7844"},
 			BootstrapPeers:   []string{},
 			MDNSServiceTag:   "raag-local",
