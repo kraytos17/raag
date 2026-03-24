@@ -236,12 +236,21 @@ type connNotifier struct {
 	bus           domain.EventBus
 	shareManifest bool
 	done          <-chan struct{}
+	streamPool    *StreamPool
 }
 
 func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 	pid := conn.RemotePeer()
+	if cn.peerMgr.IsBanned(pid) {
+		slog.Warn("rejecting connection from banned peer", "peer", pid)
+		conn.Close()
+		return
+	}
+
 	cn.streamHandler.Allow(pid)
 	cn.syncHandler.Allow(pid)
+	pi := cn.host.Peerstore().PeerInfo(pid)
+	cn.peerMgr.peerCache.Add(pi)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -281,6 +290,8 @@ func (cn *connNotifier) Disconnected(_ network.Network, conn network.Conn) {
 	pid := conn.RemotePeer()
 	cn.streamHandler.Deny(pid)
 	cn.syncHandler.Deny(pid)
+	cn.peerMgr.onPeerDisconnected(pid)
+	cn.streamPool.DrainPeer(pid)
 	cn.bus.Publish(context.Background(), domain.NewEvent(
 		domain.EventPeerDisconnected,
 		domain.PeerDisconnectedPayload{PeerID: pid},
@@ -307,11 +318,9 @@ func (n *P2PNode) measureLatencyLoop() {
 }
 
 func (n *P2PNode) measureAllPeersLatency() {
-	peers := n.host.Network().Peers()
-	for _, pid := range peers {
-		if pid == n.host.ID() {
-			continue
-		}
+	peerInfos := n.peerCache.All()
+	for _, pi := range peerInfos {
+		pid := pi.ID
 		go func(p peer.ID) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -507,6 +516,15 @@ func (pm *peerManager) GetCapabilities(pid peer.ID) *pb.PeerCapabilities {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	return pm.caps[pid]
+}
+
+func (pm *peerManager) onPeerDisconnected(pid peer.ID) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	delete(pm.manifests, pid)
+	delete(pm.caps, pid)
+	pm.peerCache.Remove(pid)
+	pm.scorer.Reset(pid)
 }
 
 func (pm *peerManager) GetBestCodec(pid peer.ID, preferredCodec string) string {

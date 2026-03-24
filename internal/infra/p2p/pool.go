@@ -177,6 +177,23 @@ func (p *StreamPool) removePendingLocked(pid peer.ID, ch chan *PooledStream) {
 	}
 }
 
+func (p *StreamPool) DrainPeer(pid peer.ID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	pool := p.pools[pid]
+	for _, ps := range pool {
+		ps.stream.Reset()
+	}
+
+	delete(p.pools, pid)
+	p.totalStreams -= len(pool)
+	for _, ch := range p.pending[pid] {
+		ch <- nil
+	}
+	delete(p.pending, pid)
+}
+
 func (p *StreamPool) Close() {
 	close(p.done)
 	p.mu.Lock()

@@ -70,7 +70,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("daemon.data_dir", dataDir)
 	v.SetDefault("daemon.pid_file", filepath.Join(dataDir, "raagd.pid"))
 
-	v.SetDefault("p2p.enabled", false)
+	v.SetDefault("p2p.enabled", true)
 	v.SetDefault("p2p.listen_addrs", DefaultListenAddrs)
 	v.SetDefault("p2p.mdns_service_tag", DefaultMDNSServiceTag)
 	v.SetDefault("p2p.max_peers", DefaultMaxPeers)
