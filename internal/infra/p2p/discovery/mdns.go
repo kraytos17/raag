@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
@@ -41,18 +42,20 @@ func (n *Notifee) HandlePeerFound(pi peer.AddrInfo) {
 }
 
 type MdnsDiscovery struct {
-	service mdns.Service
-	notifee *Notifee
-	mu      sync.Mutex
-	started bool
+	service     mdns.Service
+	notifee     *Notifee
+	mu          sync.Mutex
+	started     bool
+	serviceName string
 }
 
 func NewMdnsDiscovery(h host.Host, serviceName string, onPeer PeerHandler) *MdnsDiscovery {
 	n := &Notifee{host: h, handlePeer: onPeer}
 	svc := mdns.NewMdnsService(h, serviceName, n)
 	return &MdnsDiscovery{
-		service: svc,
-		notifee: n,
+		service:     svc,
+		notifee:     n,
+		serviceName: serviceName,
 	}
 }
 
@@ -68,7 +71,7 @@ func (m *MdnsDiscovery) Start() error {
 	}
 
 	m.started = true
-	slog.Info("mDNS discovery started", "service_tag", "raag-local")
+	slog.Info("mDNS discovery started", "service_tag", m.serviceName)
 	return nil
 }
 
@@ -77,18 +80,18 @@ func (m *MdnsDiscovery) Close() error {
 }
 
 type PeerCache struct {
-	mu      sync.RWMutex
-	peers   map[peer.ID]peer.AddrInfo
-	maxSize int
+	mu    sync.RWMutex
+	cache *lru.Cache[peer.ID, peer.AddrInfo]
 }
 
 func NewPeerCache(maxSize int) *PeerCache {
 	if maxSize <= 0 {
 		maxSize = 100
 	}
+
+	cache, _ := lru.New[peer.ID, peer.AddrInfo](maxSize)
 	return &PeerCache{
-		peers:   make(map[peer.ID]peer.AddrInfo),
-		maxSize: maxSize,
+		cache: cache,
 	}
 }
 
@@ -96,35 +99,31 @@ func (c *PeerCache) Add(pi peer.AddrInfo) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if len(c.peers) >= c.maxSize {
-		return false
-	}
-
-	c.peers[pi.ID] = pi
+	c.cache.Add(pi.ID, pi)
 	return true
 }
 
 func (c *PeerCache) Get(id peer.ID) (peer.AddrInfo, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
-	pi, ok := c.peers[id]
-	return pi, ok
+	return c.cache.Get(id)
 }
 
 func (c *PeerCache) Remove(id peer.ID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.peers, id)
+	c.cache.Remove(id)
 }
 
 func (c *PeerCache) All() []peer.AddrInfo {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	result := make([]peer.AddrInfo, 0, len(c.peers))
-	for _, pi := range c.peers {
-		result = append(result, pi)
+	result := make([]peer.AddrInfo, 0, c.cache.Len())
+	for _, info := range c.cache.Keys() {
+		if v, ok := c.cache.Peek(info); ok {
+			result = append(result, v)
+		}
 	}
 	return result
 }
@@ -132,5 +131,5 @@ func (c *PeerCache) All() []peer.AddrInfo {
 func (c *PeerCache) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.peers)
+	return c.cache.Len()
 }

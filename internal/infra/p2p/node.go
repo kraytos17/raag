@@ -36,8 +36,7 @@ type P2PNode struct {
 	mdnsServiceName string
 	shareManifest   bool
 	pingService     *ping.PingService
-	cancel          context.CancelFunc
-	done            <-chan struct{}
+	done            chan struct{}
 	mu              sync.Mutex
 	started         bool
 }
@@ -103,13 +102,11 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		shareManifest:   cfg.ShareManifest,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	node.cancel = cancel
-	node.done = ctx.Done()
+	node.done = make(chan struct{})
 	return node, nil
 }
 
-func (n *P2PNode) Start(_ context.Context, bus domain.EventBus) error {
+func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 	n.mu.Lock()
 	if n.started {
 		n.mu.Unlock()
@@ -121,6 +118,16 @@ func (n *P2PNode) Start(_ context.Context, bus domain.EventBus) error {
 
 	n.host.SetStreamHandler(protocols.StreamProtocol, n.streamHandler.Handle)
 	n.host.SetStreamHandler(protocols.SyncProtocol, n.syncHandler.Handle)
+	n.host.Network().Notify(&connNotifier{
+		host:          n.host,
+		streamHandler: n.streamHandler,
+		syncHandler:   n.syncHandler,
+		peerMgr:       n.peerMgr,
+		bus:           bus,
+		shareManifest: n.shareManifest,
+		done:          n.done,
+	})
+
 	mdns := discovery.NewMdnsDiscovery(n.host, n.mdnsServiceName, func(pi peer.AddrInfo) {
 		slog.Info("peer discovered via mDNS", "peer", pi.ID)
 		if !n.peerCache.Add(pi) {
@@ -133,21 +140,8 @@ func (n *P2PNode) Start(_ context.Context, bus domain.EventBus) error {
 		return err
 	}
 
-	n.host.Network().Notify(&connNotifier{
-		host:          n.host,
-		streamHandler: n.streamHandler,
-		syncHandler:   n.syncHandler,
-		peerMgr:       n.peerMgr,
-		bus:           bus,
-		shareManifest: n.shareManifest,
-		done:          n.done,
-	})
-
 	n.pingService = ping.NewPingService(n.host)
 	go n.measureLatencyLoop()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	if err := BootstrapPeers(ctx, n.host, n.bootstrapPeers); err != nil {
 		slog.Warn("bootstrap failed", "err", err)
 	}
@@ -160,9 +154,12 @@ func (n *P2PNode) Stop(ctx context.Context) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.cancel != nil {
-		n.cancel()
+	select {
+	case <-n.done:
+	default:
+		close(n.done)
 	}
+
 	if n.mdns != nil {
 		n.mdns.Close()
 	}
@@ -364,6 +361,11 @@ func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.Lib
 func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
+
+	if len(pm.manifests) == 0 {
+		slog.Warn("no peer manifests available - privacy settings may prevent sharing")
+		return nil
+	}
 
 	var owners []peer.ID
 	for pid, manifest := range pm.manifests {
