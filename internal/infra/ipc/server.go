@@ -627,7 +627,10 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.conns = nil
 	s.mu.Unlock()
 	s.wg.Wait()
-	return os.Remove(s.socketPath)
+	if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
+		slog.Warn("failed to remove socket file", "path", s.socketPath, "error", err)
+	}
+	return nil
 }
 
 func (s *Server) isListenerClosed(err error) bool {

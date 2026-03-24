@@ -48,7 +48,7 @@ func (h *StreamHandler) Handle(stream network.Stream) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	stream.SetReadDeadline(time.Now().Add(30 * time.Second))
-	
+
 	var req pb.ChunkRequest
 	if err := wire.ReadMsg(stream, &req); err != nil {
 		slog.Error("failed to read chunk request", "err", err)

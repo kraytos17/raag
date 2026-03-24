@@ -539,7 +539,7 @@ func (s *LibraryScanner) indexTrack(ctx context.Context, track *domain.Track) er
 		slog.Warn("failed to save track to repo", "track", track.ID, "error", err)
 		return err
 	}
-	
+
 	slog.Info("track saved to repo", "track", track.ID, "title", track.Title)
 	if err := s.index.Index(ctx, track); err != nil {
 		slog.Warn("failed to index track", "track", track.ID, "error", err)

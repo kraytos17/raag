@@ -72,7 +72,7 @@ func (ss *StreamingSource) fillBuffer() {
 				if !ss.closed.Load() {
 					ss.err = err
 				}
-				
+
 				ss.mu.Unlock()
 				_ = ss.rb.Close()
 				return
@@ -83,7 +83,7 @@ func (ss *StreamingSource) fillBuffer() {
 			if !ss.closed.Load() {
 				ss.err = err
 			}
-			
+
 			ss.mu.Unlock()
 			_ = ss.rb.Close()
 			return

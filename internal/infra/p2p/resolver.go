@@ -191,7 +191,7 @@ func (r *streamingReader) Close() error {
 	if r.closed {
 		return nil
 	}
-	
+
 	r.closed = true
 	return r.reader.Close()
 }

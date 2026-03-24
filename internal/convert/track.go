@@ -175,7 +175,7 @@ func ProtoToPeerInfo(p *pb.Peer) *domain.PeerInfo {
 
 	addrs := make([]string, len(p.Addrs))
 	copy(addrs, p.Addrs)
-	
+
 	info := &domain.PeerInfo{
 		ID:       domain.PeerID(p.Id),
 		Addrs:    addrs,

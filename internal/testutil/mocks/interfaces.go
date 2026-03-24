@@ -44,7 +44,7 @@ func (m *MockSearchIndex) IndexBatch(ctx context.Context, tracks []*domain.Track
 func (m *MockSearchIndex) Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	var results []domain.TrackID
 	for id := range m.tracks {
 		if limit > 0 && len(results) >= limit {
@@ -176,7 +176,7 @@ func (m *MockQueue) Next() *domain.Track {
 	if m.position >= len(m.tracks)-1 {
 		return nil
 	}
-	
+
 	m.position++
 	return m.tracks[m.position]
 }
@@ -185,7 +185,7 @@ func (m *MockQueue) Previous() *domain.Track {
 	if m.position <= 0 {
 		return nil
 	}
-	
+
 	m.position--
 	return m.tracks[m.position]
 }
