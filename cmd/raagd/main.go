@@ -222,12 +222,10 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	)
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	<-sigCtx.Done()
 
 	slog.Info("shutting down", "reason", context.Cause(sigCtx))
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-
 	if err := player.Stop(shutdownCtx); err != nil {
 		slog.Warn("player stop error", "error", err)
 	}
@@ -251,6 +249,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	}()
 
 	cancel()
+	stop()
 	slog.Info("raag daemon stopped")
 	os.Exit(0)
 }
