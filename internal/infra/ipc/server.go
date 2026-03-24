@@ -281,6 +281,13 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 }
 
 func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Response {
+	state := s.playback.GetState()
+	if state != domain.PlayerStateIdle {
+		if err := s.playback.Stop(ctx); err != nil {
+			return &pb.Response{Success: false, Error: "failed to stop current track: " + err.Error()}
+		}
+	}
+
 	switch {
 	case req.TrackId != "":
 		if err := s.playback.Play(ctx, domain.TrackID(req.TrackId)); err != nil {

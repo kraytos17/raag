@@ -17,6 +17,7 @@ import (
 	"github.com/p-society/raag/internal/infra/duplicate"
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/ipc"
+	"github.com/p-society/raag/internal/infra/observability"
 	"github.com/p-society/raag/internal/infra/p2p"
 	db "github.com/p-society/raag/internal/infra/storage"
 	"golang.org/x/term"
@@ -43,12 +44,16 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		os.Exit(1)
 	}
 
-	p2pNode, err := p2p.NewP2PNode(context.Background(), p2p.P2PNodeConfig{
+	p2pNode, err := p2p.NewP2PNode(p2p.P2PNodeConfig{
 		DataDir:         cfg.Daemon.DataDir,
 		ListenAddrs:     cfg.P2P.ListenAddrs,
 		AnnounceAddrs:   nil,
-		BootstrapPeers:  nil,
+		BootstrapPeers:  cfg.P2P.BootstrapPeers,
 		MdnsServiceName: cfg.P2P.MDNSServiceTag,
+		ShareManifest:   cfg.Privacy.ShareLibraryManifest,
+		ConnMgrLowMark:  cfg.P2P.ConnMgrLowMark,
+		ConnMgrHighMark: cfg.P2P.ConnMgrHighMark,
+		ConnMgrGrace:    cfg.P2P.ConnMgrGrace,
 	}, libraryRepo)
 	if err != nil {
 		slog.Error("failed to create P2P node", "error", err)
@@ -102,11 +107,10 @@ func loadConfig() (*config.Config, bool) {
 		cfg.Daemon.DataDir = config.ExpandHome(*dataDir)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: logLevel(cfg.Daemon.LogLevel),
+	slog.SetDefault(observability.NewLogger(observability.Config{
+		Level:     observability.ParseLevel(cfg.Daemon.LogLevel),
+		AddSource: true,
 	}))
-
-	slog.SetDefault(logger)
 	return cfg, *noScan
 }
 
@@ -127,11 +131,20 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	})
 
 	searchService := app.NewSearchService(searchIndex, libraryRepo)
-	resolve := app.NewResolveFunc(libraryRepo)
+
+	var resolver app.Resolver
+	if cfg.P2P.Enabled && p2pNode != nil {
+		p2pResolver := p2p.NewP2PResolverAdapter(p2pNode.Resolver())
+		resolver = app.NewMultiSourceResolver(libraryRepo, p2pResolver)
+		slog.Info("P2P streaming enabled", "peer_id", p2pNode.ID())
+	} else {
+		resolver = app.NewLocalResolver(libraryRepo)
+	}
+
 	player := audio.NewEngine(cfg.Playback.SampleRate)
 	queue := audio.NewQueue()
-
-	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolve, bus)
+	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolver, bus)
+	playback.SetQueue(queue)
 	cbThreshold := cfg.P2P.CBFailureThreshold
 	if cbThreshold <= 0 {
 		cbThreshold = 5
@@ -239,14 +252,6 @@ Examples:
   raagd --music-path ~/Music      # Override music path
 
 `)
-}
-
-func logLevel(level string) slog.Level {
-	var l slog.Level
-	if err := l.UnmarshalText([]byte(level)); err != nil {
-		return slog.LevelInfo
-	}
-	return l
 }
 
 func isInteractive() bool {

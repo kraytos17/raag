@@ -151,7 +151,7 @@ func (fw *FileWatcher) flushPending(ctx context.Context) {
 
 func (fw *FileWatcher) isAudioFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	return slices.Contains(AudioExtensions, ext)
+	return slices.Contains(domain.AudioExtensions, ext)
 }
 
 func (fw *FileWatcher) Close() error {

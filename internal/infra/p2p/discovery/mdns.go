@@ -8,109 +8,72 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	ma "github.com/multiformats/go-multiaddr"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 )
 
 type PeerHandler func(peer.AddrInfo)
 
-type MdnsDiscovery struct {
+type Notifee struct {
 	host       host.Host
 	handlePeer PeerHandler
-	cancel     context.CancelFunc
-	done       chan struct{}
-	wg         sync.WaitGroup
-	started    bool
 	mu         sync.Mutex
 }
 
-func NewMdnsDiscovery(h host.Host, onPeer PeerHandler) *MdnsDiscovery {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	m := &MdnsDiscovery{
-		host:       h,
-		handlePeer: onPeer,
-		cancel:     cancel,
-		done:       done,
+func (n *Notifee) HandlePeerFound(pi peer.AddrInfo) {
+	if pi.ID == n.host.ID() {
+		return
 	}
-	m.wg.Go(func() {
-		<-ctx.Done()
-		close(done)
-	})
-	return m
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := n.host.Connect(ctx, pi); err != nil {
+		slog.Warn("mDNS: failed to connect to peer", "peer", pi.ID, "err", err)
+		return
+	}
+
+	n.mu.Lock()
+	handler := n.handlePeer
+	n.mu.Unlock()
+
+	slog.Info("mDNS: peer discovered and connected", "peer", pi.ID)
+	handler(pi)
+}
+
+type MdnsDiscovery struct {
+	service mdns.Service
+	notifee *Notifee
+	mu      sync.Mutex
+	started bool
+}
+
+func NewMdnsDiscovery(h host.Host, serviceName string, onPeer PeerHandler) *MdnsDiscovery {
+	n := &Notifee{host: h, handlePeer: onPeer}
+	svc := mdns.NewMdnsService(h, serviceName, n)
+	return &MdnsDiscovery{
+		service: svc,
+		notifee: n,
+	}
 }
 
 func (m *MdnsDiscovery) Start() error {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.started {
-		m.mu.Unlock()
 		return nil
+	}
+	if err := m.service.Start(); err != nil {
+		return err
 	}
 
 	m.started = true
-	m.mu.Unlock()
-
-	m.wg.Add(1)
-	go m.scanPeers()
+	slog.Info("mDNS discovery started", "service_tag", "raag-local")
 	return nil
-}
-
-func (m *MdnsDiscovery) scanPeers() {
-	defer m.wg.Done()
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-m.done:
-			return
-		case <-ticker.C:
-			m.discoverPeers()
-		}
-	}
-}
-
-func (m *MdnsDiscovery) discoverPeers() {
-	peers := m.host.Network().Peers()
-	for _, pid := range peers {
-		if pid == m.host.ID() {
-			continue
-		}
-
-		conns := m.host.Network().ConnsToPeer(pid)
-		if len(conns) == 0 {
-			continue
-		}
-		pi := peer.AddrInfo{
-			ID:    pid,
-			Addrs: []ma.Multiaddr{conns[0].RemoteMultiaddr()},
-		}
-
-		m.mu.Lock()
-		handle := m.handlePeer
-		m.mu.Unlock()
-
-		if handle == nil {
-			return
-		}
-
-		select {
-		case <-m.done:
-			return
-		default:
-		}
-
-		slog.Debug("discovered peer", "peer", pid)
-		handle(pi)
-	}
 }
 
 func (m *MdnsDiscovery) Close() error {
-	m.mu.Lock()
-	m.cancel()
-	m.mu.Unlock()
-	m.wg.Wait()
-	return nil
+	return m.service.Close()
 }
 
 type PeerCache struct {

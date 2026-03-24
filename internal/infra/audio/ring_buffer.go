@@ -14,7 +14,7 @@ var (
 )
 
 const (
-	DefaultBufferSize = 512 * 1024
+	DefaultBufferSize = 1024 * 1024 // 1 MiB = 4 × MaxChunkSize
 	LowWatermark      = 0.20
 	HighWatermark     = 0.80
 )

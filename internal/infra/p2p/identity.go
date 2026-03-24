@@ -147,7 +147,7 @@ func (m *IdentityManager) writeFile(data []byte) error {
 	}
 
 	block := &pem.Block{
-		Type:  "PRIVATE KEY",
+		Type:  "LIBP2P PRIVATE KEY",
 		Bytes: data,
 	}
 

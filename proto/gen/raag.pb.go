@@ -2968,6 +2968,7 @@ type ChunkResponse struct {
 	LastChunk     bool                   `protobuf:"varint,4,opt,name=last_chunk,json=lastChunk,proto3" json:"last_chunk,omitempty"`
 	TotalSize     int64                  `protobuf:"varint,5,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
 	MimeType      string                 `protobuf:"bytes,6,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	Error         string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3040,6 +3041,13 @@ func (x *ChunkResponse) GetTotalSize() int64 {
 func (x *ChunkResponse) GetMimeType() string {
 	if x != nil {
 		return x.MimeType
+	}
+	return ""
+}
+
+func (x *ChunkResponse) GetError() string {
+	if x != nil {
+		return x.Error
 	}
 	return ""
 }
@@ -3630,7 +3638,7 @@ const file_raag_proto_rawDesc = "" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x16\n" +
 	"\x06length\x18\x03 \x01(\x05R\x06length\x12\x14\n" +
 	"\x05codec\x18\x04 \x01(\tR\x05codec\x12\x18\n" +
-	"\abitrate\x18\x05 \x01(\x05R\abitrate\"\xb1\x01\n" +
+	"\abitrate\x18\x05 \x01(\x05R\abitrate\"\xc7\x01\n" +
 	"\rChunkResponse\x12\x19\n" +
 	"\btrack_id\x18\x01 \x01(\tR\atrackId\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x12\n" +
@@ -3639,7 +3647,8 @@ const file_raag_proto_rawDesc = "" +
 	"last_chunk\x18\x04 \x01(\bR\tlastChunk\x12\x1d\n" +
 	"\n" +
 	"total_size\x18\x05 \x01(\x03R\ttotalSize\x12\x1b\n" +
-	"\tmime_type\x18\x06 \x01(\tR\bmimeType\"\xfa\x01\n" +
+	"\tmime_type\x18\x06 \x01(\tR\bmimeType\x12\x14\n" +
+	"\x05error\x18\a \x01(\tR\x05error\"\xfa\x01\n" +
 	"\vSyncRequest\x12B\n" +
 	"\x10manifest_request\x18\x01 \x01(\v2\x15.raag.ManifestRequestH\x00R\x0fmanifestRequest\x12L\n" +
 	"\x14track_detail_request\x18\x02 \x01(\v2\x18.raag.TrackDetailRequestH\x00R\x12trackDetailRequest\x12N\n" +

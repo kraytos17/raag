@@ -36,8 +36,9 @@ const (
 )
 
 const (
-	DefaultSearchLimit    = 20
-	DefaultFuzzyThreshold = 3
+	DefaultConnMgrLowMark  = 32
+	DefaultConnMgrHighMark = 64
+	DefaultConnMgrGrace    = 30 * time.Second
 )
 
 func getDefaultDataDir() string {
@@ -77,6 +78,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("p2p.announce_library", true)
 	v.SetDefault("p2p.per_peer_rate_limit", 10)
 	v.SetDefault("p2p.upload_bandwidth", 0)
+	v.SetDefault("p2p.cb_failure_threshold", DefaultCircuitBreakerThreshold)
+	v.SetDefault("p2p.cb_cooldown", DefaultCircuitBreakerCooldown)
+	v.SetDefault("p2p.conn_mgr_low_mark", DefaultConnMgrLowMark)
+	v.SetDefault("p2p.conn_mgr_high_mark", DefaultConnMgrHighMark)
+	v.SetDefault("p2p.conn_mgr_grace", DefaultConnMgrGrace)
 
 	v.SetDefault("transcoder.ffmpeg_path", "ffmpeg")
 	v.SetDefault("transcoder.stream_codec", DefaultStreamCodec)

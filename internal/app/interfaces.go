@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/audio"
 )
 
 type SearchQuery struct {
@@ -98,6 +99,7 @@ type SyncTransport interface {
 
 type Player interface {
 	Play(ctx context.Context, reader io.Reader, mimeType string) error
+	PlayStreaming(ctx context.Context, source audio.AudioSource, mimeType string) error
 	Pause(ctx context.Context) error
 	Resume(ctx context.Context) error
 	Stop(ctx context.Context) error
@@ -105,6 +107,7 @@ type Player interface {
 	SetVolume(ctx context.Context, volume int) error
 	GetState() domain.PlayerState
 	GetPosition() time.Duration
+	Done() <-chan struct{}
 }
 
 type Queue interface {
