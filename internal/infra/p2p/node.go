@@ -213,7 +213,7 @@ func (n *P2PNode) NetworkInfo() NetworkInfo {
 		addrs = append(addrs, addr.String())
 	}
 	connected := n.host.Network().Peers()
-	
+
 	var peerInfos []peer.AddrInfo
 	for _, p := range connected {
 		if p == n.host.ID() {

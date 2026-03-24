@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -104,9 +105,58 @@ func getEncryptionKey() ([]byte, error) {
 }
 
 func (d *DB) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return d.CloseWithContext(ctx)
+}
+
+func (d *DB) CloseWithContext(ctx context.Context) error {
 	close(d.stop)
-	d.wg.Wait()
-	return d.db.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- d.db.Close()
+	}()
+
+	select {
+	case <-ctx.Done():
+		slog.Warn("DB close timed out, forcing exit", "error", ctx.Err())
+		return ctx.Err()
+	case err := <-done:
+		if err != nil {
+			slog.Warn("DB close error", "error", err)
+		}
+		return err
+	}
+}
+
+func (d *DB) Path() string {
+	return d.path
+}
+
+func (d *DB) Exists() bool {
+	_, err := os.Stat(d.path)
+	return err == nil
+}
+
+func (d *DB) StartHealthCheck(interval time.Duration, onMissing func()) {
+	d.wg.Go(func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-d.stop:
+				return
+			case <-ticker.C:
+				if !d.Exists() {
+					slog.Error("database directory deleted", "path", d.path)
+					if onMissing != nil {
+						onMissing()
+					}
+				}
+			}
+		}
+	})
 }
 
 func (d *DB) View(fn func(txn *badger.Txn) error) error {
@@ -119,10 +169,6 @@ func (d *DB) Update(fn func(txn *badger.Txn) error) error {
 
 func (d *DB) NewWriteBatch() *badger.WriteBatch {
 	return d.db.NewWriteBatch()
-}
-
-func (d *DB) Path() string {
-	return d.path
 }
 
 func (d *DB) startCompaction() {

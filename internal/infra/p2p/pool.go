@@ -43,7 +43,7 @@ func NewStreamPool(h StreamOpener, protoID protocol.ID) *StreamPool {
 		pending:    make(map[peer.ID][]chan *PooledStream),
 		done:       make(chan struct{}),
 	}
-	
+
 	go sp.reaper()
 	return sp
 }

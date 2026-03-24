@@ -125,6 +125,12 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	searchIndex := app.NewSearchIndex(libraryRepo)
 	peerRepo := db.NewPeerRepo(database)
 	duplicateDetector := duplicate.NewDetector(database, duplicate.ConfigToHandler(cfg.Library.DuplicateHandling))
+	database.StartHealthCheck(10*time.Second, func() {
+		slog.Error("database directory deleted, initiating shutdown")
+		bus.Close()
+		os.Exit(1)
+	})
+
 	if p2pNode != nil {
 		if err := p2pNode.Start(context.Background(), bus); err != nil {
 			slog.Warn("failed to start P2P node", "error", err)
@@ -220,8 +226,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	<-sigCtx.Done()
 
 	slog.Info("shutting down", "reason", context.Cause(sigCtx))
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
 	if err := player.Stop(shutdownCtx); err != nil {
 		slog.Warn("player stop error", "error", err)
@@ -231,11 +236,23 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 			slog.Warn("P2P node stop error", "error", err)
 		}
 	}
+	if err := lc.StopAll(shutdownCtx); err != nil {
+		slog.Warn("lifecycle stop error", "error", err)
+	}
 
-	_ = lc.StopAll(shutdownCtx)
 	bus.Close()
-	_ = database.Close()
+	slog.Info("closing database...")
+	go func() {
+		if err := database.Close(); err != nil {
+			slog.Error("database close failed", "error", err)
+		} else {
+			slog.Info("database closed")
+		}
+	}()
+
+	cancel()
 	slog.Info("raag daemon stopped")
+	os.Exit(0)
 }
 
 func usage() {

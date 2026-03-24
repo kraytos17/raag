@@ -412,7 +412,7 @@ func newNetworkCmd() *cobra.Command {
 			for _, addr := range netStatus.ListenAddrs {
 				fmt.Fprintf(os.Stdout, "  - %s\n", addr)
 			}
-			
+
 			fmt.Fprintf(os.Stdout, "Connected Peers: %d\n", len(netStatus.ConnectedPeers))
 			for _, peer := range netStatus.ConnectedPeers {
 				fmt.Fprintf(os.Stdout, "  - %s\n", peer.PeerId)
