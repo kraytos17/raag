@@ -112,6 +112,7 @@ message Request {
     AddToPlaylistRequest add_to_playlist = 22;
     GetTrackRequest get_track = 23;
     GetTrackByPathRequest get_track_by_path = 24;
+    NetworkStatusRequest network_status = 25;
   }
 }
 
@@ -128,6 +129,7 @@ message Response {
     GetTrackResponse get_track = 9;
     GetPlaylistResponse get_playlist = 10;
     ListPlaylistsResponse list_playlists = 11;
+    NetworkStatusResponse network_status = 12;
   }
 }
 
@@ -213,6 +215,19 @@ message HealthCheckRequest {}
 
 message HealthCheckResponse {
   bool healthy = 1;
+}
+
+message NetworkStatusRequest {}
+
+message NetworkStatusResponse {
+  string peer_id = 1;
+  repeated string listen_addrs = 2;
+  repeated ConnectedPeer connected_peers = 3;
+}
+
+message ConnectedPeer {
+  string peer_id = 1;
+  repeated string addrs = 2;
 }
 
 message CreatePlaylistRequest {

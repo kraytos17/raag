@@ -102,7 +102,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		mdnsServiceName: cfg.MdnsServiceName,
 		shareManifest:   cfg.ShareManifest,
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	node.cancel = cancel
 	node.done = ctx.Done()
@@ -199,6 +199,36 @@ func (n *P2PNode) SyncHandler() *protocols.SyncHandler {
 
 func (n *P2PNode) StreamHandler() *protocols.StreamHandler {
 	return n.streamHandler
+}
+
+type NetworkInfo struct {
+	PeerID         string
+	ListenAddrs    []string
+	ConnectedPeers []peer.AddrInfo
+}
+
+func (n *P2PNode) NetworkInfo() NetworkInfo {
+	var addrs []string
+	for _, addr := range n.host.Addrs() {
+		addrs = append(addrs, addr.String())
+	}
+	connected := n.host.Network().Peers()
+	
+	var peerInfos []peer.AddrInfo
+	for _, p := range connected {
+		if p == n.host.ID() {
+			continue
+		}
+		if addrInfo := n.host.Peerstore().PeerInfo(p); len(addrInfo.Addrs) > 0 {
+			peerInfos = append(peerInfos, addrInfo)
+		}
+	}
+
+	return NetworkInfo{
+		PeerID:         n.host.ID().String(),
+		ListenAddrs:    addrs,
+		ConnectedPeers: peerInfos,
+	}
 }
 
 type connNotifier struct {
