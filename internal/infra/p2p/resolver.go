@@ -15,7 +15,7 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
-	 "github.com/p-society/raag/internal/infra/p2p/protocols"
+	"github.com/p-society/raag/internal/infra/p2p/protocols"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )

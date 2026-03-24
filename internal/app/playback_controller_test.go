@@ -305,7 +305,7 @@ func TestPlaybackController_SetQueue_GetQueue(t *testing.T) {
 			{ID: domain.TrackID("t2")},
 		},
 	}
-	
+
 	c.SetQueue(q)
 	c.mu.Lock()
 	got := c.queue
