@@ -107,10 +107,14 @@ const (
 )
 
 const (
-	IPCConnectTimeout  = 3 * time.Second
-	IPCReadTimeout     = 30 * time.Second
-	IPCWriteTimeout    = 5 * time.Second
-	IPCProtocolVersion = 1
+	IPCConnectTimeout       = 3 * time.Second
+	IPCReadTimeout          = 30 * time.Second
+	IPCWriteTimeout         = 5 * time.Second
+	IPCProtocolVersion      = 1
+	IPCKeepaliveInterval    = 25 * time.Second // must be less than IPCReadTimeout
+	IPCReconnectBaseDelay   = 100 * time.Millisecond
+	IPCReconnectMaxDelay    = 5 * time.Second
+	IPCReconnectMaxAttempts = 10
 )
 
 var SupportedBitrates = []int32{128, 192, 256, 320}

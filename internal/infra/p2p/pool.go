@@ -3,6 +3,7 @@ package p2p
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -58,6 +59,9 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 			continue
 		}
 		if now.Sub(s.lastUsed) > domain.StreamIdleTimeout {
+			if err := s.stream.Reset(); err != nil {
+				slog.Debug("idle stream reset error", "peer", pid, "err", err)
+			}
 			p.removeStreamLocked(pid, i)
 			continue
 		}
@@ -78,12 +82,19 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 	select {
 	case <-ctx.Done():
 		p.mu.Lock()
-		p.removePendingLocked(pid, ch)
-		p.mu.Unlock()
+		select {
+		case s := <-ch:
+			p.mu.Unlock()
+			if s != nil {
+				p.Release(pid, s.stream)
+			}
+		default:
+			p.removePendingLocked(pid, ch)
+			p.mu.Unlock()
+		}
 		return nil, ctx.Err()
 	case s := <-ch:
 		if s != nil {
-			s.refCnt++
 			return s.stream, nil
 		}
 		return nil, ErrConnectionFailed
@@ -129,13 +140,15 @@ func (p *StreamPool) Release(pid peer.ID, stream network.Stream) {
 	pool := p.pools[pid]
 	for _, ps := range pool {
 		if ps.stream == stream {
-			ps.refCnt--
 			ps.lastUsed = time.Now()
 			if chans := p.pending[pid]; len(chans) > 0 {
 				ch := chans[0]
 				p.pending[pid] = chans[1:]
 				ch <- ps
+				return
 			}
+
+			ps.refCnt--
 			return
 		}
 	}
@@ -148,7 +161,9 @@ func (p *StreamPool) Remove(pid peer.ID, stream network.Stream) {
 	pool := p.pools[pid]
 	for i, ps := range pool {
 		if ps.stream == stream {
-			ps.stream.Reset()
+			if err := ps.stream.Reset(); err != nil {
+				slog.Debug("stream reset error on remove", "peer", pid, "err", err)
+			}
 			p.removeStreamLocked(pid, i)
 			return
 		}
@@ -183,7 +198,9 @@ func (p *StreamPool) DrainPeer(pid peer.ID) {
 
 	pool := p.pools[pid]
 	for _, ps := range pool {
-		ps.stream.Reset()
+		if err := ps.stream.Reset(); err != nil {
+			slog.Debug("stream reset error on drain", "peer", pid, "err", err)
+		}
 	}
 
 	delete(p.pools, pid)
@@ -201,7 +218,9 @@ func (p *StreamPool) Close() {
 
 	for pid, pool := range p.pools {
 		for _, ps := range pool {
-			ps.stream.Close()
+			if err := ps.stream.Close(); err != nil {
+				slog.Debug("stream close error on pool close", "peer", pid, "err", err)
+			}
 		}
 		delete(p.pools, pid)
 	}
@@ -228,6 +247,9 @@ func (p *StreamPool) reaper() {
 				for i := len(pool) - 1; i >= 0; i-- {
 					ps := pool[i]
 					if ps.refCnt == 0 && now.Sub(ps.lastUsed) > domain.StreamIdleTimeout {
+						if err := ps.stream.Reset(); err != nil {
+							slog.Debug("reaper stream reset error", "peer", pid, "err", err)
+						}
 						p.removeStreamLocked(pid, i)
 					}
 				}

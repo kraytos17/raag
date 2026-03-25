@@ -27,16 +27,15 @@ type CapabilitiesProvider interface {
 type SyncHandler struct {
 	mu              sync.RWMutex
 	library         app.LibraryRepository
-	allowed         map[peer.ID]bool
 	localPeerID     peer.ID
 	capsProvider    CapabilitiesProvider
 	announceLibrary bool
+	admission       *AdmissionRegistry
 }
 
 func NewSyncHandler(library app.LibraryRepository, localPeerID peer.ID) *SyncHandler {
 	return &SyncHandler{
 		library:     library,
-		allowed:     make(map[peer.ID]bool),
 		localPeerID: localPeerID,
 	}
 }
@@ -47,76 +46,89 @@ func (h *SyncHandler) SetCapabilitiesProvider(provider CapabilitiesProvider) {
 	h.capsProvider = provider
 }
 
+func (h *SyncHandler) SetAdmissionRegistry(admission *AdmissionRegistry) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.admission = admission
+}
+
 func (h *SyncHandler) SetAnnounceLibrary(announce bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.announceLibrary = announce
 }
 
-func (h *SyncHandler) Allow(peerID peer.ID) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.allowed[peerID] = true
-}
-
-func (h *SyncHandler) Deny(peerID peer.ID) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	delete(h.allowed, peerID)
-}
-
 func (h *SyncHandler) Handle(stream network.Stream) {
-	defer stream.Close()
+	defer func() {
+		if err := stream.Close(); err != nil {
+			slog.Debug("stream close error", "err", err)
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	stream.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err := stream.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		slog.Debug("failed to set read deadline", "err", err)
+	}
 
 	var req pb.SyncRequest
 	if err := wire.ReadMsg(stream, &req); err != nil {
 		slog.Error("failed to read sync request", "err", err)
-		stream.Reset()
+		if err := stream.Reset(); err != nil {
+			slog.Debug("stream reset error", "err", err)
+		}
 		return
+	}
+	if err := stream.SetReadDeadline(time.Time{}); err != nil {
+		slog.Debug("failed to clear read deadline", "err", err)
 	}
 
-	stream.SetReadDeadline(time.Time{})
 	peerID := stream.Conn().RemotePeer()
-	if !h.isAllowed(peerID) {
-		h.sendError(stream, "permission denied")
-		return
-	}
 
 	switch payload := req.Payload.(type) {
 	case *pb.SyncRequest_ManifestRequest:
+		if h.admission != nil {
+			h.admission.Admit(peerID)
+		}
 		h.handleManifestRequest(ctx, stream, peerID)
 	case *pb.SyncRequest_TrackDetailRequest:
+		if h.admission == nil || !h.admission.IsAdmitted(peerID) {
+			h.sendError(stream, "manifest exchange required", pb.ErrorCode_ERROR_CODE_UNAUTHORIZED)
+			return
+		}
 		h.handleTrackDetailRequest(ctx, stream, payload.TrackDetailRequest.TrackId)
 	case *pb.SyncRequest_CapabilitiesRequest:
 		h.handleCapabilitiesRequest(ctx, stream)
 	default:
-		h.sendError(stream, "unknown request type")
+		h.sendError(stream, "unknown request type", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
 	}
 }
 
-func (h *SyncHandler) isAllowed(peerID peer.ID) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.allowed[peerID]
-}
-
-func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.Stream, _ peer.ID) {
+func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.Stream, peerID peer.ID) {
 	h.mu.RLock()
 	announce := h.announceLibrary
 	h.mu.RUnlock()
 
 	if !announce {
-		slog.Debug("manifest request denied: library sharing disabled")
-		h.sendError(stream, "library sharing disabled")
+		resp := &pb.SyncResponse{
+			Payload: &pb.SyncResponse_Manifest{
+				Manifest: &pb.LibraryManifest{
+					PeerId:    h.localPeerID.String(),
+					TrackIds:  []string{}, // empty, not nil
+					Timestamp: time.Now().Unix(),
+				},
+			},
+		}
+		if err := wire.WriteMsg(stream, resp); err != nil {
+			slog.Error("failed to send empty manifest", "err", err)
+		}
+		slog.Debug("empty manifest sent (sharing disabled)")
 		return
 	}
 
 	tracks, err := h.library.ListAll(ctx)
 	if err != nil {
-		h.sendError(stream, "failed to get track list")
+		h.sendError(stream, "failed to get track list", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
 		return
 	}
 
@@ -143,7 +155,7 @@ func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.
 func (h *SyncHandler) handleTrackDetailRequest(ctx context.Context, stream network.Stream, trackID string) {
 	track, err := h.library.FindByID(ctx, domain.TrackID(trackID))
 	if err != nil {
-		h.sendError(stream, "track not found")
+		h.sendError(stream, "track not found", pb.ErrorCode_ERROR_CODE_TRACK_NOT_FOUND)
 		return
 	}
 
@@ -184,16 +196,18 @@ func (h *SyncHandler) handleCapabilitiesRequest(_ context.Context, stream networ
 	}
 }
 
-func (h *SyncHandler) sendError(stream network.Stream, msg string) {
+func (h *SyncHandler) sendError(stream network.Stream, msg string, code pb.ErrorCode) {
 	resp := &pb.SyncResponse{
 		Payload: &pb.SyncResponse_Error{
 			Error: &pb.ErrorResponse{
 				Message: msg,
-				Code:    pb.ErrorCode_ERROR_CODE_UNSPECIFIED,
+				Code:    code,
 			},
 		},
 	}
 
 	_ = wire.WriteMsg(stream, resp)
-	stream.Reset()
+	if err := stream.Reset(); err != nil {
+		slog.Debug("stream reset error in sendError", "err", err)
+	}
 }

@@ -83,6 +83,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("p2p.conn_mgr_low_mark", DefaultConnMgrLowMark)
 	v.SetDefault("p2p.conn_mgr_high_mark", DefaultConnMgrHighMark)
 	v.SetDefault("p2p.conn_mgr_grace", DefaultConnMgrGrace)
+	v.SetDefault("p2p.lan_only", false)
+	v.SetDefault("p2p.max_known_peers", 100)
+	v.SetDefault("p2p.chunk_size", 256*1024)
+	v.SetDefault("p2p.peer_data_ttl", 24*time.Hour)
 
 	v.SetDefault("transcoder.ffmpeg_path", "ffmpeg")
 	v.SetDefault("transcoder.stream_codec", DefaultStreamCodec)

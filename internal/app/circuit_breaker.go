@@ -17,6 +17,7 @@ type CircuitBreaker struct {
 	threshold         int
 	cooldown          time.Duration
 	halfOpenSuccesses int
+	halfOpenProbes    int
 }
 
 func NewCircuitBreaker(peerID domain.PeerID, threshold int, cooldown time.Duration) *CircuitBreaker {
@@ -39,11 +40,16 @@ func (cb *CircuitBreaker) Allow() bool {
 		if time.Since(cb.lastFailTime) > cb.cooldown {
 			cb.state = domain.CBStateHalfOpen
 			cb.halfOpenSuccesses = 0
+			cb.halfOpenProbes = 0
 			return true
 		}
 		return false
 	case domain.CBStateHalfOpen:
-		return true
+		if cb.halfOpenProbes < domain.CBHalfOpenSuccessesRequired {
+			cb.halfOpenProbes++
+			return true
+		}
+		return false
 	}
 	return false
 }
@@ -64,6 +70,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 		if cb.halfOpenSuccesses >= 3 {
 			cb.state = domain.CBStateClosed
 			cb.failCount = 0
+			cb.halfOpenProbes = 0
 		}
 	}
 }
@@ -80,6 +87,9 @@ func (cb *CircuitBreaker) RecordFailure() {
 			cb.state = domain.CBStateOpen
 		}
 	case domain.CBStateHalfOpen:
+		if cb.halfOpenProbes > 0 {
+			cb.halfOpenProbes--
+		}
 		cb.state = domain.CBStateOpen
 	}
 }
@@ -98,37 +108,5 @@ func (cb *CircuitBreaker) Reset() {
 	cb.failCount = 0
 	cb.successCount = 0
 	cb.halfOpenSuccesses = 0
-}
-
-type CBRegistry struct {
-	m         sync.Map
-	threshold int
-	cooldown  time.Duration
-}
-
-func NewCBRegistry(threshold int, cooldown time.Duration) *CBRegistry {
-	return &CBRegistry{
-		threshold: threshold,
-		cooldown:  cooldown,
-	}
-}
-
-func (r *CBRegistry) Get(peerID domain.PeerID) *CircuitBreaker {
-	if val, ok := r.m.Load(peerID); ok {
-		return val.(*CircuitBreaker)
-	}
-
-	val, _ := r.m.LoadOrStore(peerID, NewCircuitBreaker(peerID, r.threshold, r.cooldown))
-	return val.(*CircuitBreaker)
-}
-
-func (r *CBRegistry) Remove(peerID domain.PeerID) {
-	r.m.Delete(peerID)
-}
-
-func (r *CBRegistry) ResetAll() {
-	r.m.Range(func(key, value any) bool {
-		value.(*CircuitBreaker).Reset()
-		return true
-	})
+	cb.halfOpenProbes = 0
 }

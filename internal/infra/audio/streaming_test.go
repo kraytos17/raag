@@ -48,7 +48,7 @@ func TestStreamingSource_BasicRead(t *testing.T) {
 	data := bytes.Repeat([]byte("test data "), 1000)
 	source := &slowReader{data: data, delay: 10 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	if !waitForData(ss, 500*time.Millisecond) {
 		t.Fatal("timeout waiting for data")
@@ -68,7 +68,7 @@ func TestStreamingSource_FillLevel(t *testing.T) {
 	data := bytes.Repeat([]byte("x"), 50*1024)
 	source := &slowReader{data: data, delay: 10 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -85,7 +85,7 @@ func TestStreamingSource_BufferStats(t *testing.T) {
 	data := bytes.Repeat([]byte("y"), 32*1024)
 	source := &slowReader{data: data, delay: 5 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	time.Sleep(50 * time.Millisecond)
 	used := ss.BufferUsed()
@@ -118,7 +118,7 @@ func TestStreamingSource_IsBuffering(t *testing.T) {
 	data := bytes.Repeat([]byte("a"), 10*1024)
 	source := &slowReader{data: data, delay: 50 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	if !ss.IsBuffering() {
 		t.Error("IsBuffering = false, want true during fill")
@@ -134,7 +134,7 @@ func TestStreamingSource_ReadAll(t *testing.T) {
 	data := bytes.Repeat([]byte("b"), 10*1024)
 	source := &slowReader{data: data, delay: 500 * time.Microsecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	var total int
 	buf := make([]byte, 1024)
@@ -173,7 +173,7 @@ func TestStreamingSource_ConcurrentReadWrite(t *testing.T) {
 	data := bytes.Repeat([]byte("c"), 100*1024)
 	source := &slowReader{data: data, delay: 50 * time.Microsecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	readDone := make(chan struct{})
 	go func() {
@@ -208,7 +208,7 @@ func TestStreamingSource_ConcurrentReadWrite(t *testing.T) {
 func TestStreamingSource_EmptySource(t *testing.T) {
 	source := &slowReader{data: []byte{}}
 	ss := NewStreamingSource(source, 16*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	time.Sleep(50 * time.Millisecond)
 	buf := make([]byte, 1024)
@@ -246,14 +246,16 @@ func TestStreamingSource_DefaultBufferSize(t *testing.T) {
 	if ss.BufferSize() != DefaultBufferSize {
 		t.Errorf("Default buffer size = %d, want %d", ss.BufferSize(), DefaultBufferSize)
 	}
-	ss.Close()
+	if err := ss.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
 }
 
 func TestStreamingSource_LargeData(t *testing.T) {
 	data := bytes.Repeat([]byte("f"), 1*1024*1024)
 	source := &slowReader{data: data, delay: 10 * time.Microsecond}
 	ss := NewStreamingSource(source, 256*1024)
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	time.Sleep(200 * time.Millisecond)
 	fill := ss.FillLevel()

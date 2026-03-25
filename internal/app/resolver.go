@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 
@@ -43,6 +44,9 @@ func (r *LocalResolver) Resolve(ctx context.Context, trackID domain.TrackID) (*R
 
 	file, err := os.Open(track.Path)
 	if err != nil {
+		if errors.Is(err, os.ErrPermission) || errors.Is(err, os.ErrNotExist) {
+			return nil, domain.ErrFileNotAccessible
+		}
 		return nil, err
 	}
 	return &ResolvedTrack{
@@ -76,8 +80,12 @@ func NewMultiSourceResolver(libraryRepo LibraryRepository, p2pResolver P2PResolv
 }
 
 func (r *MultiSourceResolver) Resolve(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
-	if resolved, err := r.local.Resolve(ctx, trackID); err == nil {
+	resolved, err := r.local.Resolve(ctx, trackID)
+	if err == nil {
 		return resolved, nil
+	}
+	if !errors.Is(err, domain.ErrTrackNotFound) {
+		return nil, err
 	}
 	if r.p2p != nil {
 		reader, err := r.p2p.Resolve(ctx, trackID)

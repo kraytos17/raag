@@ -74,7 +74,11 @@ func computeFileHash(path string) string {
 		slog.Debug("failed to open file for hashing", "path", path, "error", err)
 		return ""
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			slog.Debug("failed to close file after hashing", "path", path, "error", err)
+		}
+	}()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
