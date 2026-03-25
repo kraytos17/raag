@@ -38,3 +38,14 @@ func NormalizeKey(s string) string {
 	}
 	return result.String()
 }
+
+// StripAudioExtension removes common audio file extensions from the end of a query string.
+// This allows searches like "song.mp3" to match metadata "song".
+func StripAudioExtension(query string) string {
+	for _, ext := range AudioExtensions {
+		if strings.HasSuffix(strings.ToLower(query), ext) {
+			return strings.TrimSuffix(query, ext)
+		}
+	}
+	return query
+}

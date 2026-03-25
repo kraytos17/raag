@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"math"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -137,7 +138,8 @@ func (idx *inmemoryIndex) indexOneLocked(track *domain.Track) {
 		album = domain.Normalize(track.Album)
 	}
 
-	tokens := uniqueStrings(tokenize(title + " " + artist + " " + album))
+	filename := domain.Normalize(filepath.Base(track.Path))
+	tokens := uniqueStrings(tokenize(title + " " + artist + " " + album + " " + filename))
 	for _, token := range tokens {
 		idx.terms[token] = idx.insertSorted(idx.terms[token], track.ID)
 		if pos, found := slices.BinarySearch(idx.termKeys, token); !found {
@@ -149,7 +151,8 @@ func (idx *inmemoryIndex) indexOneLocked(track *domain.Track) {
 	idx.trackToks[track.ID] = tokens
 	titleTris := trigramsFromNormalizedString(title)
 	artistTris := trigramsFromNormalizedString(artist)
-	tris := uniqueStrings(slices.Concat(titleTris, artistTris))
+	filenameTris := trigramsFromNormalizedString(filename)
+	tris := uniqueStrings(slices.Concat(titleTris, artistTris, filenameTris))
 	for _, tri := range tris {
 		idx.trigram[tri] = idx.insertSorted(idx.trigram[tri], track.ID)
 	}

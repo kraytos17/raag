@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -58,7 +59,8 @@ func (s *SearchService) resolveAndRankTracks(ctx context.Context, query string, 
 		slog.Warn("failed to batch resolve tracks", "error", err)
 	}
 
-	normalizedQuery := domain.Normalize(query)
+	strippedQuery := domain.StripAudioExtension(query)
+	normalizedQuery := domain.Normalize(strippedQuery)
 	all := make([]scoredTrack, 0, len(tracks))
 	for _, track := range tracks {
 		all = append(all, scoredTrack{
@@ -105,6 +107,8 @@ func (s *SearchService) calculateMatchScore(normalizedQuery string, track *domai
 	if album == "" {
 		album = domain.Normalize(track.Album)
 	}
+
+	filename := domain.Normalize(filepath.Base(track.Path))
 	if strings.Contains(title, normalizedQuery) {
 		score += BoostTitle
 	}
@@ -113,6 +117,9 @@ func (s *SearchService) calculateMatchScore(normalizedQuery string, track *domai
 	}
 	if strings.Contains(album, normalizedQuery) {
 		score += BoostAlbum
+	}
+	if strings.Contains(filename, normalizedQuery) {
+		score += BoostTitle
 	}
 	return score
 }
