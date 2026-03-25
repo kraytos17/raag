@@ -259,7 +259,8 @@ func RunSetup() error {
 		},
 		P2P: P2PConfig{
 			Enabled:          true,
-			ListenAddrs:      []string{"/ip4/0.0.0.0/tcp/7844"},
+			ListenAddrs:      DefaultListenAddrs,
+			AnnounceAddrs:    []string{},
 			BootstrapPeers:   []string{},
 			MDNSServiceTag:   "raag-local",
 			MaxPeers:         20,
@@ -267,6 +268,10 @@ func RunSetup() error {
 			AnnounceLibrary:  true,
 			PerPeerRateLimit: 10,
 			UploadBandwidth:  0,
+			LANOnly:          false,
+			MaxKnownPeers:    100,
+			ChunkSize:        256 * 1024,
+			PeerDataTTL:      24 * time.Hour,
 		},
 		Transcoder: TranscoderConfig{
 			FFmpegPath:    "ffmpeg",
@@ -331,6 +336,7 @@ type DaemonConfig struct {
 type P2PConfig struct {
 	Enabled            bool          `mapstructure:"enabled"`
 	ListenAddrs        []string      `mapstructure:"listen_addrs"`
+	AnnounceAddrs      []string      `mapstructure:"announce_addrs"`
 	BootstrapPeers     []string      `mapstructure:"bootstrap_peers"`
 	MDNSServiceTag     string        `mapstructure:"mdns_service_tag"`
 	MaxPeers           int           `mapstructure:"max_peers"`
@@ -343,6 +349,10 @@ type P2PConfig struct {
 	ConnMgrLowMark     int           `mapstructure:"conn_mgr_low_mark"`
 	ConnMgrHighMark    int           `mapstructure:"conn_mgr_high_mark"`
 	ConnMgrGrace       time.Duration `mapstructure:"conn_mgr_grace"`
+	LANOnly            bool          `mapstructure:"lan_only"`
+	MaxKnownPeers      int           `mapstructure:"max_known_peers"`
+	ChunkSize          int           `mapstructure:"chunk_size"`
+	PeerDataTTL        time.Duration `mapstructure:"peer_data_ttl"`
 }
 
 type TranscoderConfig struct {

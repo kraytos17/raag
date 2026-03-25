@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/p-society/raag/internal/domain"
@@ -23,6 +24,7 @@ type PlaybackController struct {
 	volume        int
 	queue         Queue
 	advanceCancel context.CancelFunc
+	advanceGen    atomic.Int64
 }
 
 func NewPlaybackController(
@@ -261,6 +263,7 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		c.advanceCancel()
 	}
 
+	gen := c.advanceGen.Add(1)
 	watchCtx, cancel := context.WithCancel(ctx)
 	c.advanceCancel = cancel
 	go func() {
@@ -269,6 +272,13 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		case <-watchCtx.Done():
 			return
 		}
+
+		// Check if this watcher is stale
+		if gen != c.advanceGen.Load() {
+			return
+		}
+
+		_ = c.fsm.Send(watchCtx, domain.EventEOF)
 
 		c.mu.Lock()
 		state := c.fsm.State()
@@ -286,7 +296,7 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		if next == nil {
 			return
 		}
-		_ = c.Play(context.Background(), next.ID)
+		_ = c.Play(watchCtx, next.ID)
 	}()
 }
 

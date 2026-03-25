@@ -13,9 +13,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var socketPath string
+var (
+	socketPath string
+	client     *ipc.Client
+)
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	defer func() {
+		if client != nil {
+			client.Close()
+		}
+	}()
+
 	rootCmd := &cobra.Command{
 		Use:   "raag",
 		Short: "Raag - Terminal music player with P2P streaming",
@@ -41,11 +54,16 @@ func main() {
 	)
 
 	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func getClient() (*ipc.Client, error) {
+	if client != nil {
+		return client, nil
+	}
+
 	socket := socketPath
 	if socket == "" {
 		cfg, err := config.Load()
@@ -54,7 +72,9 @@ func getClient() (*ipc.Client, error) {
 		}
 		socket = config.ExpandHome(cfg.Daemon.SocketPath)
 	}
-	return ipc.NewClient(socket), nil
+
+	client = ipc.NewClient(socket)
+	return client, nil
 }
 
 func call(fn func(*ipc.Client) (*pb.Response, error)) error {
@@ -325,9 +345,22 @@ func newLibCmd() *cobra.Command {
 		Use:   "scan",
 		Short: "Scan library for new tracks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
-				return c.LibScan(false)
-			}), "library scan complete")
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+
+			_, err = client.LibScanAsync(false, func(progress ipc.ScanProgress) {
+				if progress.Total > 0 {
+					fmt.Printf("\rScanning: %d/%d files (%s)", progress.Scanned, progress.Total, progress.CurrentFile)
+				}
+			})
+			if err != nil {
+				return err
+			}
+
+			fmt.Println("\nLibrary scan complete")
+			return nil
 		},
 	})
 	return cmd
@@ -379,6 +412,28 @@ func newPeersCmd() *cobra.Command {
 			return nil
 		},
 	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "ban [peer-id]",
+		Short: "Ban a peer by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.BanPeer(args[0])
+			}), "peer banned")
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "unban [peer-id]",
+		Short: "Unban a peer by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.UnbanPeer(args[0])
+			}), "peer unbanned")
+		},
+	})
 	return cmd
 }
 
@@ -416,6 +471,19 @@ func newNetworkCmd() *cobra.Command {
 			fmt.Fprintf(os.Stdout, "Connected Peers: %d\n", len(netStatus.ConnectedPeers))
 			for _, peer := range netStatus.ConnectedPeers {
 				fmt.Fprintf(os.Stdout, "  - %s\n", peer.PeerId)
+				for _, addr := range peer.Addrs {
+					fmt.Fprintf(os.Stdout, "      %s\n", addr)
+				}
+			}
+
+			fmt.Fprintf(os.Stdout, "Discovered Peers (mDNS): %d\n", len(netStatus.DiscoveredPeers))
+			for _, peer := range netStatus.DiscoveredPeers {
+				suffix := ""
+				if peer.Dialable {
+					suffix = " (dialable)"
+				}
+
+				fmt.Fprintf(os.Stdout, "  - %s%s\n", peer.PeerId, suffix)
 				for _, addr := range peer.Addrs {
 					fmt.Fprintf(os.Stdout, "      %s\n", addr)
 				}

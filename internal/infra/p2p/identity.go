@@ -154,7 +154,11 @@ func (m *IdentityManager) writeFile(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to create identity file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			slog.Warn("failed to close identity file", "error", err)
+		}
+	}()
 
 	if err := pem.Encode(file, block); err != nil {
 		return fmt.Errorf("failed to write identity file: %w", err)

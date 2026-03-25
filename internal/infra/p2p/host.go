@@ -2,8 +2,10 @@ package p2p
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,6 +18,39 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
+func listenPorts(listenAddrs []ma.Multiaddr) (tcpPorts []int, quicPorts []int, err error) {
+	seenTCP := map[int]bool{}
+	seenQUIC := map[int]bool{}
+	for _, a := range listenAddrs {
+		if tcpStr, err := a.ValueForProtocol(ma.P_TCP); err == nil {
+			port, err := strconv.Atoi(tcpStr)
+			if err != nil {
+				return nil, nil, fmt.Errorf("invalid tcp port %q: %w", tcpStr, err)
+			}
+			if !seenTCP[port] {
+				seenTCP[port] = true
+				tcpPorts = append(tcpPorts, port)
+			}
+		}
+		if _, err := a.ValueForProtocol(ma.P_QUIC_V1); err == nil {
+			udpStr, err := a.ValueForProtocol(ma.P_UDP)
+			if err != nil {
+				return nil, nil, errors.New("quic-v1 listen addr missing udp port")
+			}
+
+			port, err := strconv.Atoi(udpStr)
+			if err != nil {
+				return nil, nil, fmt.Errorf("invalid udp port %q: %w", udpStr, err)
+			}
+			if !seenQUIC[port] {
+				seenQUIC[port] = true
+				quicPorts = append(quicPorts, port)
+			}
+		}
+	}
+	return tcpPorts, quicPorts, nil
+}
+
 type P2PConfig struct {
 	ListenAddrs     []string
 	AnnounceAddrs   []string
@@ -25,18 +60,8 @@ type P2PConfig struct {
 	ConnMgrLowMark  int
 	ConnMgrHighMark int
 	ConnMgrGrace    time.Duration
-}
 
-func DefaultP2PConfig() P2PConfig {
-	return P2PConfig{
-		ListenAddrs:     []string{"/ip4/0.0.0.0/tcp/7844"},
-		AnnounceAddrs:   nil,
-		BootstrapPeers:  nil,
-		MdnsServiceName: "raag-local",
-		ConnMgrLowMark:  32,
-		ConnMgrHighMark: 64,
-		ConnMgrGrace:    30 * time.Second,
-	}
+	ConnectionGater *PeerGater
 }
 
 func NewHost(privKey crypto.PrivKey, cfg P2PConfig) (host.Host, error) {
@@ -68,26 +93,55 @@ func NewHost(privKey crypto.PrivKey, cfg P2PConfig) (host.Host, error) {
 		listenAddrs = append(listenAddrs, maddr)
 	}
 
+	_, _, err = listenPorts(listenAddrs)
+	if err != nil {
+		return nil, err
+	}
+
 	opts := []libp2p.Option{
 		libp2p.Identity(privKey),
 		libp2p.ListenAddrs(listenAddrs...),
 		libp2p.ResourceManager(resourceManager),
 		libp2p.ConnectionManager(connManager),
-		libp2p.NATPortMap(),
 		libp2p.Ping(true),
+		libp2p.ForceReachabilityPrivate(),
 	}
 
+	if cfg.ConnectionGater != nil {
+		opts = append(opts, libp2p.ConnectionGater(cfg.ConnectionGater))
+	}
 	if len(cfg.AnnounceAddrs) > 0 {
-		var announceAddrs []ma.Multiaddr
+		var maddrs []ma.Multiaddr
 		for _, addr := range cfg.AnnounceAddrs {
 			maddr, err := ma.NewMultiaddr(addr)
 			if err != nil {
 				return nil, fmt.Errorf("invalid announce addr %s: %w", addr, err)
 			}
-			announceAddrs = append(announceAddrs, maddr)
+			maddrs = append(maddrs, maddr)
 		}
+
 		opts = append(opts, libp2p.AddrsFactory(func(addrs []ma.Multiaddr) []ma.Multiaddr {
-			return append(addrs, announceAddrs...)
+			seen := make(map[string]struct{}, len(addrs)+len(maddrs))
+			out := make([]ma.Multiaddr, 0, len(addrs)+len(maddrs))
+			for _, a := range addrs {
+				k := a.String()
+				if _, ok := seen[k]; ok {
+					continue
+				}
+
+				seen[k] = struct{}{}
+				out = append(out, a)
+			}
+			for _, a := range maddrs {
+				k := a.String()
+				if _, ok := seen[k]; ok {
+					continue
+				}
+
+				seen[k] = struct{}{}
+				out = append(out, a)
+			}
+			return out
 		}))
 	}
 	return libp2p.New(opts...)

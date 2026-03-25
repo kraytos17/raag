@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
@@ -17,6 +19,7 @@ var (
 	ErrPlaybackFailed = errors.New("playback failed")
 	ErrInvalidCommand = errors.New("invalid command")
 	ErrServerError    = errors.New("server error")
+	ErrClientClosed   = errors.New("ipc: client is closed")
 )
 
 func mapResponseError(resp *pb.Response) error {
@@ -37,16 +40,266 @@ func mapResponseError(resp *pb.Response) error {
 	}
 }
 
-type Client struct {
-	socketPath string
+type ScanProgress struct {
+	JobID       string
+	Scanned     int
+	Total       int
+	CurrentFile string
+	Phase       string
 }
 
+// Client maintains a persistent connection to the IPC server,
+// automatically reconnecting on failure and sending keepalive pings
+// to prevent server-side timeouts.
+type Client struct {
+	socketPath string
+
+	mu        sync.Mutex
+	conn      net.Conn
+	closeOnce sync.Once
+	closed    chan struct{}
+
+	keepaliveDone chan struct{}
+}
+
+// NewClient creates a new persistent IPC client and starts the keepalive goroutine.
 func NewClient(socketPath string) *Client {
-	return &Client{
-		socketPath: socketPath,
+	c := &Client{
+		socketPath:    socketPath,
+		closed:        make(chan struct{}),
+		keepaliveDone: make(chan struct{}),
+	}
+
+	go c.keepalive()
+	return c
+}
+
+// connect dials the socket and stores the connection.
+// Caller must hold c.mu.
+func (c *Client) connect() error {
+	if c.conn != nil {
+		return nil
+	}
+
+	conn, err := net.DialTimeout("unix", c.socketPath, domain.IPCConnectTimeout)
+	if err != nil {
+		return fmt.Errorf("ipc: connect: %w", err)
+	}
+	c.conn = conn
+	return nil
+}
+
+// reconnect closes any broken connection and re-dials with exponential backoff.
+// Caller must hold c.mu.
+func (c *Client) reconnect() error {
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+	}
+
+	delay := domain.IPCReconnectBaseDelay
+	for attempt := range domain.IPCReconnectMaxAttempts {
+		select {
+		case <-c.closed:
+			return ErrClientClosed
+		default:
+		}
+
+		conn, err := net.DialTimeout("unix", c.socketPath, domain.IPCConnectTimeout)
+		if err == nil {
+			c.conn = conn
+			return nil
+		}
+		if attempt == domain.IPCReconnectMaxAttempts-1 {
+			return fmt.Errorf("ipc: reconnect failed after %d attempts: %w",
+				domain.IPCReconnectMaxAttempts, err)
+		}
+
+		c.mu.Unlock()
+		select {
+		case <-c.closed:
+			c.mu.Lock()
+			return ErrClientClosed
+		case <-time.After(delay):
+		}
+
+		c.mu.Lock()
+		delay = min(delay*2, domain.IPCReconnectMaxDelay)
+	}
+	return errors.New("ipc: reconnect exhausted")
+}
+
+// send transmits a request and returns the response, using the persistent connection.
+// On connection failure, it attempts exactly one reconnect before giving up.
+func (c *Client) send(req *pb.Request) (*pb.Response, error) {
+	req.RequestId = uuid.New().String()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	select {
+	case <-c.closed:
+		return nil, ErrClientClosed
+	default:
+	}
+
+	if c.conn == nil {
+		if err := c.connect(); err != nil {
+			return nil, err
+		}
+	}
+
+	resp, err := c.doRoundTrip(req)
+	if err == nil {
+		return resp, nil
+	}
+	if reconnErr := c.reconnect(); reconnErr != nil {
+		return nil, fmt.Errorf("ipc: send failed and reconnect failed: %w", reconnErr)
+	}
+
+	req.RequestId = uuid.New().String()
+	return c.doRoundTrip(req)
+}
+
+// doRoundTrip writes req and reads resp on c.conn.
+// It loops discarding any broadcast messages (non-matching request IDs)
+// until it receives the response matching our request.
+// Caller must hold c.mu and c.conn must be non-nil.
+func (c *Client) doRoundTrip(req *pb.Request) (*pb.Response, error) {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(domain.IPCWriteTimeout)); err != nil {
+		return nil, err
+	}
+	if err := wire.WriteMsg(c.conn, req); err != nil {
+		return nil, err
+	}
+	for {
+		if err := c.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout)); err != nil {
+			return nil, err
+		}
+
+		var resp pb.Response
+		if err := wire.ReadMsg(c.conn, &resp); err != nil {
+			return nil, err
+		}
+		if resp.RequestId == req.RequestId {
+			return &resp, nil
+		}
 	}
 }
 
+// keepalive sends periodic health checks to prevent server-side idle timeouts.
+func (c *Client) keepalive() {
+	defer close(c.keepaliveDone)
+
+	ticker := time.NewTicker(domain.IPCKeepaliveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			hasConn := c.conn != nil
+			c.mu.Unlock()
+
+			if !hasConn {
+				continue
+			}
+			req := &pb.Request{
+				ProtocolVersion: domain.IPCProtocolVersion,
+				Payload:         &pb.Request_HealthCheck{HealthCheck: &pb.HealthCheckRequest{}},
+			}
+			c.send(req)
+		}
+	}
+}
+
+// Close shuts down the client, stopping the keepalive goroutine and closing
+// the connection. Safe to call multiple times.
+func (c *Client) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		close(c.closed)
+		<-c.keepaliveDone
+
+		c.mu.Lock()
+		if c.conn != nil {
+			err = c.conn.Close()
+			c.conn = nil
+		}
+		c.mu.Unlock()
+	})
+	return err
+}
+
+// LibScanAsync initiates a library scan and calls onProgress for each progress update.
+// This method holds the connection mutex for the entire duration of the scan,
+// blocking other commands until the scan completes.
+func (c *Client) LibScanAsync(
+	incremental bool,
+	onProgress func(ScanProgress),
+) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		RequestId:       uuid.New().String(),
+		Payload:         &pb.Request_LibScan{LibScan: &pb.LibScanRequest{Incremental: incremental}},
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	select {
+	case <-c.closed:
+		return nil, ErrClientClosed
+	default:
+	}
+
+	if c.conn == nil {
+		if err := c.connect(); err != nil {
+			return nil, err
+		}
+	}
+	if err := c.conn.SetWriteDeadline(time.Now().Add(domain.IPCWriteTimeout)); err != nil {
+		return nil, err
+	}
+	if err := wire.WriteMsg(c.conn, req); err != nil {
+		_ = c.reconnect()
+		return nil, fmt.Errorf("ipc: scan request write failed: %w", err)
+	}
+	for {
+		if err := c.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout)); err != nil {
+			return nil, err
+		}
+
+		var resp pb.Response
+		if err := wire.ReadMsg(c.conn, &resp); err != nil {
+			_ = c.reconnect()
+			return nil, fmt.Errorf("ipc: scan read failed: %w", err)
+		}
+		if sp := resp.GetScanProgress(); sp != nil {
+			if onProgress != nil {
+				onProgress(ScanProgress{
+					JobID:       sp.JobId,
+					Scanned:     int(sp.Scanned),
+					Total:       int(sp.Total),
+					CurrentFile: sp.CurrentFile,
+					Phase:       sp.Phase,
+				})
+			}
+			if sp.Phase == "complete" {
+				return &pb.Response{
+					Success:   true,
+					JobId:     sp.JobId,
+					RequestId: resp.RequestId,
+				}, nil
+			}
+			continue
+		}
+		return &resp, nil
+	}
+}
+
+// Play starts playback of a track by ID or query.
 func (c *Client) Play(trackID, query string) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -55,6 +308,7 @@ func (c *Client) Play(trackID, query string) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// Pause pauses the current playback.
 func (c *Client) Pause() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -63,6 +317,7 @@ func (c *Client) Pause() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// Resume resumes paused playback.
 func (c *Client) Resume() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -71,6 +326,7 @@ func (c *Client) Resume() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// Stop stops the current playback.
 func (c *Client) Stop() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -79,6 +335,7 @@ func (c *Client) Stop() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// Next skips to the next track in the queue.
 func (c *Client) Next() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -87,6 +344,7 @@ func (c *Client) Next() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// Prev goes back to the previous track in the queue.
 func (c *Client) Prev() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -95,6 +353,7 @@ func (c *Client) Prev() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// SeekTo seeks to a position in the current track.
 func (c *Client) SeekTo(offsetMs int64) error {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -108,6 +367,7 @@ func (c *Client) SeekTo(offsetMs int64) error {
 	return mapResponseError(resp)
 }
 
+// SetVolume sets the playback volume.
 func (c *Client) SetVolume(volume int32) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -116,6 +376,7 @@ func (c *Client) SetVolume(volume int32) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// QueueAdd adds a track to the playback queue.
 func (c *Client) QueueAdd(trackID string, position int32) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -124,6 +385,7 @@ func (c *Client) QueueAdd(trackID string, position int32) (*pb.Response, error) 
 	return c.send(req)
 }
 
+// QueueRemove removes a track from the playback queue.
 func (c *Client) QueueRemove(position int32) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -132,6 +394,7 @@ func (c *Client) QueueRemove(position int32) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// QueueClear clears the playback queue.
 func (c *Client) QueueClear() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -140,6 +403,7 @@ func (c *Client) QueueClear() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// Search searches for tracks matching the query.
 func (c *Client) Search(query string, limit int32) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -148,6 +412,7 @@ func (c *Client) Search(query string, limit int32) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// LibScan initiates a library scan (blocking, non-streaming).
 func (c *Client) LibScan(incremental bool) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -156,6 +421,7 @@ func (c *Client) LibScan(incremental bool) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// ListPeers returns a list of connected peers.
 func (c *Client) ListPeers() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -164,6 +430,7 @@ func (c *Client) ListPeers() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// NetworkStatus returns the P2P network status.
 func (c *Client) NetworkStatus() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -172,6 +439,25 @@ func (c *Client) NetworkStatus() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// BanPeer bans a peer by ID.
+func (c *Client) BanPeer(peerID string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_BanPeer{BanPeer: &pb.BanPeerRequest{PeerId: peerID}},
+	}
+	return c.send(req)
+}
+
+// UnbanPeer unbans a peer by ID.
+func (c *Client) UnbanPeer(peerID string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_UnbanPeer{UnbanPeer: &pb.UnbanPeerRequest{PeerId: peerID}},
+	}
+	return c.send(req)
+}
+
+// Status returns the current playback status.
 func (c *Client) Status() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -180,6 +466,7 @@ func (c *Client) Status() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// HealthCheck checks if the server is healthy.
 func (c *Client) HealthCheck() (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -188,6 +475,7 @@ func (c *Client) HealthCheck() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// GetTrack retrieves a track by ID.
 func (c *Client) GetTrack(trackID string) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -196,6 +484,7 @@ func (c *Client) GetTrack(trackID string) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// GetTrackByPath retrieves a track by file path.
 func (c *Client) GetTrackByPath(path string) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
@@ -204,28 +493,9 @@ func (c *Client) GetTrackByPath(path string) (*pb.Response, error) {
 	return c.send(req)
 }
 
-func (c *Client) send(req *pb.Request) (*pb.Response, error) {
-	// Dial per request: keeps the client stateless and avoids
-	// managing long-lived connections/timeouts across commands.
-	conn, err := net.DialTimeout("unix", c.socketPath, domain.IPCConnectTimeout)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = conn.Close() }()
-
-	if err := conn.SetWriteDeadline(time.Now().Add(domain.IPCConnectTimeout)); err != nil {
-		return nil, err
-	}
-	if err := wire.WriteMsg(conn, req); err != nil {
-		return nil, err
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(domain.IPCConnectTimeout)); err != nil {
-		return nil, err
-	}
-
-	var resp pb.Response
-	if err := wire.ReadMsg(conn, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+// Conn returns the underlying connection for testing purposes.
+func (c *Client) Conn() net.Conn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn
 }

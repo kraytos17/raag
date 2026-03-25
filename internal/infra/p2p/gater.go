@@ -1,0 +1,132 @@
+package p2p
+
+import (
+	"errors"
+	"net"
+	"sync"
+
+	"github.com/libp2p/go-libp2p/core/connmgr"
+	"github.com/libp2p/go-libp2p/core/control"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
+)
+
+var _ connmgr.ConnectionGater = (*PeerGater)(nil)
+
+var (
+	ErrPeerBanned = errors.New("peer is banned")
+	ErrIPBanned   = errors.New("IP address is banned")
+)
+
+type PeerGater struct {
+	bannedPeers sync.Map
+	bannedIPs   sync.Map
+}
+
+func NewPeerGater() *PeerGater {
+	return &PeerGater{}
+}
+
+func (g *PeerGater) Ban(pid peer.ID) {
+	g.bannedPeers.Store(pid, true)
+}
+
+func (g *PeerGater) Unban(pid peer.ID) {
+	g.bannedPeers.Delete(pid)
+}
+
+func (g *PeerGater) IsBanned(pid peer.ID) bool {
+	if banned, ok := g.bannedPeers.Load(pid); ok && banned.(bool) {
+		return true
+	}
+	return false
+}
+
+func (g *PeerGater) BanIP(ip string) {
+	g.bannedIPs.Store(ip, true)
+}
+
+func (g *PeerGater) UnbanIP(ip string) {
+	g.bannedIPs.Delete(ip)
+}
+
+func (g *PeerGater) IsIPBanned(ip string) bool {
+	if banned, ok := g.bannedIPs.Load(ip); ok && banned.(bool) {
+		return true
+	}
+	return false
+}
+
+func (g *PeerGater) InterceptPeerDial(p peer.ID) bool {
+	return !g.IsBanned(p)
+}
+
+func (g *PeerGater) InterceptAddrDial(p peer.ID, m ma.Multiaddr) bool {
+	return !g.IsBanned(p)
+}
+
+func (g *PeerGater) InterceptAccept(addrs network.ConnMultiaddrs) bool {
+	ip := extractIPFromMultiaddrs(addrs)
+	if ip != "" && g.IsIPBanned(ip) {
+		return false
+	}
+	return true
+}
+
+func (g *PeerGater) InterceptSecured(direction network.Direction, p peer.ID, addrs network.ConnMultiaddrs) bool {
+	if g.IsBanned(p) {
+		return false
+	}
+
+	ip := extractIPFromMultiaddrs(addrs)
+	if ip != "" && g.IsIPBanned(ip) {
+		return false
+	}
+	return true
+}
+
+func (g *PeerGater) InterceptUpgraded(conn network.Conn) (bool, control.DisconnectReason) {
+	return true, 0
+}
+
+func extractIPFromMultiaddrs(addrs network.ConnMultiaddrs) string {
+	if addrs == nil {
+		return ""
+	}
+
+	maddrs := []ma.Multiaddr{addrs.RemoteMultiaddr(), addrs.LocalMultiaddr()}
+	for _, maddr := range maddrs {
+		if maddr == nil {
+			continue
+		}
+		if ip, err := maddr.ValueForProtocol(ma.P_IP4); err == nil {
+			return ip
+		}
+		if ip, err := maddr.ValueForProtocol(ma.P_IP6); err == nil {
+			return ip
+		}
+	}
+
+	return ""
+}
+
+func (g *PeerGater) BlockPeer(pid peer.ID) error {
+	g.Ban(pid)
+	return nil
+}
+
+func (g *PeerGater) UnblockPeer(pid peer.ID) error {
+	g.Unban(pid)
+	return nil
+}
+
+func (g *PeerGater) BlockAddr(ip net.IP) error {
+	g.BanIP(ip.String())
+	return nil
+}
+
+func (g *PeerGater) UnblockAddr(ip net.IP) error {
+	g.UnbanIP(ip.String())
+	return nil
+}

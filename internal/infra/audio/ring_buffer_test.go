@@ -80,7 +80,9 @@ func TestRingBuffer_FillLevel(t *testing.T) {
 		t.Errorf("FillLevel() = %f, want 0", level)
 	}
 
-	rb.Write([]byte{1, 2, 3})
+	if _, err := rb.Write([]byte{1, 2, 3}); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 	if level := rb.FillLevel(); level != 0.03 {
 		t.Errorf("FillLevel() = %f, want 0.03", level)
 	}
@@ -88,7 +90,9 @@ func TestRingBuffer_FillLevel(t *testing.T) {
 
 func TestRingBuffer_Close(t *testing.T) {
 	rb := NewRingBuffer(100)
-	rb.Write([]byte("test"))
+	if _, err := rb.Write([]byte("test")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 	if err := rb.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -122,7 +126,9 @@ func TestRingBuffer_Available(t *testing.T) {
 		t.Errorf("Available() = %d, want 100", avail)
 	}
 
-	rb.Write([]byte{1, 2, 3})
+	if _, err := rb.Write([]byte{1, 2, 3}); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 	if avail := rb.Available(); avail != 97 {
 		t.Errorf("Available() after write = %d, want 97", avail)
 	}
@@ -136,7 +142,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 	for range 10 {
 		wg.Go(func() {
 			for range 100 {
-				rb.Write(data)
+				_, _ = rb.Write(data)
 				time.Sleep(time.Microsecond)
 			}
 		})
@@ -145,7 +151,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 		wg.Go(func() {
 			buf := make([]byte, 9)
 			for range 100 {
-				rb.Read(buf)
+				_, _ = rb.Read(buf)
 				time.Sleep(time.Microsecond)
 			}
 		})
@@ -176,7 +182,9 @@ func TestRingBuffer_PartialWrite(t *testing.T) {
 
 func TestRingBuffer_PartialRead(t *testing.T) {
 	rb := NewRingBuffer(100)
-	rb.Write([]byte("hello world"))
+	if _, err := rb.Write([]byte("hello world")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 	buf := make([]byte, 5)
 	n, err := rb.Read(buf)
 	if err != nil {
@@ -204,7 +212,9 @@ func TestRingBuffer_PartialRead(t *testing.T) {
 
 func TestRingBuffer_Discard(t *testing.T) {
 	rb := NewRingBuffer(100)
-	rb.Write([]byte("hello world"))
+	if _, err := rb.Write([]byte("hello world")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 	if count := rb.Discard(6); count != 6 {
 		t.Errorf("Discard() = %d, want 6", count)
 	}
@@ -218,7 +228,9 @@ func TestRingBuffer_Discard(t *testing.T) {
 
 func TestRingBuffer_Peek(t *testing.T) {
 	rb := NewRingBuffer(100)
-	rb.Write([]byte("hello world"))
+	if _, err := rb.Write([]byte("hello world")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 	buf := make([]byte, 5)
 	n, err := rb.Peek(buf, 6)
 	if err != nil {
@@ -248,7 +260,9 @@ func TestRingBuffer_EmptyRead(t *testing.T) {
 
 func TestRingBuffer_FullWrite(t *testing.T) {
 	rb := NewRingBuffer(10)
-	rb.Write([]byte("0123456789"))
+	if _, err := rb.Write([]byte("0123456789")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 	_, err := rb.Write([]byte("X"))
 	if err != ErrFull {
 		t.Errorf("Write() full = %v, want %v", err, ErrFull)

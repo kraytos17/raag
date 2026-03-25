@@ -17,6 +17,7 @@ const (
 	EventPeerDisconnected EventType = "peer.disconnected"
 	EventPeerScoreUpdated EventType = "peer.score_updated"
 	EventScanStarted      EventType = "scan.started"
+	EventScanProgress     EventType = "scan.progress"
 	EventScanComplete     EventType = "scan.complete"
 	EventVolumeChanged    EventType = "volume.changed"
 	EventQueueUpdated     EventType = "queue.updated"
@@ -96,6 +97,14 @@ type PeerScoreUpdatedPayload struct {
 type ScanStartedPayload struct {
 	Paths     []string
 	StartTime time.Time
+}
+
+type ScanProgressPayload struct {
+	JobID       string
+	Scanned     int
+	Total       int
+	CurrentFile string
+	Phase       string
 }
 
 type ScanCompletePayload struct {

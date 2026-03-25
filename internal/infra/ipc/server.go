@@ -9,15 +9,19 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
 	p2p "github.com/p-society/raag/internal/infra/p2p"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
+	"golang.org/x/sync/semaphore"
 )
 
 type Server struct {
@@ -38,8 +42,11 @@ type Server struct {
 	peerRepo     PeerRepoHandler
 	queue        QueueHandler
 	playlistRepo app.PlaylistRepository
-	cbRegistry   *app.CBRegistry
 	p2pNode      *p2p.P2PNode
+
+	maxConns     *semaphore.Weighted
+	progressCb   func(jobID string, scanned int, total int, currentFile string, phase string)
+	progressCbMu sync.RWMutex
 }
 
 type ServerConfig struct {
@@ -50,7 +57,6 @@ type ServerConfig struct {
 	PeerRepo     PeerRepoHandler
 	Queue        QueueHandler
 	PlaylistRepo app.PlaylistRepository
-	CBRegistry   *app.CBRegistry
 	P2PNode      *p2p.P2PNode
 }
 
@@ -69,9 +75,6 @@ func (c *ServerConfig) Validate() error {
 	}
 	if c.Queue == nil {
 		return errors.New("queue handler is required")
-	}
-	if c.CBRegistry == nil {
-		return errors.New("circuit breaker registry is required")
 	}
 	return nil
 }
@@ -92,6 +95,7 @@ type PlaybackHandler interface {
 type ScannerHandler interface {
 	Scan(ctx context.Context) (int, error)
 	ScanIncremental(ctx context.Context) (added, modified, removed int, err error)
+	OnProgress(fn func(app.ScanProgress))
 }
 
 type SearchHandler interface {
@@ -132,9 +136,51 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 		peerRepo:     config.PeerRepo,
 		queue:        config.Queue,
 		playlistRepo: config.PlaylistRepo,
-		cbRegistry:   config.CBRegistry,
 		p2pNode:      config.P2PNode,
+		maxConns:     semaphore.NewWeighted(64),
 	}, nil
+}
+
+func (s *Server) SetProgressCallback(fn func(jobID string, scanned int, total int, currentFile string, phase string)) {
+	s.progressCbMu.Lock()
+	defer s.progressCbMu.Unlock()
+	s.progressCb = fn
+}
+
+func (s *Server) publishProgress(jobID string, scanned int, total int, currentFile string, phase string) {
+	s.progressCbMu.RLock()
+	cb := s.progressCb
+	s.progressCbMu.RUnlock()
+	if cb != nil {
+		cb(jobID, scanned, total, currentFile, phase)
+	}
+
+	progress := &pb.ScanProgress{
+		JobId:       jobID,
+		Scanned:     int32(scanned),
+		Total:       int32(total),
+		CurrentFile: currentFile,
+		Phase:       phase,
+	}
+	resp := &pb.Response{
+		Success: true,
+		JobId:   jobID,
+		Payload: &pb.Response_ScanProgress{ScanProgress: progress},
+	}
+	s.broadcast(resp)
+}
+
+func (s *Server) broadcast(resp *pb.Response) {
+	s.mu.Lock()
+	conns := make([]net.Conn, len(s.conns))
+	copy(conns, s.conns)
+	s.mu.Unlock()
+
+	for _, conn := range conns {
+		if err := wire.WriteMsg(conn, resp); err != nil {
+			slog.Debug("failed to broadcast to conn", "error", err)
+		}
+	}
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -179,13 +225,20 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			slog.Warn("accept failed", "error", err)
 			continue
 		}
+		if err := s.maxConns.Acquire(ctx, 1); err != nil {
+			_ = conn.Close()
+			continue
+		}
 
 		s.mu.Lock()
 		s.conns = append(s.conns, conn)
 		s.mu.Unlock()
 
 		s.wg.Add(1)
-		go s.handleConn(ctx, conn)
+		go func() {
+			defer s.maxConns.Release(1)
+			s.handleConn(ctx, conn)
+		}()
 	}
 }
 
@@ -214,9 +267,11 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		if err := wire.ReadMsg(conn, &req); err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
-				// If we time out mid-deserialization on a stream protocol,
-				// the next read would start from a corrupted offset.
+				slog.Debug("ipc: connection idle timeout", "remote", conn.RemoteAddr())
 				return
+			}
+			if !isConnClosed(err) {
+				slog.Debug("ipc: read error", "error", err)
 			}
 			return
 		}
@@ -233,57 +288,66 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 }
 
+//nolint:gocyclo // dispatch function has many cases for IPC requests
 func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
+	var resp *pb.Response
 	switch p := req.Payload.(type) {
 	case *pb.Request_Play:
-		return s.handlePlay(ctx, p.Play)
+		resp = s.handlePlay(ctx, p.Play)
 	case *pb.Request_Pause:
-		return s.handlePause(ctx)
+		resp = s.handlePause(ctx)
 	case *pb.Request_Resume:
-		return s.handleResume(ctx)
+		resp = s.handleResume(ctx)
 	case *pb.Request_Stop:
-		return s.handleStop(ctx)
+		resp = s.handleStop(ctx)
 	case *pb.Request_Next:
-		return s.handleNext(ctx)
+		resp = s.handleNext(ctx)
 	case *pb.Request_Prev:
-		return s.handlePrev(ctx)
+		resp = s.handlePrev(ctx)
 	case *pb.Request_Seek:
-		return s.handleSeek(ctx, p.Seek)
+		resp = s.handleSeek(ctx, p.Seek)
 	case *pb.Request_SetVolume:
-		return s.handleSetVolume(ctx, p.SetVolume)
+		resp = s.handleSetVolume(ctx, p.SetVolume)
 	case *pb.Request_QueueAdd:
-		return s.handleQueueAdd(ctx, p.QueueAdd)
+		resp = s.handleQueueAdd(ctx, p.QueueAdd)
 	case *pb.Request_QueueRemove:
-		return s.handleQueueRemove(p.QueueRemove)
+		resp = s.handleQueueRemove(p.QueueRemove)
 	case *pb.Request_QueueClear:
-		return s.handleQueueClear()
+		resp = s.handleQueueClear()
 	case *pb.Request_Search:
-		return s.handleSearch(ctx, p.Search)
+		resp = s.handleSearch(ctx, p.Search)
 	case *pb.Request_LibScan:
-		return s.handleLibScan(ctx, p.LibScan)
+		resp = s.handleLibScanAsync(p.LibScan)
 	case *pb.Request_ListPeers:
-		return s.handleListPeers(ctx)
+		resp = s.handleListPeers(ctx)
 	case *pb.Request_Status:
-		return s.handleStatus()
+		resp = s.handleStatus()
 	case *pb.Request_HealthCheck:
-		return s.handleHealthCheck()
+		resp = s.handleHealthCheck()
 	case *pb.Request_CreatePlaylist:
-		return s.handleCreatePlaylist(ctx, p.CreatePlaylist)
+		resp = s.handleCreatePlaylist(ctx, p.CreatePlaylist)
 	case *pb.Request_GetPlaylist:
-		return s.handleGetPlaylist(ctx, p.GetPlaylist)
+		resp = s.handleGetPlaylist(ctx, p.GetPlaylist)
 	case *pb.Request_ListPlaylists:
-		return s.handleListPlaylists(ctx)
+		resp = s.handleListPlaylists(ctx)
 	case *pb.Request_AddToPlaylist:
-		return s.handleAddToPlaylist(ctx, p.AddToPlaylist)
+		resp = s.handleAddToPlaylist(ctx, p.AddToPlaylist)
 	case *pb.Request_GetTrack:
-		return s.handleGetTrack(ctx, p.GetTrack)
+		resp = s.handleGetTrack(ctx, p.GetTrack)
 	case *pb.Request_GetTrackByPath:
-		return s.handleGetTrackByPath(ctx, p.GetTrackByPath)
+		resp = s.handleGetTrackByPath(ctx, p.GetTrackByPath)
 	case *pb.Request_NetworkStatus:
-		return s.handleNetworkStatus()
+		resp = s.handleNetworkStatus()
+	case *pb.Request_BanPeer:
+		resp = s.handleBanPeer(p.BanPeer)
+	case *pb.Request_UnbanPeer:
+		resp = s.handleUnbanPeer(p.UnbanPeer)
 	default:
-		return &pb.Response{Success: false, Error: "unknown request type"}
+		resp = &pb.Response{Success: false, Error: "unknown request type"}
 	}
+
+	resp.RequestId = req.RequestId
+	return resp
 }
 
 func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Response {
@@ -410,20 +474,33 @@ func (s *Server) handleSearch(ctx context.Context, req *pb.SearchRequest) *pb.Re
 	}
 }
 
-func (s *Server) handleLibScan(ctx context.Context, req *pb.LibScanRequest) *pb.Response {
-	if req.Incremental {
-		added, modified, removed, err := s.scanner.ScanIncremental(ctx)
-		if err != nil {
-			return &pb.Response{Success: false, Error: err.Error()}
+func (s *Server) handleLibScanAsync(req *pb.LibScanRequest) *pb.Response {
+	jobID := uuid.New().String()
+	s.scanner.OnProgress(func(p app.ScanProgress) {
+		s.publishProgress(jobID, p.Scanned, p.Total, p.CurrentFile, string(p.Phase))
+	})
+
+	go func() {
+		scanCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		if req.Incremental {
+			added, modified, removed, err := s.scanner.ScanIncremental(scanCtx)
+			if err != nil {
+				slog.Error("background scan failed", "err", err)
+				return
+			}
+			slog.Info("incremental scan complete", "added", added, "modified", modified, "removed", removed)
+		} else {
+			_, err := s.scanner.Scan(scanCtx)
+			if err != nil {
+				slog.Error("background scan failed", "err", err)
+				return
+			}
 		}
-		slog.Info("incremental scan complete", "added", added, "modified", modified, "removed", removed)
-	} else {
-		_, err := s.scanner.Scan(ctx)
-		if err != nil {
-			return &pb.Response{Success: false, Error: err.Error()}
-		}
-	}
-	return &pb.Response{Success: true}
+		s.publishProgress(jobID, 0, 0, "", "complete")
+	}()
+	return &pb.Response{Success: true, JobId: jobID}
 }
 
 func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
@@ -463,18 +540,71 @@ func (s *Server) handleNetworkStatus() *pb.Response {
 			addrs = append(addrs, a.String())
 		}
 		connectedPeers = append(connectedPeers, &pb.ConnectedPeer{
-			PeerId: p.ID.String(),
-			Addrs:  addrs,
+			PeerId:   p.ID.String(),
+			Addrs:    addrs,
+			Dialable: true,
+		})
+	}
+
+	var discoveredPeers []*pb.ConnectedPeer
+	for _, p := range info.DiscoveredPeers {
+		ps := s.p2pNode.Host().Peerstore().PeerInfo(p.ID)
+		dialable := len(ps.Addrs) > 0
+
+		var maddrs []string
+		if dialable {
+			for _, a := range ps.Addrs {
+				maddrs = append(maddrs, a.String())
+			}
+		} else {
+			for _, a := range p.Addrs {
+				maddrs = append(maddrs, a.String())
+			}
+		}
+
+		discoveredPeers = append(discoveredPeers, &pb.ConnectedPeer{
+			PeerId:   p.ID.String(),
+			Addrs:    maddrs,
+			Dialable: dialable,
 		})
 	}
 
 	return &pb.Response{
 		Success: true,
 		Payload: &pb.Response_NetworkStatus{NetworkStatus: &pb.NetworkStatusResponse{
-			PeerId:         info.PeerID,
-			ListenAddrs:    info.ListenAddrs,
-			ConnectedPeers: connectedPeers,
+			PeerId:          info.PeerID,
+			ListenAddrs:     info.ListenAddrs,
+			ConnectedPeers:  connectedPeers,
+			DiscoveredPeers: discoveredPeers,
 		}},
+	}
+}
+
+func (s *Server) handleBanPeer(req *pb.BanPeerRequest) *pb.Response {
+	if s.p2pNode == nil {
+		return &pb.Response{
+			Success: false,
+			Error:   "P2P is not enabled",
+		}
+	}
+	s.p2pNode.BanPeer(peer.ID(req.PeerId))
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_BanPeer{},
+	}
+}
+
+func (s *Server) handleUnbanPeer(req *pb.UnbanPeerRequest) *pb.Response {
+	if s.p2pNode == nil {
+		return &pb.Response{
+			Success: false,
+			Error:   "P2P is not enabled",
+		}
+	}
+	s.p2pNode.UnbanPeer(peer.ID(req.PeerId))
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_UnbanPeer{},
 	}
 }
 
@@ -520,7 +650,15 @@ func (s *Server) handleCreatePlaylist(ctx context.Context, req *pb.CreatePlaylis
 	if err := s.playlistRepo.Save(ctx, playlist); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
-	return &pb.Response{Success: true}
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_CreatePlaylist{
+			CreatePlaylist: &pb.CreatePlaylistResponse{
+				PlaylistId: string(playlist.ID),
+				Name:       playlist.Name,
+			},
+		},
+	}
 }
 
 func (s *Server) handleGetPlaylist(ctx context.Context, req *pb.GetPlaylistRequest) *pb.Response {
@@ -572,7 +710,15 @@ func (s *Server) handleAddToPlaylist(ctx context.Context, req *pb.AddToPlaylistR
 	if err := s.playlistRepo.Save(ctx, playlist); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
-	return &pb.Response{Success: true}
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_AddToPlaylist{
+			AddToPlaylist: &pb.AddToPlaylistResponse{
+				PlaylistId: string(playlist.ID),
+				TrackCount: int32(playlist.TrackCount()),
+			},
+		},
+	}
 }
 
 func (s *Server) handleGetTrack(ctx context.Context, req *pb.GetTrackRequest) *pb.Response {
@@ -641,6 +787,14 @@ func (s *Server) isListenerClosed(err error) bool {
 		return opErr.Op == "accept"
 	}
 	return false
+}
+
+func isConnClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "use of closed network connection") ||
+		errors.Is(err, net.ErrClosed)
 }
 
 type ServerComponent struct {

@@ -8,6 +8,7 @@ import (
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 )
@@ -15,47 +16,84 @@ import (
 type PeerHandler func(peer.AddrInfo)
 
 type Notifee struct {
-	host       host.Host
-	handlePeer PeerHandler
-	mu         sync.Mutex
+	host         host.Host
+	onDiscovered PeerHandler
+	onConnected  PeerHandler
+	mu           sync.Mutex
+	done         <-chan struct{}
+	sem          chan struct{}
 }
 
 func (n *Notifee) HandlePeerFound(pi peer.AddrInfo) {
 	if pi.ID == n.host.ID() {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := n.host.Connect(ctx, pi); err != nil {
-		slog.Warn("mDNS: failed to connect to peer", "peer", pi.ID, "err", err)
+	if n.host.Network().Connectedness(pi.ID) == network.Connected {
 		return
 	}
 
+	select {
+	case <-n.done:
+		return
+	default:
+	}
+
 	n.mu.Lock()
-	handler := n.handlePeer
+	onDiscovered := n.onDiscovered
+	onConnected := n.onConnected
 	n.mu.Unlock()
 
-	slog.Info("mDNS: peer discovered and connected", "peer", pi.ID)
-	handler(pi)
+	if onDiscovered != nil {
+		onDiscovered(pi)
+	}
+	select {
+	case n.sem <- struct{}{}:
+		go func() {
+			defer func() { <-n.sem }()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := n.host.Connect(ctx, pi); err != nil {
+				slog.Warn("mDNS: peer connection failed", "peer", pi.ID, "err", err)
+				return
+			}
+
+			slog.Info("mDNS: peer discovered and connected", "peer", pi.ID)
+			if onConnected != nil {
+				onConnected(pi)
+			}
+		}()
+	default:
+		slog.Debug("mDNS: connection semaphore full, skipping peer", "peer", pi.ID)
+	}
 }
 
 type MdnsDiscovery struct {
+	host        host.Host
 	service     mdns.Service
 	notifee     *Notifee
 	mu          sync.Mutex
 	started     bool
 	serviceName string
+	done        chan struct{}
 }
 
-func NewMdnsDiscovery(h host.Host, serviceName string, onPeer PeerHandler) *MdnsDiscovery {
-	n := &Notifee{host: h, handlePeer: onPeer}
-	svc := mdns.NewMdnsService(h, serviceName, n)
+func NewMdnsDiscovery(done <-chan struct{}, h host.Host, serviceName string, onPeer PeerHandler) *MdnsDiscovery {
+	n := &Notifee{host: h, onConnected: onPeer, done: done}
 	return &MdnsDiscovery{
-		service:     svc,
+		host:        h,
 		notifee:     n,
 		serviceName: serviceName,
+		done:        make(chan struct{}),
+	}
+}
+
+func NewMdnsDiscoveryWithHandlers(done <-chan struct{}, h host.Host, serviceName string, onDiscovered PeerHandler, onConnected PeerHandler) *MdnsDiscovery {
+	n := &Notifee{host: h, onDiscovered: onDiscovered, onConnected: onConnected, done: done, sem: make(chan struct{}, 10)}
+	return &MdnsDiscovery{
+		host:        h,
+		notifee:     n,
+		serviceName: serviceName,
+		done:        make(chan struct{}),
 	}
 }
 
@@ -65,6 +103,9 @@ func (m *MdnsDiscovery) Start() error {
 
 	if m.started {
 		return nil
+	}
+	if m.service == nil {
+		m.service = mdns.NewMdnsService(m.host, m.serviceName, m.notifee)
 	}
 	if err := m.service.Start(); err != nil {
 		return err
@@ -76,7 +117,15 @@ func (m *MdnsDiscovery) Start() error {
 }
 
 func (m *MdnsDiscovery) Close() error {
-	return m.service.Close()
+	close(m.done)
+
+	m.mu.Lock()
+	svc := m.service
+	m.mu.Unlock()
+	if svc == nil {
+		return nil
+	}
+	return svc.Close()
 }
 
 type PeerCache struct {

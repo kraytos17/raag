@@ -665,18 +665,33 @@ func (idx *inmemoryIndex) Rebuild(ctx context.Context, repo LibraryRepository) e
 		return err
 	}
 
+	tempIdx := &inmemoryIndex{
+		terms:         make(map[string][]domain.TrackID),
+		termDF:        make(map[string]int),
+		termKeys:      make([]string, 0),
+		trigram:       make(map[string][]domain.TrackID),
+		trackToks:     make(map[domain.TrackID][]string),
+		trackTris:     make(map[domain.TrackID][]string),
+		trackTriCount: make(map[domain.TrackID]int),
+		charIndex:     make(map[rune][]string),
+	}
+	if err := tempIdx.IndexBatch(ctx, tracks); err != nil {
+		return err
+	}
+
 	idx.mu.Lock()
-	idx.terms = make(map[string][]domain.TrackID)
-	idx.termDF = make(map[string]int)
-	idx.termKeys = make([]string, 0)
-	idx.trigram = make(map[string][]domain.TrackID)
-	idx.trackToks = make(map[domain.TrackID][]string)
-	idx.trackTris = make(map[domain.TrackID][]string)
-	idx.trackTriCount = make(map[domain.TrackID]int)
-	idx.charIndex = make(map[rune][]string)
+	idx.terms = tempIdx.terms
+	idx.termDF = tempIdx.termDF
+	idx.termKeys = tempIdx.termKeys
+	idx.trigram = tempIdx.trigram
+	idx.trackToks = tempIdx.trackToks
+	idx.trackTris = tempIdx.trackTris
+	idx.trackTriCount = tempIdx.trackTriCount
+	idx.charIndex = tempIdx.charIndex
 	idx.lastUpdated.Store(time.Now().Unix())
 	idx.mu.Unlock()
-	return idx.IndexBatch(ctx, tracks)
+
+	return nil
 }
 
 func tokenize(s string) []string {

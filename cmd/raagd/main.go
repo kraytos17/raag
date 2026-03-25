@@ -25,11 +25,11 @@ import (
 
 func main() {
 	cfg, skipScan := loadConfig()
-	database, libraryRepo, p2pNode := initializeServices(cfg)
-	runDaemon(cfg, database, libraryRepo, p2pNode, skipScan)
+	database, libraryRepo, p2pNode, p2pEnabled := initializeServices(cfg)
+	runDaemon(cfg, database, libraryRepo, p2pNode, p2pEnabled, skipScan)
 }
 
-func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode) {
+func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool) {
 	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
 	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
 	if err != nil {
@@ -44,22 +44,31 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		os.Exit(1)
 	}
 
+	enabled := cfg.P2P.Enabled
+	if !enabled {
+		return database, libraryRepo, nil, false
+	}
+
 	p2pNode, err := p2p.NewP2PNode(p2p.P2PNodeConfig{
 		DataDir:         cfg.Daemon.DataDir,
 		ListenAddrs:     cfg.P2P.ListenAddrs,
-		AnnounceAddrs:   nil,
+		AnnounceAddrs:   cfg.P2P.AnnounceAddrs,
 		BootstrapPeers:  cfg.P2P.BootstrapPeers,
 		MdnsServiceName: cfg.P2P.MDNSServiceTag,
 		ShareManifest:   cfg.Privacy.ShareLibraryManifest,
 		ConnMgrLowMark:  cfg.P2P.ConnMgrLowMark,
 		ConnMgrHighMark: cfg.P2P.ConnMgrHighMark,
 		ConnMgrGrace:    cfg.P2P.ConnMgrGrace,
+		LANOnly:         cfg.P2P.LANOnly,
+		MaxKnownPeers:   cfg.P2P.MaxKnownPeers,
+		ChunkSize:       cfg.P2P.ChunkSize,
+		PeerDataTTL:     cfg.P2P.PeerDataTTL,
 	}, libraryRepo)
 	if err != nil {
 		slog.Error("failed to create P2P node", "error", err)
-		return database, libraryRepo, nil
+		return database, libraryRepo, nil, false
 	}
-	return database, libraryRepo, p2pNode
+	return database, libraryRepo, p2pNode, true
 }
 
 func loadConfig() (*config.Config, bool) {
@@ -68,7 +77,7 @@ func loadConfig() (*config.Config, bool) {
 	socketPath := flag.String("socket", "", "IPC socket path (overrides config)")
 	dataDir := flag.String("data-dir", "", "Data directory (overrides config)")
 	noScan := flag.Bool("no-scan", false, "Skip library scan on startup")
-	p2pEnabled := flag.Bool("p2p", false, "Enable P2P networking (overrides config)")
+	p2pFlag := flag.Bool("p2p", false, "Enable P2P networking (use --p2p=false to disable)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -108,9 +117,7 @@ func loadConfig() (*config.Config, bool) {
 		cfg.Daemon.DataDir = config.ExpandHome(*dataDir)
 	}
 	if flag.Lookup("p2p") != nil && flag.Parsed() {
-		if *p2pEnabled {
-			cfg.P2P.Enabled = true
-		}
+		cfg.P2P.Enabled = *p2pFlag
 	}
 
 	slog.SetDefault(observability.NewLogger(observability.Config{
@@ -120,7 +127,7 @@ func loadConfig() (*config.Config, bool) {
 	return cfg, *noScan
 }
 
-func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, p2pNode *p2p.P2PNode, skipScan bool) {
+func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, p2pNode *p2p.P2PNode, p2pEnabled bool, skipScan bool) {
 	bus := events.New()
 	searchIndex := app.NewSearchIndex(libraryRepo)
 	peerRepo := db.NewPeerRepo(database)
@@ -128,27 +135,26 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	database.StartHealthCheck(10*time.Second, func() {
 		slog.Error("database directory deleted, initiating shutdown")
 		bus.Close()
+		if cfg.Daemon.SocketPath != "" {
+			os.Remove(cfg.Daemon.SocketPath)
+		}
 		os.Exit(1)
 	})
-
-	if p2pNode != nil {
-		if err := p2pNode.Start(context.Background(), bus); err != nil {
-			slog.Warn("failed to start P2P node", "error", err)
-		}
-	}
 
 	scanner := app.NewLibraryScanner(libraryRepo, libraryRepo, searchIndex, bus, cfg.Library.Paths)
 	scanner.SetDuplicateCheck(func(ctx context.Context, hash string, trackID domain.TrackID, path string) (domain.TrackID, bool, bool, error) {
 		return duplicateDetector.CheckDuplicate(ctx, hash, trackID, path)
 	})
 
+	scanner.EnableHashing(2)
 	searchService := app.NewSearchService(searchIndex, libraryRepo)
 
 	var resolver app.Resolver
-	if cfg.P2P.Enabled && p2pNode != nil {
+	var p2pNodeStarted bool
+	if p2pEnabled && p2pNode != nil {
 		p2pResolver := p2p.NewP2PResolverAdapter(p2pNode.Resolver())
 		resolver = app.NewMultiSourceResolver(libraryRepo, p2pResolver)
-		slog.Info("P2P streaming enabled", "peer_id", p2pNode.ID())
+		p2pNodeStarted = true
 	} else {
 		resolver = app.NewLocalResolver(libraryRepo)
 	}
@@ -157,17 +163,6 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	queue := audio.NewQueue()
 	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolver, bus)
 	playback.SetQueue(queue)
-	cbThreshold := cfg.P2P.CBFailureThreshold
-	if cbThreshold <= 0 {
-		cbThreshold = 5
-	}
-
-	cbCooldown := cfg.P2P.CBCooldown
-	if cbCooldown <= 0 {
-		cbCooldown = time.Minute
-	}
-
-	cbRegistry := app.NewCBRegistry(cbThreshold, cbCooldown)
 	ipcServer, err := ipc.NewServer(cfg.Daemon.SocketPath, ipc.ServerConfig{
 		Playback:    playback,
 		Scanner:     scanner,
@@ -175,7 +170,6 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		LibraryRepo: libraryRepo,
 		PeerRepo:    peerRepo,
 		Queue:       queue,
-		CBRegistry:  cbRegistry,
 		P2PNode:     p2pNode,
 	})
 	if err != nil {
@@ -186,12 +180,24 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 
 	lc := app.NewLifecycleManager()
 	if err := lc.Register(scanner); err != nil {
-		slog.Error("failed to register component", "error", err)
+		slog.Error("failed to register scanner", "error", err)
 		_ = database.Close()
 		os.Exit(1)
 	}
+	if err := lc.Register(app.NewPlayerComponent(player, "player")); err != nil {
+		slog.Error("failed to register player", "error", err)
+		_ = database.Close()
+		os.Exit(1)
+	}
+	if p2pNodeStarted && p2pNode != nil {
+		if err := lc.Register(app.NewP2PComponent(p2pNode, bus, "p2p")); err != nil {
+			slog.Error("failed to register p2p", "error", err)
+			_ = database.Close()
+			os.Exit(1)
+		}
+	}
 	if err := lc.Register(ipc.AsComponent(ipcServer)); err != nil {
-		slog.Error("failed to register component", "error", err)
+		slog.Error("failed to register ipc server", "error", err)
 		_ = database.Close()
 		os.Exit(1)
 	}
@@ -200,10 +206,19 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		_ = database.Close()
 		os.Exit(1)
 	}
+	if p2pNodeStarted && p2pNode != nil {
+		slog.Info("P2P streaming enabled", "peer_id", p2pNode.ID())
+	}
+
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	if cfg.Library.ScanOnStart && !skipScan {
 		slog.Info("starting library scan", "paths", cfg.Library.Paths)
 		go func() {
-			if _, err := scanner.Scan(context.Background()); err != nil {
+			if _, err := scanner.Scan(sigCtx); err != nil {
+				if sigCtx.Err() != nil {
+					slog.Info("library scan canceled due to shutdown")
+					return
+				}
 				slog.Error("library scan failed", "error", err)
 			}
 			if dups := duplicateDetector.GetDuplicates(); len(dups) > 0 {
@@ -221,37 +236,31 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		"volume", cfg.Playback.Volume,
 	)
 
-	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	<-sigCtx.Done()
+	if cfg.P2P.Enabled {
+		slog.Info("P2P networking enabled",
+			"ports", "7844/TCP+UDP, 7845/UDP",
+			"note", "ensure firewall allows inbound connections on these ports for LAN discovery",
+		)
+	}
 
+	<-sigCtx.Done()
 	slog.Info("shutting down", "reason", context.Cause(sigCtx))
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := player.Stop(shutdownCtx); err != nil {
-		slog.Warn("player stop error", "error", err)
-	}
-	if p2pNode != nil {
-		if err := p2pNode.Stop(shutdownCtx); err != nil {
-			slog.Warn("P2P node stop error", "error", err)
-		}
-	}
+	defer cancel()
+	defer stop()
+
 	if err := lc.StopAll(shutdownCtx); err != nil {
 		slog.Warn("lifecycle stop error", "error", err)
 	}
 
 	bus.Close()
 	slog.Info("closing database...")
-	go func() {
-		if err := database.Close(); err != nil {
-			slog.Error("database close failed", "error", err)
-		} else {
-			slog.Info("database closed")
-		}
-	}()
-
-	cancel()
-	stop()
+	if err := database.CloseWithContext(shutdownCtx); err != nil {
+		slog.Error("database close failed", "error", err)
+	} else {
+		slog.Info("database closed")
+	}
 	slog.Info("raag daemon stopped")
-	os.Exit(0)
 }
 
 func usage() {
