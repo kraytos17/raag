@@ -28,7 +28,7 @@ concurrency:
 env:
   GO_VERSION: "1.26.0"
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/raag-tracker
+  IMAGE_NAME: ${{ github.repository }}/raag
   DOCKER_BUILDKIT: 1
 
 jobs:
@@ -222,7 +222,7 @@ jobs:
       - name: Build for CodeQL
         run: |
           go build -o raag-analysis ./cmd/raag
-          go build -o tracker-analysis ./tracker/cmd/tracker
+          go build -o raagd-analysis ./cmd/raagd
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
@@ -288,8 +288,8 @@ jobs:
           echo "Building raag..."
           go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o bin/raag ./cmd/raag
 
-          echo "Building tracker..."
-          go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o bin/tracker ./tracker/cmd/tracker
+          echo "Building raagd..."
+          go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o bin/raagd ./cmd/raagd
 
       - name: Verify binaries
         run: |
@@ -297,9 +297,9 @@ jobs:
           file bin/raag
           bin/raag --help || true
 
-          echo "Verifying tracker binary:"
-          file bin/tracker
-          bin/tracker --help || true
+          echo "Verifying raagd binary:"
+          file bin/raagd
+          bin/raagd --help || true
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
@@ -312,7 +312,6 @@ jobs:
     name: Docker Build & Security
     runs-on: ubuntu-latest
     needs: build
-    # Fix: wrapped first block in parens to prevent || precedence bug
     if: |
       (
         github.event_name != 'pull_request' &&
@@ -375,7 +374,6 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          # Fix: metadata-action produces "sha-<short_sha>", not raw github.sha
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           format: sarif
           output: trivy-results.sarif
@@ -392,7 +390,6 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          # Fix: same sha- prefix fix as Trivy above
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           format: spdx-json
           output-file: sbom.spdx.json
@@ -499,7 +496,6 @@ jobs:
       - name: Import GPG key
         id: gpg
         if: steps.check_gpg.outputs.has_gpg == 'true'
-        # Fix: was "ghaaction-import-gpg" (typo) — correct name is "ghaction-import-gpg"
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}

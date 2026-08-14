@@ -117,7 +117,7 @@ func TestPlaybackController_SeekFailure_RollsBackToPaused(t *testing.T) {
 	bus := events.New()
 	defer bus.Close()
 
-	track := &domain.Track{ID: domain.TrackID("t1"), Path: "/tmp/t1.mp3"}
+	track := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path}
 	repo := &testLibraryRepo{track: track}
 	seekErr := errors.New("seek failed")
 	player := &testPlayer{seekErr: seekErr, pos: 2 * time.Second}
@@ -143,7 +143,7 @@ func TestPlaybackController_SeekFailure_RollsBackToPlaying(t *testing.T) {
 	bus := events.New()
 	defer bus.Close()
 
-	track := &domain.Track{ID: domain.TrackID("t1"), Path: "/tmp/t1.mp3"}
+	track := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path}
 	repo := &testLibraryRepo{track: track}
 	seekErr := errors.New("seek failed")
 	player := &testPlayer{seekErr: seekErr, pos: 2 * time.Second}
@@ -209,7 +209,7 @@ func TestPlaybackController_Play_LocalSource_UsesPlay(t *testing.T) {
 	bus := events.New()
 	defer bus.Close()
 
-	track := &domain.Track{ID: domain.TrackID("t1"), Path: "/tmp/t1.mp3", MimeType: "audio/mpeg"}
+	track := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
 	repo := &testLibraryRepo{track: track}
 	player := &testPlayer{}
 	resolver := &testResolver{
@@ -237,7 +237,7 @@ func TestPlaybackController_Play_P2PSource_UsesPlayStreaming(t *testing.T) {
 	bus := events.New()
 	defer bus.Close()
 
-	track := &domain.Track{ID: domain.TrackID("t1"), Path: "/tmp/t1.mp3", MimeType: "audio/mpeg"}
+	track := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
 	repo := &testLibraryRepo{track: track}
 	p2pPlayed := false
 
@@ -268,7 +268,7 @@ func TestPlaybackController_Play_ResolvesTrackFromResolved(t *testing.T) {
 	bus := events.New()
 	defer bus.Close()
 
-	resolvedTrack := &domain.Track{ID: domain.TrackID("remote1"), Title: "Remote Song", MimeType: "audio/mpeg"}
+	resolvedTrack := &domain.Track{ID: domain.TrackID("remote1"), Title: "Remote Song", MimeType: mimeTypeMPEG}
 	repo := &testLibraryRepo{}
 	player := &testPlayer{}
 	resolver := &testResolver{

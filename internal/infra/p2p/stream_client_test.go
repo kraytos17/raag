@@ -15,7 +15,7 @@ import (
 func TestChunkedReader_CloseSetsClosed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		ctx:         ctx,
 		fetchCancel: cancel,
@@ -35,7 +35,7 @@ func TestChunkedReader_CloseSetsClosed(t *testing.T) {
 func TestChunkedReader_ReadAfterClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		ctx:         ctx,
 		fetchCancel: cancel,
@@ -53,7 +53,7 @@ func TestChunkedReader_ReadAfterClose(t *testing.T) {
 func TestChunkedReader_DoubleClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		ctx:         ctx,
 		fetchCancel: cancel,
@@ -73,7 +73,7 @@ func TestChunkedReader_EOFWhenTotalSizeReached(t *testing.T) {
 	defer cancel()
 
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		totalSize:   10,
 		offset:      10, // already at end
@@ -93,7 +93,7 @@ func TestChunkedReader_ReadFromCurrentBuffer(t *testing.T) {
 	defer cancel()
 
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		current:     []byte("hello world"),
 		pos:         0,
@@ -128,7 +128,7 @@ func TestChunkedReader_ReadSmallBuffer(t *testing.T) {
 	defer cancel()
 
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		current:     []byte("abcdef"),
 		pos:         0,
@@ -164,7 +164,7 @@ func TestChunkedReader_ReadLargerThanCurrent(t *testing.T) {
 	defer cancel()
 
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		current:     []byte("short"),
 		pos:         0,
@@ -190,7 +190,7 @@ func TestChunkedReader_StartPrefetch_NothingLeft(t *testing.T) {
 	defer cancel()
 
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		totalSize:   100,
 		offset:      100, // at end
@@ -268,7 +268,7 @@ func TestPrefetchChannel_BufferedDelivery(t *testing.T) {
 func TestChunkedReader_ConcurrentCloseAndRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		ctx:         ctx,
 		fetchCancel: cancel,
@@ -305,7 +305,7 @@ func TestChunkedReader_ReadFromAheadChannel(t *testing.T) {
 	defer cancel()
 
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		ctx:         ctx,
 		fetchCancel: cancel,
@@ -340,7 +340,7 @@ func TestChunkedReader_ReadFromAheadChannel_Error(t *testing.T) {
 	defer cancel()
 
 	r := &chunkedReader{
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   1024,
 		ctx:         ctx,
 		fetchCancel: cancel,
@@ -378,7 +378,7 @@ func TestChunkedReader_ReadMultipleChunksFromAhead(t *testing.T) {
 
 	r := &chunkedReader{
 		client:      client,
-		trackID:     "test",
+		trackID:     testTrackID,
 		chunkSize:   5,
 		ctx:         ctx,
 		fetchCancel: cancel,
@@ -465,7 +465,7 @@ func TestNewStreamClient_GetTrack_ReturnschunkedReader(t *testing.T) {
 	pid := peer.ID("test-peer")
 
 	client := NewStreamClient(pid, pool, scorer)
-	reader, err := client.GetTrack(context.Background(), "track-1", "mp3", 320)
+	reader, err := client.GetTrack(context.Background(), track1ID, codecMP3, 320)
 	if err != nil {
 		t.Fatalf("GetTrack() error = %v", err)
 	}
@@ -477,11 +477,11 @@ func TestNewStreamClient_GetTrack_ReturnschunkedReader(t *testing.T) {
 	if !ok {
 		t.Fatal("GetTrack() reader is not *chunkedReader")
 	}
-	if cr.trackID != "track-1" {
-		t.Errorf("trackID = %q, want %q", cr.trackID, "track-1")
+	if cr.trackID != track1ID {
+		t.Errorf("trackID = %q, want %q", cr.trackID, track1ID)
 	}
-	if cr.codec != "mp3" {
-		t.Errorf("codec = %q, want %q", cr.codec, "mp3")
+	if cr.codec != codecMP3 {
+		t.Errorf("codec = %q, want %q", cr.codec, codecMP3)
 	}
 	if cr.bitrate != 320 {
 		t.Errorf("bitrate = %d, want 320", cr.bitrate)
@@ -500,7 +500,7 @@ func TestNewStreamClient_GetTrack_CloseCancelsContext(t *testing.T) {
 	pid := peer.ID("test-peer")
 
 	client := NewStreamClient(pid, pool, scorer)
-	reader, _ := client.GetTrack(context.Background(), "track-1", "", 0)
+	reader, _ := client.GetTrack(context.Background(), track1ID, "", 0)
 
 	cr := reader.(*chunkedReader)
 	reader.Close()
@@ -524,7 +524,7 @@ func TestChunkedReader_ConcurrentIndependentReaders(t *testing.T) {
 			defer cancel()
 
 			r := &chunkedReader{
-				trackID:     "test",
+				trackID:     testTrackID,
 				chunkSize:   1024,
 				current:     []byte("data for reader"),
 				pos:         0,

@@ -22,6 +22,8 @@ const (
 	DuplicateSkip DuplicateHandling = "skip"
 	DuplicateWarn DuplicateHandling = "warn"
 	DuplicateKeep DuplicateHandling = "keep"
+
+	musicDirName = "music"
 )
 
 type Config struct {
@@ -139,7 +141,7 @@ func GetDataDir() string {
 
 var commonMusicPaths = []string{
 	"Music",
-	"music",
+	musicDirName,
 	"Music Library",
 	"My Music",
 }

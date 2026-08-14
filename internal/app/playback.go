@@ -13,7 +13,7 @@ import (
 )
 
 type PlaybackController struct {
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	libraryRepo   LibraryRepository
 	searchHandler SearchHandler
 	player        Player
@@ -25,6 +25,9 @@ type PlaybackController struct {
 	queue         Queue
 	advanceCancel context.CancelFunc
 	advanceGen    atomic.Int64
+
+	progressCb     func(positionMs, durationMs int64)
+	progressTicker *time.Ticker
 }
 
 func NewPlaybackController(
@@ -87,6 +90,7 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	}
 
 	c.startAdvanceWatcher(ctx)
+	c.startProgressTicker(ctx)
 	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
 		TrackID:  track.ID,
 		Title:    track.Title,
@@ -159,6 +163,10 @@ func (c *PlaybackController) Stop(ctx context.Context) error {
 	if c.advanceCancel != nil {
 		c.advanceCancel()
 		c.advanceCancel = nil
+	}
+	if c.progressTicker != nil {
+		c.progressTicker.Stop()
+		c.progressTicker = nil
 	}
 
 	state := c.fsm.State()
@@ -302,4 +310,52 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 
 func (c *PlaybackController) search(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
 	return c.searchHandler.Search(ctx, query, limit)
+}
+
+func (c *PlaybackController) OnProgress(callback func(positionMs, durationMs int64)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.progressCb = callback
+}
+
+func (c *PlaybackController) startProgressTicker(ctx context.Context) {
+	c.mu.Lock()
+	if c.progressTicker != nil {
+		c.progressTicker.Stop()
+	}
+
+	c.progressTicker = time.NewTicker(100 * time.Millisecond)
+	c.mu.Unlock()
+	go func() {
+		for {
+			select {
+			case <-c.progressTicker.C:
+				state := c.fsm.State()
+				if state != domain.PlayerStatePlaying {
+					continue
+				}
+
+				pos := c.player.GetPosition()
+				var durMs int64
+				c.mu.RLock()
+				if c.currentTrack != nil {
+					durMs = c.currentTrack.Duration().Milliseconds()
+				}
+
+				cb := c.progressCb
+				c.mu.RUnlock()
+				if cb != nil {
+					cb(pos.Milliseconds(), durMs)
+				}
+			case <-ctx.Done():
+				c.mu.Lock()
+				if c.progressTicker != nil {
+					c.progressTicker.Stop()
+					c.progressTicker = nil
+				}
+				c.mu.Unlock()
+				return
+			}
+		}
+	}()
 }

@@ -21,6 +21,8 @@ import (
 	pb "github.com/p-society/raag/proto/gen"
 )
 
+const codecMP3 = "mp3"
+
 type P2PNode struct {
 	host            host.Host
 	gater           *PeerGater
@@ -764,7 +766,7 @@ func (pm *peerManager) GetBestCodec(pid peer.ID, preferredCodec string) string {
 	defer pm.mu.RUnlock()
 
 	if pc, ok := pm.caps[pid]; ok && time.Since(pc.addedAt) < pm.ttl {
-		for _, codec := range []string{preferredCodec, "opus", "mp3", "flac"} {
+		for _, codec := range []string{preferredCodec, "opus", codecMP3, "flac"} {
 			if slices.Contains(pc.data.SupportedCodecs, codec) {
 				return codec
 			}
@@ -772,7 +774,7 @@ func (pm *peerManager) GetBestCodec(pid peer.ID, preferredCodec string) string {
 	} else if ok {
 		delete(pm.caps, pid)
 	}
-	return "mp3"
+	return codecMP3
 }
 
 func (pm *peerManager) HasTrack(pid peer.ID, trackID string) bool {

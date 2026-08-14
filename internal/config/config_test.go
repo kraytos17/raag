@@ -7,6 +7,11 @@ import (
 	"testing"
 )
 
+const (
+	musicRootPath = "/music"
+	absolutePath  = "/absolute/path"
+)
+
 func TestConfig_Validate_Valid(t *testing.T) {
 	cfg := &Config{
 		P2P: P2PConfig{
@@ -106,7 +111,7 @@ func TestConfig_ValidateForStart_NoPath(t *testing.T) {
 func TestConfig_ValidateForStart_WithPath(t *testing.T) {
 	cfg := &Config{
 		Library: LibraryConfig{
-			Paths: []string{"/music"},
+			Paths: []string{musicRootPath},
 		},
 		P2P: P2PConfig{
 			MaxPeers: 20,
@@ -133,7 +138,7 @@ func TestExpandHome_Basic(t *testing.T) {
 	}{
 		{"tilde home", "~/Music", filepath.Join(home, "Music")},
 		{"tilde subdir", "~/Music/Rock", filepath.Join(home, "Music", "Rock")},
-		{"absolute path", "/music", "/music"},
+		{"absolute path", musicRootPath, musicRootPath},
 		{"relative path", "music", "music"},
 	}
 
@@ -152,9 +157,9 @@ func TestExpandHome_Absolute(t *testing.T) {
 		name  string
 		input string
 	}{
-		{"/music", "/music"},
+		{musicRootPath, musicRootPath},
 		{"/home/user/Music", "/home/user/Music"},
-		{"/absolute/path", "/absolute/path"},
+		{absolutePath, absolutePath},
 	}
 
 	for _, tt := range tests {
@@ -232,7 +237,7 @@ func TestConfig_ExpandPaths(t *testing.T) {
 			PidFile:    "~/pid",
 		},
 		Library: LibraryConfig{
-			Paths: []string{"~/Music", "/absolute/path"},
+			Paths: []string{"~/Music", absolutePath},
 		},
 	}
 

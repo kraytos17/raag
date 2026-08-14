@@ -1,12 +1,15 @@
 version: v2
-name: buf.build/p-society/raag
+modules:
+  - path: proto
+    name: buf.build/p-society/raag
 deps:
   - buf.build/googleapis/googleapis
 lint:
   use:
-    - DEFAULT
+    - STANDARD
   except:
     - PACKAGE_VERSION_SUFFIX
+    - PACKAGE_DIRECTORY_MATCH
 breaking:
   use:
     - FILE

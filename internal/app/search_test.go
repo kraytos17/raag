@@ -52,7 +52,7 @@ func TestSearchService_Search_EmptyIndex(t *testing.T) {
 	repo := &mockEmptyLibraryRepo{}
 	svc := NewSearchService(idx, repo)
 	ctx := context.Background()
-	results, err := svc.Search(ctx, "rock", 10)
+	results, err := svc.Search(ctx, rockQuery, 10)
 	if err != nil {
 		t.Errorf("Search() error = %v", err)
 	}
@@ -88,32 +88,32 @@ func TestSearchService_CalculateMatchScore(t *testing.T) {
 	}{
 		{
 			name:      "match title only",
-			query:     "rock",
-			track:     &domain.Track{Title: "Rock Song", Artist: "Band A", Album: "Album A"},
+			query:     rockQuery,
+			track:     &domain.Track{Title: rockSong, Artist: "Band A", Album: "Album A"},
 			wantScore: BoostTitle,
 		},
 		{
 			name:      "match artist only",
 			query:     "beatles",
-			track:     &domain.Track{Title: "Song", Artist: "Beatles", Album: "Album"},
+			track:     &domain.Track{Title: "Song", Artist: "Beatles", Album: albumToken},
 			wantScore: BoostArtist,
 		},
 		{
 			name:      "match album only",
 			query:     "abbey",
-			track:     &domain.Track{Title: "Song", Artist: "Band", Album: "Abbey Road"},
+			track:     &domain.Track{Title: "Song", Artist: bandToken, Album: "Abbey Road"},
 			wantScore: BoostAlbum,
 		},
 		{
 			name:      "match multiple fields",
-			query:     "rock",
-			track:     &domain.Track{Title: "Rock Song", Artist: "Rock Band", Album: "Rock Album"},
+			query:     rockQuery,
+			track:     &domain.Track{Title: rockSong, Artist: rockBand, Album: rockAlbum},
 			wantScore: BoostTitle + BoostArtist + BoostAlbum,
 		},
 		{
 			name:      "no match",
 			query:     "jazz",
-			track:     &domain.Track{Title: "Rock Song", Artist: "Rock Band", Album: "Rock Album"},
+			track:     &domain.Track{Title: rockSong, Artist: rockBand, Album: rockAlbum},
 			wantScore: 0,
 		},
 		{
@@ -194,13 +194,13 @@ func TestSearchService_CalculateRankScore(t *testing.T) {
 	svc := NewSearchService(idx, repo)
 
 	track := &domain.Track{
-		Title:     "Rock Song",
-		Artist:    "Rock Band",
-		Album:     "Rock Album",
+		Title:     rockSong,
+		Artist:    rockBand,
+		Album:     rockAlbum,
 		PlayCount: 10,
 	}
 
-	got := svc.calculateRankScore("rock", track)
+	got := svc.calculateRankScore(rockQuery, track)
 	matchScore := BoostTitle + BoostArtist + BoostAlbum
 	playScore := math.Log1p(10)
 	recencyScore := 0.5
@@ -244,9 +244,9 @@ func TestSearchService_Search_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	tracks := []*domain.Track{
-		{ID: domain.GenerateTrackID("/music/rock1.mp3"), Title: "Rock Song 1", Artist: "Rock Band", Album: "Rock Album"},
-		{ID: domain.GenerateTrackID("/music/rock2.mp3"), Title: "Rock Song 2", Artist: "Rock Band", Album: "Rock Album"},
-		{ID: domain.GenerateTrackID("/music/jazz1.mp3"), Title: "Jazz Song 1", Artist: "Jazz Band", Album: "Jazz Album"},
+		{ID: domain.GenerateTrackID("/music/rock1.mp3"), Title: "Rock Song 1", Artist: rockBand, Album: rockAlbum},
+		{ID: domain.GenerateTrackID("/music/rock2.mp3"), Title: "Rock Song 2", Artist: rockBand, Album: rockAlbum},
+		{ID: domain.GenerateTrackID("/music/jazz1.mp3"), Title: "Jazz Song 1", Artist: jazzBand, Album: jazzAlbum},
 	}
 
 	for _, track := range tracks {
@@ -254,7 +254,7 @@ func TestSearchService_Search_Integration(t *testing.T) {
 		repo.AddTrack(track)
 	}
 
-	results, err := svc.Search(ctx, "rock", 10)
+	results, err := svc.Search(ctx, rockQuery, 10)
 	if err != nil {
 		t.Errorf("Search() error = %v", err)
 	}

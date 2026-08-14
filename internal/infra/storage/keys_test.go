@@ -133,11 +133,11 @@ func TestNormalizeKey(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"lowercase", "abc", "abc"},
-		{"uppercase", "ABC", "abc"},
+		{"lowercase", abcHash, abcHash},
+		{"uppercase", "ABC", abcHash},
 		{"mixed", "AbC123", "abc123"},
 		{"with spaces", "hello world", "helloworld"},
-		{"special chars", "a!@#b$%c", "abc"},
+		{"special chars", "a!@#b$%c", abcHash},
 		{"numbers", "12345", "12345"},
 		{"empty", "", ""},
 	}

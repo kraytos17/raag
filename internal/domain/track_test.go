@@ -4,6 +4,8 @@ import (
 	"testing"
 )
 
+const songPath = "/path/to/song.mp3"
+
 func TestTrackID_Validate(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -25,8 +27,8 @@ func TestTrackID_Validate(t *testing.T) {
 }
 
 func TestGenerateTrackID(t *testing.T) {
-	id1 := GenerateTrackID("/path/to/song.mp3")
-	id2 := GenerateTrackID("/path/to/song.mp3")
+	id1 := GenerateTrackID(songPath)
+	id2 := GenerateTrackID(songPath)
 	if id1 != id2 {
 		t.Errorf("GenerateTrackID() should return same ID for same path")
 	}
@@ -41,12 +43,12 @@ func TestGenerateTrackID(t *testing.T) {
 }
 
 func TestNewTrack(t *testing.T) {
-	track := NewTrack("/path/to/song.mp3")
+	track := NewTrack(songPath)
 	if track.ID == "" {
 		t.Errorf("NewTrack() should generate TrackID")
 	}
-	if track.Path != "/path/to/song.mp3" {
-		t.Errorf("NewTrack() Path = %v, want %v", track.Path, "/path/to/song.mp3")
+	if track.Path != songPath {
+		t.Errorf("NewTrack() Path = %v, want %v", track.Path, songPath)
 	}
 	if track.AddedAt == 0 {
 		t.Errorf("NewTrack() should set AddedAt")
@@ -65,8 +67,8 @@ func TestTrack_Validate(t *testing.T) {
 		{
 			name: "valid track",
 			track: &Track{
-				ID:         GenerateTrackID("/path/to/song.mp3"),
-				Path:       "/path/to/song.mp3",
+				ID:         GenerateTrackID(songPath),
+				Path:       songPath,
 				DurationMs: 180000,
 			},
 			wantErr: false,
@@ -74,7 +76,7 @@ func TestTrack_Validate(t *testing.T) {
 		{
 			name: "empty path",
 			track: &Track{
-				ID:         GenerateTrackID("/path/to/song.mp3"),
+				ID:         GenerateTrackID(songPath),
 				Path:       "",
 				DurationMs: 180000,
 			},
@@ -83,8 +85,8 @@ func TestTrack_Validate(t *testing.T) {
 		{
 			name: "zero duration",
 			track: &Track{
-				ID:         GenerateTrackID("/path/to/song.mp3"),
-				Path:       "/path/to/song.mp3",
+				ID:         GenerateTrackID(songPath),
+				Path:       songPath,
 				DurationMs: 0,
 			},
 			wantErr: true,
@@ -102,7 +104,7 @@ func TestTrack_Validate(t *testing.T) {
 }
 
 func TestTrack_IncrementPlayCount(t *testing.T) {
-	track := NewTrack("/path/to/song.mp3")
+	track := NewTrack(songPath)
 	track.DurationMs = 180000
 	if track.PlayCount != 0 {
 		t.Errorf("Initial PlayCount should be 0")
@@ -118,7 +120,7 @@ func TestTrack_IncrementPlayCount(t *testing.T) {
 }
 
 func TestTrack_Duration(t *testing.T) {
-	track := NewTrack("/path/to/song.mp3")
+	track := NewTrack(songPath)
 	track.DurationMs = 180000
 
 	duration := track.Duration()

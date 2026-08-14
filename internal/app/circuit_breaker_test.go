@@ -8,6 +8,12 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
+const (
+	cbClosed   = "closed"
+	cbOpen     = "open"
+	cbHalfOpen = "half_open"
+)
+
 func TestCircuitBreaker_New(t *testing.T) {
 	peerID := domain.PeerID("test-peer")
 	cb := NewCircuitBreaker(peerID, 5, 30*time.Second)
@@ -290,9 +296,9 @@ func TestCircuitBreaker_Constants(t *testing.T) {
 		state domain.CBState
 		str   string
 	}{
-		{"closed", domain.CBStateClosed, "closed"},
-		{"open", domain.CBStateOpen, "open"},
-		{"half_open", domain.CBStateHalfOpen, "half_open"},
+		{cbClosed, domain.CBStateClosed, cbClosed},
+		{cbOpen, domain.CBStateOpen, cbOpen},
+		{cbHalfOpen, domain.CBStateHalfOpen, cbHalfOpen},
 	}
 
 	for _, tt := range tests {
