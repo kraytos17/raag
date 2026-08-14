@@ -88,8 +88,8 @@ func TestLibraryRepo_ListAll(t *testing.T) {
 
 	ctx := context.Background()
 	tracks := []*domain.Track{
-		{ID: domain.GenerateTrackID("/music/song1.mp3"), Path: "/music/song1.mp3", Title: "Song 1", DurationMs: 180000},
-		{ID: domain.GenerateTrackID("/music/song2.mp3"), Path: "/music/song2.mp3", Title: "Song 2", DurationMs: 200000},
+		{ID: domain.GenerateTrackID(song1Path), Path: song1Path, Title: "Song 1", DurationMs: 180000},
+		{ID: domain.GenerateTrackID(song2Path), Path: song2Path, Title: "Song 2", DurationMs: 200000},
 	}
 	for _, track := range tracks {
 		if err := repo.Save(ctx, track); err != nil {
@@ -170,8 +170,8 @@ func TestLibraryRepo_FileStats(t *testing.T) {
 
 	ctx := context.Background()
 	stats := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Size: 5000, Mtime: 1000},
-		"/music/song2.mp3": {Path: "/music/song2.mp3", Size: 6000, Mtime: 2000},
+		song1Path: {Path: song1Path, Size: 5000, Mtime: 1000},
+		song2Path: {Path: song2Path, Size: 6000, Mtime: 2000},
 	}
 	if err := repo.SaveFileStats(ctx, stats); err != nil {
 		t.Errorf("SaveFileStats() error = %v", err)

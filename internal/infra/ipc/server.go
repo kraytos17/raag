@@ -22,6 +22,12 @@ import (
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 	"golang.org/x/sync/semaphore"
+	"google.golang.org/protobuf/proto"
+)
+
+const (
+	errP2PNotEnabled        = "P2P is not enabled"
+	errPlaylistsUnavailable = "playlists not available"
 )
 
 type Server struct {
@@ -47,6 +53,8 @@ type Server struct {
 	maxConns     *semaphore.Weighted
 	progressCb   func(jobID string, scanned int, total int, currentFile string, phase string)
 	progressCbMu sync.RWMutex
+
+	subMgr *SubscriptionManager
 }
 
 type ServerConfig struct {
@@ -90,6 +98,7 @@ type PlaybackHandler interface {
 	GetState() domain.PlayerState
 	GetVolume() int
 	GetCurrentTrack() *domain.Track
+	OnProgress(callback func(positionMs, durationMs int64))
 }
 
 type ScannerHandler interface {
@@ -105,6 +114,7 @@ type SearchHandler interface {
 type LibraryRepoHandler interface {
 	FindByID(ctx context.Context, trackID domain.TrackID) (*domain.Track, error)
 	FindByPath(ctx context.Context, path string) (*domain.Track, error)
+	ListAll(ctx context.Context) ([]*domain.Track, error)
 }
 
 type PeerRepoHandler interface {
@@ -120,13 +130,14 @@ type QueueHandler interface {
 	Position() int
 	Next() *domain.Track
 	Previous() *domain.Track
+	Tracks() []*domain.Track
 }
 
 func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid server config: %w", err)
 	}
-	return &Server{
+	server := &Server{
 		socketPath:   socketPath,
 		done:         make(chan struct{}),
 		playback:     config.Playback,
@@ -138,13 +149,28 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 		playlistRepo: config.PlaylistRepo,
 		p2pNode:      config.P2PNode,
 		maxConns:     semaphore.NewWeighted(64),
-	}, nil
+		subMgr:       NewSubscriptionManager(),
+	}
+
+	if config.Playback != nil {
+		config.Playback.OnProgress(func(posMs, durMs int64) {
+			server.publishPlaybackProgress(posMs, durMs)
+		})
+	}
+	return server, nil
 }
 
 func (s *Server) SetProgressCallback(fn func(jobID string, scanned int, total int, currentFile string, phase string)) {
 	s.progressCbMu.Lock()
 	defer s.progressCbMu.Unlock()
 	s.progressCb = fn
+}
+
+// PublishEvent broadcasts an event to all subscribed clients
+func (s *Server) PublishEvent(eventType uint32, payload []byte) {
+	if s.subMgr != nil {
+		s.subMgr.Broadcast(eventType, payload)
+	}
 }
 
 func (s *Server) publishProgress(jobID string, scanned int, total int, currentFile string, phase string) {
@@ -181,6 +207,34 @@ func (s *Server) broadcast(resp *pb.Response) {
 			slog.Debug("failed to broadcast to conn", "error", err)
 		}
 	}
+}
+
+// publishPlaybackState broadcasts playback state change
+func (s *Server) publishPlaybackState(state string) {
+	s.PublishEvent(EventPlaybackState, []byte(state))
+}
+
+// publishTrackChanged broadcasts track change
+func (s *Server) publishTrackChanged(track *domain.Track) {
+	pbTrack := convert.TrackToProto(track)
+	data, _ := proto.Marshal(pbTrack)
+	s.PublishEvent(EventTrackChanged, data)
+}
+
+// publishPlaybackProgress broadcasts playback progress (lightweight)
+func (s *Server) publishPlaybackProgress(posMs, durMs int64) {
+	progress := &pb.ProgressEvent{
+		PositionMs: posMs,
+		DurationMs: durMs,
+	}
+	data, _ := proto.Marshal(progress)
+	s.PublishEvent(EventProgress, data)
+}
+
+// publishVolumeChange broadcasts volume change
+func (s *Server) publishVolumeChange(volume int32) {
+	data, _ := proto.Marshal(&pb.SetVolumeRequest{Volume: volume})
+	s.PublishEvent(EventVolumeChanged, data)
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -247,8 +301,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer func() {
 		_ = conn.Close()
 		s.removeConn(conn)
+		s.subMgr.Unsubscribe(conn)
 	}()
 
+	var eventMask uint32
 	for {
 		select {
 		case <-ctx.Done():
@@ -274,6 +330,11 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 				slog.Debug("ipc: read error", "error", err)
 			}
 			return
+		}
+		if sub, ok := req.Payload.(*pb.Request_Subscribe); ok {
+			eventMask = sub.Subscribe.EventMask
+			s.subMgr.Subscribe(conn, eventMask)
+			slog.Debug("client subscribed to events", "mask", eventMask)
 		}
 
 		resp := s.dispatch(ctx, &req)
@@ -342,6 +403,10 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 		resp = s.handleBanPeer(p.BanPeer)
 	case *pb.Request_UnbanPeer:
 		resp = s.handleUnbanPeer(p.UnbanPeer)
+	case *pb.Request_ListTracks:
+		resp = s.handleListTracks(ctx, p.ListTracks)
+	case *pb.Request_QueueList:
+		resp = s.handleQueueList()
 	default:
 		resp = &pb.Response{Success: false, Error: "unknown request type"}
 	}
@@ -370,6 +435,9 @@ func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Respon
 	default:
 		return &pb.Response{Success: false, Error: "query or track_id required"}
 	}
+
+	s.publishPlaybackState(string(s.playback.GetState()))
+	s.publishTrackChanged(s.playback.GetCurrentTrack())
 	return &pb.Response{Success: true}
 }
 
@@ -377,6 +445,7 @@ func (s *Server) handlePause(ctx context.Context) *pb.Response {
 	if err := s.playback.Pause(ctx); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+	s.publishPlaybackState(string(s.playback.GetState()))
 	return &pb.Response{Success: true}
 }
 
@@ -384,6 +453,7 @@ func (s *Server) handleResume(ctx context.Context) *pb.Response {
 	if err := s.playback.Resume(ctx); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+	s.publishPlaybackState(string(s.playback.GetState()))
 	return &pb.Response{Success: true}
 }
 
@@ -391,6 +461,8 @@ func (s *Server) handleStop(ctx context.Context) *pb.Response {
 	if err := s.playback.Stop(ctx); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+	s.publishPlaybackState(string(s.playback.GetState()))
+	s.publishTrackChanged(nil)
 	return &pb.Response{Success: true}
 }
 
@@ -402,6 +474,8 @@ func (s *Server) handleNext(ctx context.Context) *pb.Response {
 	if err := s.playback.Play(ctx, next.ID); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+	s.publishPlaybackState(string(s.playback.GetState()))
+	s.publishTrackChanged(s.playback.GetCurrentTrack())
 	return &pb.Response{Success: true}
 }
 
@@ -413,6 +487,8 @@ func (s *Server) handlePrev(ctx context.Context) *pb.Response {
 	if err := s.playback.Play(ctx, prev.ID); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+	s.publishPlaybackState(string(s.playback.GetState()))
+	s.publishTrackChanged(s.playback.GetCurrentTrack())
 	return &pb.Response{Success: true}
 }
 
@@ -427,6 +503,8 @@ func (s *Server) handleSetVolume(ctx context.Context, req *pb.SetVolumeRequest) 
 	if err := s.playback.SetVolume(ctx, int(req.Volume)); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+
+	s.publishVolumeChange(req.Volume)
 	return &pb.Response{Success: true}
 }
 
@@ -507,7 +585,7 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 	if s.peerRepo == nil {
 		return &pb.Response{
 			Success: false,
-			Error:   "P2P is not enabled",
+			Error:   errP2PNotEnabled,
 		}
 	}
 
@@ -524,11 +602,65 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 	}
 }
 
+func (s *Server) handleListTracks(ctx context.Context, req *pb.ListTracksRequest) *pb.Response {
+	if s.libraryRepo == nil {
+		return &pb.Response{Success: false, Error: "library is not available"}
+	}
+
+	tracks, err := s.libraryRepo.ListAll(ctx)
+	if err != nil {
+		return &pb.Response{Success: false, Error: err.Error()}
+	}
+
+	offset := int(req.Offset)
+	limit := int(req.Limit)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = len(tracks)
+	}
+
+	end := min(offset+limit, len(tracks))
+	if offset > len(tracks) {
+		offset = len(tracks)
+	}
+	page := tracks[offset:end]
+
+	pbTracks := make([]*pb.Track, len(page))
+	for i, t := range page {
+		pbTracks[i] = convert.TrackToProto(t)
+	}
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_ListTracks{ListTracks: &pb.ListTracksResponse{
+			Tracks: pbTracks,
+			Total:  int32(len(tracks)),
+		}},
+	}
+}
+
+func (s *Server) handleQueueList() *pb.Response {
+	if s.queue == nil {
+		return &pb.Response{Success: false, Error: "queue is not available"}
+	}
+
+	tracks := s.queue.Tracks()
+	pbTracks := make([]*pb.Track, len(tracks))
+	for i, t := range tracks {
+		pbTracks[i] = convert.TrackToProto(t)
+	}
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_QueueList{QueueList: &pb.QueueListResponse{Tracks: pbTracks}},
+	}
+}
+
 func (s *Server) handleNetworkStatus() *pb.Response {
 	if s.p2pNode == nil {
 		return &pb.Response{
 			Success: false,
-			Error:   "P2P is not enabled",
+			Error:   errP2PNotEnabled,
 		}
 	}
 	info := s.p2pNode.NetworkInfo()
@@ -584,7 +716,7 @@ func (s *Server) handleBanPeer(req *pb.BanPeerRequest) *pb.Response {
 	if s.p2pNode == nil {
 		return &pb.Response{
 			Success: false,
-			Error:   "P2P is not enabled",
+			Error:   errP2PNotEnabled,
 		}
 	}
 	s.p2pNode.BanPeer(peer.ID(req.PeerId))
@@ -598,7 +730,7 @@ func (s *Server) handleUnbanPeer(req *pb.UnbanPeerRequest) *pb.Response {
 	if s.p2pNode == nil {
 		return &pb.Response{
 			Success: false,
-			Error:   "P2P is not enabled",
+			Error:   errP2PNotEnabled,
 		}
 	}
 	s.p2pNode.UnbanPeer(peer.ID(req.PeerId))
@@ -640,7 +772,7 @@ func (s *Server) handleHealthCheck() *pb.Response {
 
 func (s *Server) handleCreatePlaylist(ctx context.Context, req *pb.CreatePlaylistRequest) *pb.Response {
 	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: "playlists not available"}
+		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
 	}
 
 	playlist, err := domain.NewPlaylist(req.Name)
@@ -663,7 +795,7 @@ func (s *Server) handleCreatePlaylist(ctx context.Context, req *pb.CreatePlaylis
 
 func (s *Server) handleGetPlaylist(ctx context.Context, req *pb.GetPlaylistRequest) *pb.Response {
 	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: "playlists not available"}
+		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
 	}
 
 	playlist, err := s.playlistRepo.FindByID(ctx, domain.PlaylistID(req.PlaylistId))
@@ -680,7 +812,7 @@ func (s *Server) handleGetPlaylist(ctx context.Context, req *pb.GetPlaylistReque
 
 func (s *Server) handleListPlaylists(ctx context.Context) *pb.Response {
 	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: "playlists not available"}
+		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
 	}
 
 	var pbPlaylists []*pb.Playlist
@@ -698,7 +830,7 @@ func (s *Server) handleListPlaylists(ctx context.Context) *pb.Response {
 
 func (s *Server) handleAddToPlaylist(ctx context.Context, req *pb.AddToPlaylistRequest) *pb.Response {
 	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: "playlists not available"}
+		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
 	}
 
 	playlist, err := s.playlistRepo.FindByID(ctx, domain.PlaylistID(req.PlaylistId))
@@ -807,4 +939,71 @@ func (c *ServerComponent) Name() string {
 
 func AsComponent(server *Server) app.Component {
 	return &ServerComponent{Server: server}
+}
+
+type SubscriptionManager struct {
+	mu   sync.RWMutex
+	subs map[net.Conn]*Subscription
+}
+
+type Subscription struct {
+	conn      net.Conn
+	eventMask uint32
+	writeMu   sync.Mutex
+}
+
+func NewSubscriptionManager() *SubscriptionManager {
+	return &SubscriptionManager{
+		subs: make(map[net.Conn]*Subscription),
+	}
+}
+
+// Subscribe adds a new subscription
+func (sm *SubscriptionManager) Subscribe(conn net.Conn, eventMask uint32) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.subs[conn] = &Subscription{
+		conn:      conn,
+		eventMask: eventMask,
+	}
+}
+
+// Unsubscribe removes a subscription
+func (sm *SubscriptionManager) Unsubscribe(conn net.Conn) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	delete(sm.subs, conn)
+}
+
+// Broadcast sends an event to all subscribers who are interested in this event type
+func (sm *SubscriptionManager) Broadcast(eventType uint32, payload []byte) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	event := &pb.Event{
+		EventType: pb.EventType(eventType),
+		Payload:   payload,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	for _, sub := range sm.subs {
+		if sub.eventMask&eventType == 0 {
+			continue // Not subscribed to this event type
+		}
+
+		sub.writeMu.Lock()
+		err := wire.WriteMsg(sub.conn, event)
+		sub.writeMu.Unlock()
+
+		if err != nil {
+			slog.Debug("event broadcast failed", "error", err)
+		}
+	}
+}
+
+// Count returns the number of active subscriptions
+func (sm *SubscriptionManager) Count() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.subs)
 }

@@ -1,5 +1,6 @@
+version: "2"
 linters:
-  disable-all: true
+  default: none
   enable:
     - bodyclose
     - dogsled
@@ -8,51 +9,52 @@ linters:
     - goconst
     - gocritic
     - gocyclo
-    - gofmt
-    - goimports
-    - gosimple
     - govet
     - ineffassign
     - lll
     - misspell
     - nakedret
     - staticcheck
-    - typecheck
     - unconvert
     - unused
     - whitespace
-
-linters-settings:
-  lll:
-    line-length: 200
-  gocyclo:
-    min-complexity: 25
-  funlen:
-    lines: 150
-    statements: 120
-  misspell:
-    locale: US
-
+  settings:
+    funlen:
+      lines: 150
+      statements: 120
+    gocyclo:
+      min-complexity: 25
+    lll:
+      line-length: 200
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - unused
+        path: _test\.go
+      - linters:
+          - unused
+        path: internal/infra/p2p/fsm\.go
+      - linters:
+          - unused
+        path: internal/infra/p2p/streaming_fsm\.go
+      - linters:
+          - unused
+        path: internal/app/circuit_breaker\.go
+    paths:
+      - vendor
+      - proto/gen
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - vendor
+      - proto/gen
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 50
   max-same-issues: 10
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - unused
-    - path: internal/infra/p2p/fsm\.go
-      linters:
-        - unused
-    - path: internal/infra/p2p/streaming_fsm\.go
-      linters:
-        - unused
-    - path: internal/app/circuit_breaker\.go
-      linters:
-        - unused
-
-run:
-  timeout: 5m
-  issues-exclude-dirs:
-    - vendor
-    - proto/gen

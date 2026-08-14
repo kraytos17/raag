@@ -30,9 +30,9 @@ func TestIndex_Index_Single(t *testing.T) {
 	ctx := context.Background()
 	track := &domain.Track{
 		ID:     domain.GenerateTrackID("/music/song.mp3"),
-		Title:  "Hello World",
-		Artist: "Test Artist",
-		Album:  "Test Album",
+		Title:  helloWorldTitle,
+		Artist: testArtist,
+		Album:  testAlbum,
 	}
 
 	if err := idx.Index(ctx, track); err != nil {
@@ -68,9 +68,9 @@ func TestIndex_Index_Duplicate(t *testing.T) {
 	ctx := context.Background()
 	track := &domain.Track{
 		ID:     domain.GenerateTrackID("/music/song.mp3"),
-		Title:  "Hello World",
-		Artist: "Test Artist",
-		Album:  "Test Album",
+		Title:  helloWorldTitle,
+		Artist: testArtist,
+		Album:  testAlbum,
 	}
 
 	if err := idx.Index(ctx, track); err != nil {
@@ -110,8 +110,8 @@ func TestIndex_Search_Exact(t *testing.T) {
 	id2 := domain.GenerateTrackID("/music/song2.mp3")
 	id3 := domain.GenerateTrackID("/music/song3.mp3")
 
-	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: "Rock Song", Artist: "Rock Band", Album: "Rock Album"})
-	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: "Jazz Song", Artist: "Jazz Band", Album: "Jazz Album"})
+	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: rockSong, Artist: rockBand, Album: rockAlbum})
+	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
 	_ = idx.Index(ctx, &domain.Track{ID: id3, Title: "Classical Piece", Artist: "Orchestra", Album: "Classical"})
 
 	tests := []struct {
@@ -122,7 +122,7 @@ func TestIndex_Search_Exact(t *testing.T) {
 	}{
 		{
 			name:    "match title rock",
-			query:   "rock",
+			query:   rockQuery,
 			wantLen: 1,
 			wantIDs: []domain.TrackID{id1},
 		},
@@ -171,14 +171,14 @@ func TestIndex_Search_CaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 
 	id := domain.GenerateTrackID("/music/song.mp3")
-	_ = idx.Index(ctx, &domain.Track{ID: id, Title: "Hello World", Artist: "Test Artist", Album: "Test Album"})
+	_ = idx.Index(ctx, &domain.Track{ID: id, Title: helloWorldTitle, Artist: testArtist, Album: testAlbum})
 
 	tests := []struct {
 		name  string
 		query string
 		want  int
 	}{
-		{"lowercase", "hello", 1},
+		{"lowercase", helloToken, 1},
 		{"uppercase", "HELLO", 1},
 		{"mixed case", "HeLLo", 1},
 		{"capitalized", "Hello", 1},
@@ -205,10 +205,10 @@ func TestIndex_Search_MultipleTokens(t *testing.T) {
 	id1 := domain.GenerateTrackID("/music/song1.mp3")
 	id2 := domain.GenerateTrackID("/music/song2.mp3")
 
-	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: "Rock Song", Artist: "Band", Album: "Album"})
-	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: "Jazz Song", Artist: "Band", Album: "Album"})
+	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: rockSong, Artist: bandToken, Album: albumToken})
+	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: jazzSong, Artist: bandToken, Album: albumToken})
 
-	got, err := idx.Search(ctx, "rock", 10)
+	got, err := idx.Search(ctx, rockQuery, 10)
 	if err != nil {
 		t.Errorf("Search() error = %v", err)
 	}
@@ -223,9 +223,9 @@ func TestIndex_Search_Limit(t *testing.T) {
 	for i := range 10 {
 		_ = idx.Index(ctx, &domain.Track{
 			ID:     domain.GenerateTrackID("/music/song" + string(rune('a'+i)) + ".mp3"),
-			Title:  "Rock Song",
-			Artist: "Rock Band",
-			Album:  "Rock Album",
+			Title:  rockSong,
+			Artist: rockBand,
+			Album:  rockAlbum,
 		})
 	}
 
@@ -243,7 +243,7 @@ func TestIndex_Search_Limit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := idx.Search(ctx, "rock", tt.limit)
+			got, err := idx.Search(ctx, rockQuery, tt.limit)
 			if err != nil {
 				t.Errorf("Search() error = %v", err)
 				return
@@ -261,9 +261,9 @@ func TestIndex_Search_EmptyQuery(t *testing.T) {
 
 	_ = idx.Index(ctx, &domain.Track{
 		ID:     domain.GenerateTrackID("/music/song.mp3"),
-		Title:  "Rock Song",
-		Artist: "Rock Band",
-		Album:  "Rock Album",
+		Title:  rockSong,
+		Artist: rockBand,
+		Album:  rockAlbum,
 	})
 
 	tests := []struct {
@@ -295,7 +295,7 @@ func TestIndex_Delete(t *testing.T) {
 	ctx := context.Background()
 
 	trackID := domain.GenerateTrackID("/music/song.mp3")
-	_ = idx.Index(ctx, &domain.Track{ID: trackID, Title: "Rock Song", Artist: "Rock Band", Album: "Rock Album"})
+	_ = idx.Index(ctx, &domain.Track{ID: trackID, Title: rockSong, Artist: rockBand, Album: rockAlbum})
 
 	if err := idx.Delete(ctx, trackID); err != nil {
 		t.Errorf("Delete() error = %v", err)
@@ -317,8 +317,8 @@ func TestIndex_Stats(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)
 	ctx := context.Background()
 
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: "Rock Song", Artist: "Rock Band", Album: "Rock Album"})
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: "Jazz Song", Artist: "Jazz Band", Album: "Jazz Album"})
+	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: rockSong, Artist: rockBand, Album: rockAlbum})
+	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
 
 	stats, err := idx.Stats(ctx)
 	if err != nil {
@@ -336,8 +336,8 @@ func TestIndex_Rebuild(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)
 	ctx := context.Background()
 
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: "Rock Song", Artist: "Rock Band", Album: "Rock Album"})
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: "Jazz Song", Artist: "Jazz Band", Album: "Jazz Album"})
+	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: rockSong, Artist: rockBand, Album: rockAlbum})
+	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
 
 	if err := idx.Delete(ctx, domain.GenerateTrackID("/music/song1.mp3")); err != nil {
 		t.Errorf("Delete() error = %v", err)
@@ -403,9 +403,9 @@ func TestIndex_Concurrent(t *testing.T) {
 			defer wg.Done()
 			_ = idx.Index(ctx, &domain.Track{
 				ID:     domain.GenerateTrackID("/music/song" + string(rune('0'+n)) + ".mp3"),
-				Title:  "Rock Song",
-				Artist: "Rock Band",
-				Album:  "Rock Album",
+				Title:  rockSong,
+				Artist: rockBand,
+				Album:  rockAlbum,
 			})
 		}(i)
 	}
@@ -424,11 +424,11 @@ func TestIndex_Search_ScoreOrdering(t *testing.T) {
 	id2 := domain.GenerateTrackID("/music/song2.mp3")
 	id3 := domain.GenerateTrackID("/music/song3.mp3")
 
-	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: "Rock", Artist: "Band A", Album: "Album"})
-	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: "Rock Rock", Artist: "Band B", Album: "Album"})
-	_ = idx.Index(ctx, &domain.Track{ID: id3, Title: "Rock Rock Rock", Artist: "Band C", Album: "Album"})
+	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: "Rock", Artist: "Band A", Album: albumToken})
+	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: "Rock Rock", Artist: "Band B", Album: albumToken})
+	_ = idx.Index(ctx, &domain.Track{ID: id3, Title: "Rock Rock Rock", Artist: "Band C", Album: albumToken})
 
-	got, err := idx.Search(ctx, "rock", 10)
+	got, err := idx.Search(ctx, rockQuery, 10)
 	if err != nil {
 		t.Errorf("Search() error = %v", err)
 	}
@@ -446,12 +446,12 @@ func TestTokenize(t *testing.T) {
 		input string
 		want  []string
 	}{
-		{"simple words", "hello world", []string{"hello", "world"}},
+		{"simple words", helloWorldToken, []string{helloToken, "world"}},
 		{"with numbers", "song 123", []string{"song", "123"}},
-		{"empty", "", nil},
+		{emptyToken, "", nil},
 		{"whitespace only", "   ", nil},
-		{"single word", "hello", []string{"hello"}},
-		{"multiple spaces", "hello    world", []string{"hello", "world"}},
+		{"single word", helloToken, []string{helloToken}},
+		{"multiple spaces", "hello    world", []string{helloToken, "world"}},
 	}
 
 	for _, tt := range tests {
@@ -476,13 +476,13 @@ func TestNormalizeForIndex(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"lowercase", "hello world", "hello world"},
-		{"uppercase", "HELLO WORLD", "hello world"},
-		{"mixed case", "HeLLo WoRLD", "hello world"},
+		{"lowercase", helloWorldToken, helloWorldToken},
+		{"uppercase", "HELLO WORLD", helloWorldToken},
+		{"mixed case", "HeLLo WoRLD", helloWorldToken},
 		{"with numbers", "song123", "song123"},
 		{"with special chars", "hello!@#$world", "helloworld"},
-		{"empty", "", ""},
-		{"whitespace", "  hello  ", "hello"},
+		{emptyToken, "", ""},
+		{"whitespace", "  hello  ", helloToken},
 	}
 
 	for _, tt := range tests {
@@ -501,11 +501,11 @@ func TestTrigramsFromNormalizedString(t *testing.T) {
 		input string
 		want  []string
 	}{
-		{"hello", "hello", []string{"hel", "ell", "llo"}},
+		{helloToken, helloToken, []string{"hel", "ell", "llo"}},
 		{"ab", "ab", nil},
-		{"abc", "abc", []string{"abc"}},
+		{abcToken, abcToken, []string{abcToken}},
 		{"a", "a", nil},
-		{"empty", "", nil},
+		{emptyToken, "", nil},
 	}
 
 	for _, tt := range tests {

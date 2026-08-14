@@ -10,8 +10,8 @@ import (
 
 func TestDiffFileStats_AllAdded(t *testing.T) {
 	current := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
-		"/music/song2.mp3": {Path: "/music/song2.mp3", Mtime: 1000, Size: 6000},
+		song1Path: {Path: song1Path, Mtime: 1000, Size: 5000},
+		song2Path: {Path: song2Path, Mtime: 1000, Size: 6000},
 	}
 
 	previous := map[string]*domain.FileStat{}
@@ -30,8 +30,8 @@ func TestDiffFileStats_AllAdded(t *testing.T) {
 func TestDiffFileStats_AllDeleted(t *testing.T) {
 	current := map[string]*domain.FileStat{}
 	previous := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
-		"/music/song2.mp3": {Path: "/music/song2.mp3", Mtime: 1000, Size: 6000},
+		song1Path: {Path: song1Path, Mtime: 1000, Size: 5000},
+		song2Path: {Path: song2Path, Mtime: 1000, Size: 6000},
 	}
 
 	result := diffFileStats(current, previous)
@@ -48,10 +48,10 @@ func TestDiffFileStats_AllDeleted(t *testing.T) {
 
 func TestDiffFileStats_Modified(t *testing.T) {
 	current := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 2000, Size: 5000},
+		song1Path: {Path: song1Path, Mtime: 2000, Size: 5000},
 	}
 	previous := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
+		song1Path: {Path: song1Path, Mtime: 1000, Size: 5000},
 	}
 
 	result := diffFileStats(current, previous)
@@ -68,10 +68,10 @@ func TestDiffFileStats_Modified(t *testing.T) {
 
 func TestDiffFileStats_SizeChanged(t *testing.T) {
 	current := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 6000},
+		song1Path: {Path: song1Path, Mtime: 1000, Size: 6000},
 	}
 	previous := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
+		song1Path: {Path: song1Path, Mtime: 1000, Size: 5000},
 	}
 
 	result := diffFileStats(current, previous)
@@ -82,10 +82,10 @@ func TestDiffFileStats_SizeChanged(t *testing.T) {
 
 func TestDiffFileStats_Unchanged(t *testing.T) {
 	current := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
+		song1Path: {Path: song1Path, Mtime: 1000, Size: 5000},
 	}
 	previous := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
+		song1Path: {Path: song1Path, Mtime: 1000, Size: 5000},
 	}
 
 	result := diffFileStats(current, previous)
@@ -102,13 +102,13 @@ func TestDiffFileStats_Unchanged(t *testing.T) {
 
 func TestDiffFileStats_Mixed(t *testing.T) {
 	current := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
-		"/music/song2.mp3": {Path: "/music/song2.mp3", Mtime: 2000, Size: 6000},
+		song1Path:          {Path: song1Path, Mtime: 1000, Size: 5000},
+		song2Path:          {Path: song2Path, Mtime: 2000, Size: 6000},
 		"/music/song3.mp3": {Path: "/music/song3.mp3", Mtime: 1000, Size: 7000},
 	}
 	previous := map[string]*domain.FileStat{
-		"/music/song1.mp3": {Path: "/music/song1.mp3", Mtime: 1000, Size: 5000},
-		"/music/song2.mp3": {Path: "/music/song2.mp3", Mtime: 1000, Size: 6000},
+		song1Path:          {Path: song1Path, Mtime: 1000, Size: 5000},
+		song2Path:          {Path: song2Path, Mtime: 1000, Size: 6000},
 		"/music/song4.mp3": {Path: "/music/song4.mp3", Mtime: 1000, Size: 8000},
 	}
 
@@ -174,7 +174,7 @@ func TestFileStat_Changed(t *testing.T) {
 }
 
 func TestFileStat_Changed_WithHash(t *testing.T) {
-	current := &domain.FileStat{Mtime: 1000, Size: 1000, Hash: "abc"}
+	current := &domain.FileStat{Mtime: 1000, Size: 1000, Hash: abcHash}
 	other := &domain.FileStat{Mtime: 1000, Size: 1000, Hash: "xyz"}
 	if current.Changed(other) {
 		t.Error("FileStat.Changed() should not consider Hash field")
@@ -183,14 +183,14 @@ func TestFileStat_Changed_WithHash(t *testing.T) {
 
 func TestDiffFileStats_ResultsContainExpectedPaths(t *testing.T) {
 	current := map[string]*domain.FileStat{
-		"/music/new.mp3":   {Path: "/music/new.mp3", Mtime: 1000, Size: 5000},
-		"/music/modified":  {Path: "/music/modified", Mtime: 2000, Size: 5000},
-		"/music/unchanged": {Path: "/music/unchanged", Mtime: 1000, Size: 5000},
+		"/music/new.mp3": {Path: "/music/new.mp3", Mtime: 1000, Size: 5000},
+		modifiedPath:     {Path: modifiedPath, Mtime: 2000, Size: 5000},
+		unchangedPath:    {Path: unchangedPath, Mtime: 1000, Size: 5000},
 	}
 	previous := map[string]*domain.FileStat{
-		"/music/modified":  {Path: "/music/modified", Mtime: 1000, Size: 5000},
-		"/music/unchanged": {Path: "/music/unchanged", Mtime: 1000, Size: 5000},
-		"/music/deleted":   {Path: "/music/deleted", Mtime: 1000, Size: 5000},
+		modifiedPath:     {Path: modifiedPath, Mtime: 1000, Size: 5000},
+		unchangedPath:    {Path: unchangedPath, Mtime: 1000, Size: 5000},
+		"/music/deleted": {Path: "/music/deleted", Mtime: 1000, Size: 5000},
 	}
 
 	result := diffFileStats(current, previous)
@@ -199,7 +199,7 @@ func TestDiffFileStats_ResultsContainExpectedPaths(t *testing.T) {
 		t.Error("Expected /music/new.mp3 in Added list")
 	}
 
-	foundModified := slices.Contains(result.Modified, "/music/modified")
+	foundModified := slices.Contains(result.Modified, modifiedPath)
 	if !foundModified {
 		t.Error("Expected /music/modified in Modified list")
 	}

@@ -72,6 +72,10 @@ func (m *mockPlaybackHandler) GetCurrentTrack() *domain.Track {
 	return m.currentTrack
 }
 
+func (m *mockPlaybackHandler) OnProgress(callback func(positionMs, durationMs int64)) {
+	// No-op for testing
+}
+
 // mockScannerHandler implements ScannerHandler for testing.
 type mockScannerHandler struct {
 	progressFn func(app.ScanProgress)
@@ -105,7 +109,9 @@ func (m *mockSearchHandler) Search(_ context.Context, _ string, _ int) ([]*domai
 }
 
 // mockLibraryRepoHandler implements LibraryRepoHandler for testing.
-type mockLibraryRepoHandler struct{}
+type mockLibraryRepoHandler struct {
+	tracks []*domain.Track
+}
 
 func newMockLibraryRepoHandler() *mockLibraryRepoHandler {
 	return &mockLibraryRepoHandler{}
@@ -117,6 +123,10 @@ func (m *mockLibraryRepoHandler) FindByID(_ context.Context, _ domain.TrackID) (
 
 func (m *mockLibraryRepoHandler) FindByPath(_ context.Context, _ string) (*domain.Track, error) {
 	return nil, domain.ErrTrackNotFound
+}
+
+func (m *mockLibraryRepoHandler) ListAll(_ context.Context) ([]*domain.Track, error) {
+	return m.tracks, nil
 }
 
 // mockPeerRepoHandler implements PeerRepoHandler for testing.
@@ -189,11 +199,16 @@ func (m *mockQueueHandler) Previous() *domain.Track {
 	return m.tracks[m.position]
 }
 
+func (m *mockQueueHandler) Tracks() []*domain.Track {
+	out := make([]*domain.Track, len(m.tracks))
+	copy(out, m.tracks)
+	return out
+}
+
 // testServer wraps Server with helpers for testing.
 type testServer struct {
 	*Server
 	socketPath string
-	ctx        context.Context
 	cancel     context.CancelFunc
 }
 
@@ -235,10 +250,8 @@ func startTestServerAt(t *testing.T, socketPath string) *testServer {
 	ts := &testServer{
 		Server:     srv,
 		socketPath: socketPath,
-		ctx:        ctx,
 		cancel:     cancel,
 	}
-
 	return ts
 }
 
@@ -448,5 +461,75 @@ func TestPersistentClient_NoServerAvailable(t *testing.T) {
 	_, err := c.Status()
 	if err == nil {
 		t.Fatal("expected error when no server available")
+	}
+}
+
+// TestPersistentClient_ListTracks verifies the ListTracks command returns
+// all library tracks from the daemon.
+func TestPersistentClient_ListTracks(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	// Seed the mock library repo with tracks.
+	track := &domain.Track{
+		ID:     domain.TrackID("track-1"),
+		Title:  "Test Song",
+		Artist: "Test Artist",
+		Album:  "Test Album",
+	}
+	mock := newMockLibraryRepoHandler()
+	mock.tracks = append(mock.tracks, track)
+	srv.libraryRepo = mock
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.ListTracks(0, 0)
+	if err != nil {
+		t.Fatalf("list tracks: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("list tracks failed: %s", resp.Error)
+	}
+	lt := resp.GetListTracks()
+	if lt == nil {
+		t.Fatal("expected ListTracks response payload")
+	}
+	if len(lt.Tracks) != 1 {
+		t.Fatalf("expected 1 track, got %d", len(lt.Tracks))
+	}
+	if lt.Tracks[0].Title != "Test Song" {
+		t.Fatalf("unexpected track title: %s", lt.Tracks[0].Title)
+	}
+}
+
+// TestPersistentClient_QueueList verifies GetQueue returns queue contents.
+func TestPersistentClient_QueueList(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	queue := newMockQueueHandler()
+	queue.Add(&domain.Track{ID: domain.TrackID("q-1"), Title: "Queue Track"})
+	srv.queue = queue
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.GetQueue()
+	if err != nil {
+		t.Fatalf("get queue: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("get queue failed: %s", resp.Error)
+	}
+	ql := resp.GetQueueList()
+	if ql == nil {
+		t.Fatal("expected QueueList response payload")
+	}
+	if len(ql.Tracks) != 1 {
+		t.Fatalf("expected 1 queue track, got %d", len(ql.Tracks))
+	}
+	if ql.Tracks[0].Title != "Queue Track" {
+		t.Fatalf("unexpected queue track title: %s", ql.Tracks[0].Title)
 	}
 }

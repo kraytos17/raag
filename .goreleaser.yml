@@ -1,18 +1,9 @@
 version: 2
 project_name: raag
-metadata:
-  description: A peer-to-peer music streaming application
-  homepage: https://github.com/p-society/raag
-  repository_url: https://github.com/p-society/raag
-  license: Apache-2.0
 before:
   hooks:
     - go mod tidy
-    - go generate ./...
-variables:
-  version: "{{.Version}}"
-  build_time: "{{.Date}}"
-  commit: "{{.Commit}}"
+    - make generate
 builds:
   - id: raag
     main: ./cmd/raag
@@ -21,9 +12,6 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X main.version={{.Env.version}}
-      - -X main.buildTime={{.Env.build_time}}
-      - -X main.commit={{.Env.commit}}
     goos:
       - linux
       - darwin
@@ -34,17 +22,14 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
-    mod_timestamp: "{{.CommitTimestamp}}"
-  - id: tracker
-    main: ./tracker/cmd/tracker
-    binary: tracker
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  - id: raagd
+    main: ./cmd/raagd
+    binary: raagd
     env:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X main.version={{.Env.version}}
-      - -X main.buildTime={{.Env.build_time}}
-      - -X main.commit={{.Env.commit}}
     goos:
       - linux
       - darwin
@@ -55,38 +40,27 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
-    mod_timestamp: "{{.CommitTimestamp}}"
+    mod_timestamp: "{{ .CommitTimestamp }}"
 archives:
   - id: raag
-    builds:
+    ids:
       - raag
+      - raagd
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats:
+      - tar.gz
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     files:
       - LICENSE
       - README.md
-    wrap_in_directory: false
-  - id: tracker
-    builds:
-      - tracker
-    name_template: "tracker_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
-    format_overrides:
-      - goos: windows
-        format: zip
-    files:
-      - LICENSE
-      - README.md
-    wrap_in_directory: false
 checksum:
   name_template: checksums.txt
   algorithm: sha256
   ids:
     - raag
-    - tracker
 changelog:
   sort: asc
   use: github
@@ -100,25 +74,25 @@ changelog:
       - Merge branch
       - Bump dependencies
   groups:
-    - title: "🚀 New Features"
+    - title: "New Features"
       regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
       order: 0
-    - title: "🐛 Bug Fixes"
+    - title: "Bug Fixes"
       regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
       order: 1
-    - title: "⚡ Performance"
+    - title: "Performance"
       regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
       order: 2
-    - title: "🔧 Refactoring"
+    - title: "Refactoring"
       regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
       order: 3
-    - title: "📚 Documentation"
+    - title: "Documentation"
       regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
       order: 4
-    - title: "🔒 Security"
+    - title: "Security"
       regexp: '^.*?security(\([[:word:]]+\))??!?:.+$'
       order: 5
-    - title: "🛠️ Other Changes"
+    - title: "Other Changes"
       order: 999
 release:
   github:
@@ -129,21 +103,19 @@ release:
   mode: append
   name_template: "{{ .ProjectName }} v{{ .Version }}"
   header: |
-    ## 🎵 {{ .ProjectName }} v{{ .Version }}
+    ## {{ .ProjectName }} v{{ .Version }}
 
     **Released on {{ .Date }}**
 
-    ### 📦 Downloads
+    ### Downloads
 
     Download the binaries for your platform from the assets below.
 
-    ### 🔐 Verify Checksums
+    ### Verify Checksums
 
     ```bash
     sha256sum -c checksums.txt
     ```
-
-    ### 📋 What's Changed
   footer: |
     ---
 
@@ -152,9 +124,8 @@ release:
     ---
 
     <p align="center">
-      <a href="https://github.com/p-society/raag">⭐ Star this project</a> |
-      <a href="https://github.com/p-society/raag/issues">🐛 Report a bug</a> |
-      <a href="https://github.com/p-society/raag/discussions">💬 Discussions</a>
+      <a href="https://github.com/p-society/raag">Star this project</a> |
+      <a href="https://github.com/p-society/raag/issues">Report a bug</a>
     </p>
 milestones:
   - close: true
@@ -171,5 +142,4 @@ signs:
       - "${artifact}"
     ids:
       - raag
-      - tracker
     signature: "${artifact}.sig"

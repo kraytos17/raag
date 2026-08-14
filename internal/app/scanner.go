@@ -32,6 +32,8 @@ type ScanProgress struct {
 	Phase       domain.ScanPhase
 }
 
+const mimeTypeMPEG = "audio/mpeg"
+
 func WalkAudioFiles(ctx context.Context, dirPath string) iter.Seq2[string, error] {
 	return func(yield func(string, error) bool) {
 		_ = filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
@@ -564,7 +566,7 @@ func (s *LibraryScanner) updateTrack(ctx context.Context, track *domain.Track) e
 func mimeType(ext string) string {
 	switch strings.ToLower(ext) {
 	case ".mp3":
-		return "audio/mpeg"
+		return mimeTypeMPEG
 	case ".flac":
 		return "audio/flac"
 	case ".ogg":

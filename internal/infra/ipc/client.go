@@ -3,6 +3,8 @@ package ipc
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -403,6 +405,24 @@ func (c *Client) QueueClear() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// GetQueue returns the current playback queue.
+func (c *Client) GetQueue() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_QueueList{QueueList: &pb.QueueListRequest{}},
+	}
+	return c.send(req)
+}
+
+// ListTracks returns a page of the full library.
+func (c *Client) ListTracks(offset, limit int32) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_ListTracks{ListTracks: &pb.ListTracksRequest{Offset: offset, Limit: limit}},
+	}
+	return c.send(req)
+}
+
 // Search searches for tracks matching the query.
 func (c *Client) Search(query string, limit int32) (*pb.Response, error) {
 	req := &pb.Request{
@@ -498,4 +518,199 @@ func (c *Client) Conn() net.Conn {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.conn
+}
+
+const (
+	EventPlaybackState    uint32 = 1
+	EventTrackChanged     uint32 = 2
+	EventProgress         uint32 = 4
+	EventVolumeChanged    uint32 = 8
+	EventQueueUpdated     uint32 = 16
+	EventPeerConnected    uint32 = 32
+	EventPeerDisconnected uint32 = 64
+	EventLibraryUpdated   uint32 = 128
+	EventError            uint32 = 256
+)
+
+// EventClient handles event subscriptions with backpressure
+type EventClient struct {
+	events    chan *pb.Event
+	errChan   chan error
+	closeOnce sync.Once
+	closed    chan struct{}
+	client    *Client
+	eventMask uint32
+}
+
+// Subscribe subscribes to events from the server.
+// Returns an EventClient that streams events through the Events channel.
+func (c *Client) Subscribe(eventMask uint32) (*EventClient, error) {
+	ec := &EventClient{
+		events:    make(chan *pb.Event, 100),
+		errChan:   make(chan error, 1),
+		closed:    make(chan struct{}),
+		client:    c,
+		eventMask: eventMask,
+	}
+
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: eventMask}},
+	}
+
+	_, err := c.send(req)
+	if err != nil {
+		return nil, fmt.Errorf("subscribe failed: %w", err)
+	}
+
+	go ec.readEvents()
+	return ec, nil
+}
+
+// SubscribeWithRetry subscribes with automatic reconnection and retry logic.
+// Events are queued on backpressure, with exponential backoff on disconnect.
+func (c *Client) SubscribeWithRetry(eventMask uint32) *EventClient {
+	ec := &EventClient{
+		events:    make(chan *pb.Event, 100),
+		errChan:   make(chan error, 1),
+		closed:    make(chan struct{}),
+		client:    c,
+		eventMask: eventMask,
+	}
+
+	go ec.eventLoopWithRetry()
+	return ec
+}
+
+// eventLoopWithRetry handles reconnection automatically
+func (ec *EventClient) eventLoopWithRetry() {
+	backoff := 100 * time.Millisecond
+	maxBackoff := 5 * time.Second
+
+	for {
+		select {
+		case <-ec.closed:
+			return
+		default:
+		}
+
+		err := ec.connect()
+		if err != nil {
+			select {
+			case <-ec.closed:
+				return
+			case <-time.After(backoff):
+			}
+			backoff = min(backoff*2, maxBackoff)
+			continue
+		}
+
+		backoff = 100 * time.Millisecond
+		ec.readEventsLoop()
+	}
+}
+
+// connect establishes the subscription connection
+func (ec *EventClient) connect() error {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: ec.eventMask}},
+	}
+
+	_, err := ec.client.send(req)
+	return err
+}
+
+// readEventsLoop continuously reads events from the server
+func (ec *EventClient) readEventsLoop() error {
+	for {
+		select {
+		case <-ec.closed:
+			return nil
+		default:
+		}
+
+		ec.client.mu.Lock()
+		if ec.client.conn != nil {
+			_ = ec.client.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout))
+		}
+		ec.client.mu.Unlock()
+
+		var event pb.Event
+		if err := wire.ReadMsg(ec.client.conn, &event); err != nil {
+			if err == io.EOF || strings.Contains(err.Error(), "use of closed") {
+				return err
+			}
+			return err
+		}
+		ec.sendEvent(&event)
+	}
+}
+
+// sendEvent sends an event to the channel with backpressure handling
+func (ec *EventClient) sendEvent(event *pb.Event) {
+	select {
+	case ec.events <- event:
+	default:
+		select {
+		case <-ec.events:
+		default:
+		}
+
+		select {
+		case ec.events <- event:
+		default:
+			slog.Warn("dropping event due to backpressure", "eventType", event.EventType)
+		}
+	}
+}
+
+// readEvents starts the event reader (non-retrying version)
+func (ec *EventClient) readEvents() {
+	go func() {
+		for {
+			select {
+			case <-ec.closed:
+				return
+			default:
+			}
+
+			ec.client.mu.Lock()
+			if ec.client.conn != nil {
+				_ = ec.client.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout))
+			}
+			ec.client.mu.Unlock()
+
+			var event pb.Event
+			err := wire.ReadMsg(ec.client.conn, &event)
+			if err != nil {
+				ec.errChan <- err
+				return
+			}
+			ec.sendEvent(&event)
+		}
+	}()
+}
+
+// Events returns the channel to receive events
+func (ec *EventClient) Events() <-chan *pb.Event {
+	return ec.events
+}
+
+// Err returns the error channel
+func (ec *EventClient) Err() <-chan error {
+	return ec.errChan
+}
+
+// Close unsubscribes and closes the event client
+func (ec *EventClient) Close() error {
+	ec.closeOnce.Do(func() {
+		close(ec.closed)
+		req := &pb.Request{
+			ProtocolVersion: domain.IPCProtocolVersion,
+			Payload:         &pb.Request_Unsubscribe{Unsubscribe: &pb.UnsubscribeRequest{}},
+		}
+		ec.client.send(req)
+	})
+	return nil
 }

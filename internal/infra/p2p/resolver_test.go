@@ -202,7 +202,7 @@ func TestP2PResolver_ResolveRemote(t *testing.T) {
 		AvgBandwidth: 1000000,
 	}
 	peerMgr.caps[pid] = &domain.PeerCapabilities{
-		SupportedCodecs: []string{"mp3", "flac"},
+		SupportedCodecs: []string{codecMP3, "flac"},
 	}
 
 	reader, err := resolver.Resolve(context.Background(), trackID)
@@ -390,7 +390,7 @@ func TestStreamingReader_DoubleClose(t *testing.T) {
 	inner := io.NopCloser(bytes.NewReader([]byte("hello")))
 	sr := &streamingReader{
 		reader:  inner,
-		trackID: "track-1",
+		trackID: track1ID,
 		peerID:  peer.ID("peer-1"),
 	}
 
@@ -407,7 +407,7 @@ func TestStreamingReader_ReadThenClose(t *testing.T) {
 	inner := io.NopCloser(bytes.NewReader(data))
 	sr := &streamingReader{
 		reader:  inner,
-		trackID: "track-1",
+		trackID: track1ID,
 		peerID:  peer.ID("peer-1"),
 	}
 
@@ -749,7 +749,7 @@ func TestP2PResolverAdapter_FindPeersWithTrack(t *testing.T) {
 	scorer := NewPeerScorer()
 	peerMgr := newMockPeerManager()
 
-	trackID := domain.TrackID("track-1")
+	trackID := domain.TrackID(track1ID)
 	peerMgr.findResults[trackID] = []peer.ID{"p1", "p2"}
 
 	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)

@@ -116,6 +116,10 @@ message Request {
     NetworkStatusRequest network_status = 26;
     BanPeerRequest ban_peer = 27;
     UnbanPeerRequest unban_peer = 28;
+    SubscribeRequest subscribe = 29;
+    UnsubscribeRequest unsubscribe = 30;
+    ListTracksRequest list_tracks = 31;
+    QueueListRequest queue_list = 32;
   }
 }
 
@@ -140,6 +144,9 @@ message Response {
     AddToPlaylistResponse add_to_playlist = 17;
     Empty ban_peer = 18;
     Empty unban_peer = 19;
+    Event event = 20;
+    ListTracksResponse list_tracks = 21;
+    QueueListResponse queue_list = 22;
   }
 }
 
@@ -189,6 +196,22 @@ message QueueRemoveRequest {
 message QueueClearRequest {}
 
 message QueueResponse {
+  repeated Track tracks = 1;
+}
+
+message ListTracksRequest {
+  int32 offset = 1;
+  int32 limit = 2;
+}
+
+message ListTracksResponse {
+  repeated Track tracks = 1;
+  int32 total = 2;
+}
+
+message QueueListRequest {}
+
+message QueueListResponse {
   repeated Track tracks = 1;
 }
 
@@ -359,4 +382,46 @@ enum ErrorCode {
   ERROR_CODE_UNAUTHORIZED = 5;
   ERROR_CODE_RATE_LIMITED = 3;
   ERROR_CODE_TRANSCODE_FAILED = 4;
+}
+
+// Event types for subscription
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_PLAYBACK_STATE = 1; // string: "playing", "paused", "stopped"
+  EVENT_TYPE_TRACK_CHANGED = 2; // Track
+  EVENT_TYPE_PROGRESS = 4; // ProgressEvent (lightweight)
+  EVENT_TYPE_VOLUME_CHANGED = 8; // int32 volume
+  EVENT_TYPE_QUEUE_UPDATED = 16; // QueueResponse
+  EVENT_TYPE_PEER_CONNECTED = 32; // Peer
+  EVENT_TYPE_PEER_DISCONNECTED = 64; // string peer_id
+  EVENT_TYPE_LIBRARY_UPDATED = 128; // LibraryStats
+  EVENT_TYPE_ERROR = 256; // string error message
+}
+
+// Lightweight progress event - only position and duration
+message ProgressEvent {
+  int64 position_ms = 1;
+  int64 duration_ms = 2;
+}
+
+// Library update stats
+message LibraryStats {
+  int32 total_tracks = 1;
+  int32 added_tracks = 2;
+  int32 removed_tracks = 3;
+}
+
+// Subscribe to events
+message SubscribeRequest {
+  uint32 event_mask = 1; // Bitmask of EventType values
+}
+
+// Unsubscribe from events
+message UnsubscribeRequest {}
+
+// Event pushed from server to client
+message Event {
+  EventType event_type = 1;
+  bytes payload = 2;
+  int64 timestamp = 3;
 }
