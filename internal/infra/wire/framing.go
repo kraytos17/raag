@@ -46,3 +46,23 @@ func ReadMsg(r io.Reader, msg proto.Message) error {
 	}
 	return proto.Unmarshal(data, msg)
 }
+
+// ReadFrame reads a single length-prefixed message and returns its raw bytes
+// without unmarshaling, so the caller can decide how to interpret it.
+func ReadFrame(r io.Reader) ([]byte, error) {
+	var header [4]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
+		return nil, err
+	}
+
+	size := binary.BigEndian.Uint32(header[:])
+	if size > MaxMessageSize {
+		return nil, ErrMessageTooLarge
+	}
+
+	data := make([]byte, size)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}

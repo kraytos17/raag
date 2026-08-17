@@ -68,6 +68,7 @@ type P2PNodeConfig struct {
 	ChunkSize       int
 	PeerDataTTL     time.Duration
 	Transcoder      *transcoder.Transcoder
+	PeerRepo        app.PeerRepository
 }
 
 func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode, error) {
@@ -117,12 +118,13 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 	if cfg.Transcoder != nil {
 		streamHandler.SetTranscoder(cfg.Transcoder)
 	}
+
 	streamPool := NewStreamPool(p2pHost, protocols.StreamProtocol)
 	scorer := NewPeerScorer()
 
 	peerCache := discovery.NewPeerCache(cfg.MaxKnownPeers)
 	mdnsDiscovered := discovery.NewPeerCache(cfg.MaxKnownPeers)
-	peerMgr := newPeerManager(p2pHost, peerCache, libraryRepo, scorer, cfg.PeerDataTTL)
+	peerMgr := newPeerManager(p2pHost, peerCache, libraryRepo, scorer, cfg.PeerDataTTL, cfg.PeerRepo)
 	resolver := NewP2PResolver(libraryRepo, streamPool, peerMgr, scorer, p2pHost)
 
 	admission := protocols.NewAdmissionRegistry()
@@ -384,8 +386,9 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 	cn.peerMgr.peerCache.Add(pi)
 	cn.admission.Admit(pid)
 	slog.Debug("peer connected", "peer", pid, "addr", conn.RemoteMultiaddr().String())
-	go cn.peerMgr.FetchPeerData(context.Background(), pid)
+	cn.peerMgr.persist(pid)
 
+	go cn.peerMgr.FetchPeerData(context.Background(), pid)
 	cn.bus.Publish(context.Background(), domain.NewEvent(
 		domain.EventPeerConnected,
 		domain.PeerConnectedPayload{
@@ -401,6 +404,7 @@ func (cn *connNotifier) Disconnected(_ network.Network, conn network.Conn) {
 	slog.Debug("peer disconnected", "peer", pid)
 	cn.admission.Revoke(pid)
 	cn.peerMgr.onPeerDisconnected(pid)
+	cn.peerMgr.persist(pid)
 	if cn.streamPool != nil {
 		cn.streamPool.DrainPeer(pid)
 	}
@@ -448,6 +452,7 @@ type peerManager struct {
 	peerCache *discovery.PeerCache
 	library   app.LibraryRepository
 	scorer    *PeerScorer
+	repo      app.PeerRepository
 	mu        sync.RWMutex
 	manifests map[peer.ID]*peerManifest
 	caps      map[peer.ID]*peerCaps
@@ -467,16 +472,64 @@ type peerCaps struct {
 	addedAt time.Time
 }
 
-func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.LibraryRepository, scorer *PeerScorer, ttl time.Duration) *peerManager {
+func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.LibraryRepository, scorer *PeerScorer, ttl time.Duration, repo app.PeerRepository) *peerManager {
 	return &peerManager{
 		host:        h,
 		peerCache:   peerCache,
 		library:     library,
 		scorer:      scorer,
+		repo:        repo,
 		manifests:   make(map[peer.ID]*peerManifest),
 		caps:        make(map[peer.ID]*peerCaps),
 		fetchCancel: make(map[peer.ID]context.CancelFunc),
 		ttl:         ttl,
+	}
+}
+
+// persist writes the peer's current live state to the peer repository so that
+// IPC consumers (`raag peers`, the TUI panel) see real data instead of an
+// empty list. It is called on connect, after data fetch, on score changes,
+// and on disconnect. Best-effort: failures are logged, never fatal.
+func (pm *peerManager) persist(pid peer.ID) {
+	if pm.repo == nil {
+		return
+	}
+
+	var addrs []string
+	if pm.host != nil {
+		pi := pm.host.Peerstore().PeerInfo(pid)
+		addrs = make([]string, 0, len(pi.Addrs))
+		for _, a := range pi.Addrs {
+			addrs = append(addrs, a.String())
+		}
+	}
+
+	info := domain.NewPeerInfo(pid, addrs)
+	if caps := pm.GetPeerCapabilities(pid); caps != nil {
+		info.Capabilities = caps
+	}
+	if score := pm.GetPeerScore(context.Background(), pid); score != nil {
+		info.Score = score
+	}
+	if manifest := pm.GetManifest(pid); manifest != nil {
+		info.LibrarySummary = convert.ProtoToLibraryManifest(manifest)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := pm.repo.SavePeerInfo(ctx, info); err != nil {
+		slog.Debug("failed to persist peer info", "peer", pid, "err", err)
+	}
+	if info.Score != nil {
+		if err := pm.repo.SavePeerScore(ctx, pid, info.Score); err != nil {
+			slog.Debug("failed to persist peer score", "peer", pid, "err", err)
+		}
+	}
+	if info.LibrarySummary != nil {
+		if err := pm.repo.SaveLibraryManifest(ctx, pid, info.LibrarySummary); err != nil {
+			slog.Debug("failed to persist peer manifest", "peer", pid, "err", err)
+		}
 	}
 }
 
@@ -538,12 +591,14 @@ func (pm *peerManager) RecordFailure(pid peer.ID) {
 	if pm.scorer != nil {
 		pm.scorer.RecordFailure(pid)
 	}
+	pm.persist(pid)
 }
 
 func (pm *peerManager) RecordSuccess(pid peer.ID) {
 	if pm.scorer != nil {
 		pm.scorer.RecordSuccess(pid)
 	}
+	pm.persist(pid)
 }
 
 func (pm *peerManager) IsBanned(pid peer.ID) bool {
@@ -762,6 +817,9 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 			"codecs", caps.SupportedCodecs,
 			"transcode", caps.CanTranscode)
 	}
+	// Persist the freshly fetched manifest, capabilities, and score so the
+	// peer repo (and therefore `raag peers` / the TUI panel) reflects them.
+	pm.persist(pid)
 }
 
 func (pm *peerManager) onPeerDisconnected(pid peer.ID) {

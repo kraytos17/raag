@@ -136,6 +136,7 @@ type QueueHandler interface {
 	Previous() *domain.Track
 	Tracks() []*domain.Track
 	ToggleShuffle()
+	SetShuffle(shuffle bool)
 	SetRepeat(mode domain.RepeatMode)
 	GetShuffle() bool
 	GetRepeat() domain.RepeatMode
@@ -786,11 +787,8 @@ func (s *Server) handleQueueShuffle(req *pb.QueueShuffleRequest) *pb.Response {
 	if s.queue == nil {
 		return &pb.Response{Success: false, Error: errQueueUnavailable}
 	}
-	if req.Shuffle {
-		s.queue.ToggleShuffle()
-	} else if s.queue.GetShuffle() {
-		s.queue.ToggleShuffle()
-	}
+
+	s.queue.SetShuffle(req.Shuffle)
 	s.publishQueueUpdated()
 	return &pb.Response{Success: true}
 }
@@ -799,6 +797,7 @@ func (s *Server) handleQueueRepeat(req *pb.QueueRepeatRequest) *pb.Response {
 	if s.queue == nil {
 		return &pb.Response{Success: false, Error: errQueueUnavailable}
 	}
+
 	mode := domain.RepeatMode(req.Mode)
 	switch mode {
 	case domain.RepeatModeNone, domain.RepeatModeAll, domain.RepeatModeOne:

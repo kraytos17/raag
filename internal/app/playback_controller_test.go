@@ -39,7 +39,8 @@ func (r *testLibraryRepo) GetCoverArt(ctx context.Context, id domain.TrackID) ([
 func (r *testLibraryRepo) Delete(ctx context.Context, id domain.TrackID) error        { return nil }
 func (r *testLibraryRepo) BulkSave(ctx context.Context, tracks []*domain.Track) error { return nil }
 func (r *testLibraryRepo) ListAll(ctx context.Context) ([]*domain.Track, error)       { return nil, nil }
-func (r *testLibraryRepo) ListAllPaths(ctx context.Context) ([]string, error)         { return nil, nil }
+
+func (r *testLibraryRepo) ListAllPaths(ctx context.Context) ([]string, error) { return nil, nil }
 
 type testSearchHandler struct{}
 

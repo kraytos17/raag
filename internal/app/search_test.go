@@ -65,8 +65,10 @@ type spySearchIndex struct {
 	lastLimit int
 }
 
-func (s *spySearchIndex) Index(ctx context.Context, track *domain.Track) error         { return nil }
+func (s *spySearchIndex) Index(ctx context.Context, track *domain.Track) error { return nil }
+
 func (s *spySearchIndex) IndexBatch(ctx context.Context, tracks []*domain.Track) error { return nil }
+
 func (s *spySearchIndex) Search(ctx context.Context, query string, limit int) ([]domain.TrackID, error) {
 	s.lastLimit = limit
 	return nil, nil

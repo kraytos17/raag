@@ -189,6 +189,12 @@ func (q *Queue) ToggleShuffle() {
 	q.shuffle = !q.shuffle
 }
 
+func (q *Queue) SetShuffle(shuffle bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.shuffle = shuffle
+}
+
 func (q *Queue) GetShuffle() bool {
 	q.mu.RLock()
 	defer q.mu.RUnlock()

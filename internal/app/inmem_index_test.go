@@ -390,7 +390,8 @@ func (m *mockRebuildRepo) GetCoverArt(ctx context.Context, id domain.TrackID) ([
 func (m *mockRebuildRepo) Delete(ctx context.Context, id domain.TrackID) error        { return nil }
 func (m *mockRebuildRepo) BulkSave(ctx context.Context, tracks []*domain.Track) error { return nil }
 func (m *mockRebuildRepo) ListAll(ctx context.Context) ([]*domain.Track, error)       { return m.tracks, nil }
-func (m *mockRebuildRepo) ListAllPaths(ctx context.Context) ([]string, error)         { return nil, nil }
+
+func (m *mockRebuildRepo) ListAllPaths(ctx context.Context) ([]string, error) { return nil, nil }
 
 func TestIndex_Concurrent(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)

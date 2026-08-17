@@ -3,7 +3,6 @@ package ipc
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/p-society/raag/internal/infra/backoff"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -54,15 +54,36 @@ type ScanProgress struct {
 // Client maintains a persistent connection to the IPC server,
 // automatically reconnecting on failure and sending keepalive pings
 // to prevent server-side timeouts.
+//
+// A single reader goroutine owns all reads from the connection and
+// demultiplexes each frame to a pending request waiter, an event
+// subscriber, or a scan-progress listener. This avoids concurrent
+// readers splitting frames.
 type Client struct {
 	socketPath string
 
-	mu        sync.Mutex
-	conn      net.Conn
-	closeOnce sync.Once
-	closed    chan struct{}
-
+	mu            sync.Mutex
+	conn          net.Conn
+	closeOnce     sync.Once
+	closed        chan struct{}
 	keepaliveDone chan struct{}
+
+	// pending maps a request ID to its response waiter.
+	pending map[string]chan *roundTripResult
+	// subs maps a subscriber ID to its event client.
+	subs map[uint64]*EventClient
+	// nextSubID is the next subscriber ID.
+	nextSubID uint64
+	// scanSubs maps a scan listener ID to its progress channel.
+	scanSubs map[uint64]chan *pb.Response
+	// nextScanID is the next scan listener ID.
+	nextScanID uint64
+}
+
+// roundTripResult carries a response or the error that prevented it.
+type roundTripResult struct {
+	resp *pb.Response
+	err  error
 }
 
 // NewClient creates a new persistent IPC client and starts the keepalive goroutine.
@@ -71,13 +92,16 @@ func NewClient(socketPath string) *Client {
 		socketPath:    socketPath,
 		closed:        make(chan struct{}),
 		keepaliveDone: make(chan struct{}),
+		pending:       make(map[string]chan *roundTripResult),
+		subs:          make(map[uint64]*EventClient),
+		scanSubs:      make(map[uint64]chan *pb.Response),
 	}
 
 	go c.keepalive()
 	return c
 }
 
-// connect dials the socket and stores the connection.
+// connect dials the socket and starts the reader goroutine.
 // Caller must hold c.mu.
 func (c *Client) connect() error {
 	if c.conn != nil {
@@ -88,11 +112,17 @@ func (c *Client) connect() error {
 	if err != nil {
 		return fmt.Errorf("ipc: connect: %w", err)
 	}
+
 	c.conn = conn
+	// The reader goroutine is the sole owner of reads on this connection.
+	// It demultiplexes frames to request waiters, event subscribers, and
+	// scan listeners, and tears the connection down on error.
+	go c.readLoop(conn)
 	return nil
 }
 
-// reconnect closes any broken connection and re-dials with exponential backoff.
+// reconnect closes any broken connection and re-dials with exponential backoff,
+// restarting the reader goroutine on success.
 // Caller must hold c.mu.
 func (c *Client) reconnect() error {
 	if c.conn != nil {
@@ -111,6 +141,7 @@ func (c *Client) reconnect() error {
 		conn, err := net.DialTimeout("unix", c.socketPath, domain.IPCConnectTimeout)
 		if err == nil {
 			c.conn = conn
+			go c.readLoop(conn)
 			return nil
 		}
 		if attempt == domain.IPCReconnectMaxAttempts-1 {
@@ -132,56 +163,193 @@ func (c *Client) reconnect() error {
 // On connection failure, it attempts exactly one reconnect before giving up.
 func (c *Client) send(req *pb.Request) (*pb.Response, error) {
 	req.RequestId = uuid.New().String()
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	resp, err := c.sendOnce(req)
+	if err == nil || errors.Is(err, ErrClientClosed) {
+		return resp, err
+	}
 
+	// Connection-level failure: reconnect once and retry.
+	c.mu.Lock()
+	if reconnErr := c.reconnect(); reconnErr != nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("ipc: send failed and reconnect failed: %w", reconnErr)
+	}
+	c.mu.Unlock()
+
+	req.RequestId = uuid.New().String()
+	return c.sendOnce(req)
+}
+
+// sendOnce performs a single attempt: registers a waiter, writes the request
+// under c.mu, then waits for the response outside the lock.
+func (c *Client) sendOnce(req *pb.Request) (*pb.Response, error) {
+	c.mu.Lock()
 	select {
 	case <-c.closed:
+		c.mu.Unlock()
 		return nil, ErrClientClosed
 	default:
 	}
 
 	if c.conn == nil {
 		if err := c.connect(); err != nil {
+			c.mu.Unlock()
 			return nil, err
 		}
 	}
 
-	resp, err := c.doRoundTrip(req)
-	if err == nil {
-		return resp, nil
-	}
-	if reconnErr := c.reconnect(); reconnErr != nil {
-		return nil, fmt.Errorf("ipc: send failed and reconnect failed: %w", reconnErr)
-	}
-
-	req.RequestId = uuid.New().String()
-	return c.doRoundTrip(req)
-}
-
-// doRoundTrip writes req and reads resp on c.conn.
-// It loops discarding any broadcast messages (non-matching request IDs)
-// until it receives the response matching our request.
-// Caller must hold c.mu and c.conn must be non-nil.
-func (c *Client) doRoundTrip(req *pb.Request) (*pb.Response, error) {
+	ch := make(chan *roundTripResult, 1)
+	c.pending[req.RequestId] = ch
 	if err := c.conn.SetWriteDeadline(time.Now().Add(domain.IPCWriteTimeout)); err != nil {
+		delete(c.pending, req.RequestId)
+		c.mu.Unlock()
 		return nil, err
 	}
 	if err := wire.WriteMsg(c.conn, req); err != nil {
+		delete(c.pending, req.RequestId)
+		c.mu.Unlock()
 		return nil, err
 	}
+	c.mu.Unlock()
+	return c.waitResponse(req.RequestId, ch)
+}
+
+// waitResponse blocks until the response for the request arrives, the
+// connection fails, the client is closed, or the read deadline elapses.
+func (c *Client) waitResponse(requestID string, ch chan *roundTripResult) (*pb.Response, error) {
+	timer := time.NewTimer(domain.IPCReadTimeout)
+	defer timer.Stop()
+
 	for {
-		if err := c.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout)); err != nil {
-			return nil, err
+		select {
+		case <-c.closed:
+			return nil, ErrClientClosed
+		case r := <-ch:
+			if r.err != nil {
+				return nil, r.err
+			}
+			return r.resp, nil
+		case <-timer.C:
+			c.mu.Lock()
+			delete(c.pending, requestID)
+			c.mu.Unlock()
+			return nil, fmt.Errorf("ipc: request timed out")
+		}
+	}
+}
+
+// readLoop is the single reader for a connection. It reads frames and routes
+// them to the correct consumer. On read error it fails all pending requests,
+// notifies event subscribers, and returns (the connection is dead).
+func (c *Client) readLoop(conn net.Conn) {
+	for {
+		if err := conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout)); err != nil {
+			c.onReadError(conn, err)
+			return
+		}
+
+		frame, err := wire.ReadFrame(conn)
+		if err != nil {
+			c.onReadError(conn, err)
+			return
 		}
 
 		var resp pb.Response
-		if err := wire.ReadMsg(c.conn, &resp); err != nil {
-			return nil, err
+		if err := proto.Unmarshal(frame, &resp); err == nil {
+			if resp.RequestId != "" {
+				c.deliverResponse(&resp)
+				continue
+			}
+			if resp.GetScanProgress() != nil {
+				c.deliverScanProgress(&resp)
+				continue
+			}
 		}
-		if resp.RequestId == req.RequestId {
-			return &resp, nil
+
+		var event pb.Event
+		if err := proto.Unmarshal(frame, &event); err == nil {
+			c.deliverEvent(&event)
+			continue
 		}
+		slog.Debug("ipc: dropped unclassifiable frame")
+	}
+}
+
+// deliverResponse routes a request/response frame to its pending waiter.
+func (c *Client) deliverResponse(resp *pb.Response) {
+	c.mu.Lock()
+	ch := c.pending[resp.RequestId]
+	delete(c.pending, resp.RequestId)
+	c.mu.Unlock()
+	if ch != nil {
+		ch <- &roundTripResult{resp: resp}
+	}
+}
+
+// deliverEvent fans an event frame out to all registered event subscribers.
+func (c *Client) deliverEvent(event *pb.Event) {
+	c.mu.Lock()
+	subs := make([]*EventClient, 0, len(c.subs))
+	for _, ec := range c.subs {
+		subs = append(subs, ec)
+	}
+	c.mu.Unlock()
+
+	for _, ec := range subs {
+		ec.sendEvent(event)
+	}
+}
+
+// deliverScanProgress fans a scan-progress broadcast out to scan listeners.
+func (c *Client) deliverScanProgress(resp *pb.Response) {
+	c.mu.Lock()
+	listeners := make([]chan *pb.Response, 0, len(c.scanSubs))
+	for _, ch := range c.scanSubs {
+		listeners = append(listeners, ch)
+	}
+	c.mu.Unlock()
+
+	for _, ch := range listeners {
+		select {
+		case ch <- resp:
+		default:
+		}
+	}
+}
+
+// onReadError handles a failed read on conn. It fails every pending request,
+// notifies event subscribers that the connection dropped, and clears scan
+// listeners, then returns so the connection can be re-established lazily.
+func (c *Client) onReadError(conn net.Conn, err error) {
+	c.mu.Lock()
+	if c.conn != conn {
+		// A reconnect replaced this connection; a stale reader is exiting.
+		c.mu.Unlock()
+		return
+	}
+	c.conn = nil
+
+	connErr := fmt.Errorf("ipc: connection lost: %w", err)
+	for id, ch := range c.pending {
+		delete(c.pending, id)
+		select {
+		case ch <- &roundTripResult{err: connErr}:
+		default:
+		}
+	}
+
+	subs := make([]*EventClient, 0, len(c.subs))
+	for _, ec := range c.subs {
+		subs = append(subs, ec)
+	}
+	for id, ch := range c.scanSubs {
+		delete(c.scanSubs, id)
+		close(ch)
+	}
+	c.mu.Unlock()
+
+	for _, ec := range subs {
+		ec.notifyConnLost(connErr)
 	}
 }
 
@@ -232,50 +400,45 @@ func (c *Client) Close() error {
 }
 
 // LibScanAsync initiates a library scan and calls onProgress for each progress update.
-// This method holds the connection mutex for the entire duration of the scan,
-// blocking other commands until the scan completes.
+// Scan-progress frames are broadcast by the server as Responses with an empty
+// RequestId; the client's reader routes them to a dedicated scan listener here.
 func (c *Client) LibScanAsync(
 	incremental bool,
 	onProgress func(ScanProgress),
 ) (*pb.Response, error) {
+	listener := make(chan *pb.Response, 16)
+	c.mu.Lock()
+	c.nextScanID++
+	id := c.nextScanID
+	c.scanSubs[id] = listener
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.scanSubs, id)
+		c.mu.Unlock()
+	}()
+
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
-		RequestId:       uuid.New().String(),
 		Payload:         &pb.Request_LibScan{LibScan: &pb.LibScanRequest{Incremental: incremental}},
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	select {
-	case <-c.closed:
-		return nil, ErrClientClosed
-	default:
-	}
-
-	if c.conn == nil {
-		if err := c.connect(); err != nil {
-			return nil, err
-		}
-	}
-	if err := c.conn.SetWriteDeadline(time.Now().Add(domain.IPCWriteTimeout)); err != nil {
-		return nil, err
-	}
-	if err := wire.WriteMsg(c.conn, req); err != nil {
-		_ = c.reconnect()
-		return nil, fmt.Errorf("ipc: scan request write failed: %w", err)
+	if _, err := c.send(req); err != nil {
+		return nil, fmt.Errorf("ipc: scan request failed: %w", err)
 	}
 	for {
-		if err := c.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout)); err != nil {
-			return nil, err
-		}
+		select {
+		case <-c.closed:
+			return nil, ErrClientClosed
+		case resp := <-listener:
+			if resp == nil {
+				// The reader closed the listener after a connection drop.
+				return nil, fmt.Errorf("ipc: scan interrupted: connection lost")
+			}
 
-		var resp pb.Response
-		if err := wire.ReadMsg(c.conn, &resp); err != nil {
-			_ = c.reconnect()
-			return nil, fmt.Errorf("ipc: scan read failed: %w", err)
-		}
-		if sp := resp.GetScanProgress(); sp != nil {
+			sp := resp.GetScanProgress()
+			if sp == nil {
+				continue
+			}
 			if onProgress != nil {
 				onProgress(ScanProgress{
 					JobID:       sp.JobId,
@@ -286,15 +449,11 @@ func (c *Client) LibScanAsync(
 				})
 			}
 			if sp.Phase == "complete" {
-				return &pb.Response{
-					Success:   true,
-					JobId:     sp.JobId,
-					RequestId: resp.RequestId,
-				}, nil
+				return &pb.Response{Success: true, JobId: sp.JobId}, nil
 			}
-			continue
+		case <-time.After(domain.IPCReadTimeout):
+			return nil, fmt.Errorf("ipc: scan timed out")
 		}
-		return &resp, nil
 	}
 }
 
@@ -592,7 +751,9 @@ const (
 	EventError            uint32 = 256
 )
 
-// EventClient handles event subscriptions with backpressure
+// EventClient handles event subscriptions with backpressure. The client's
+// single reader goroutine fans events out to registered subscribers; the
+// EventClient does not read the connection itself.
 type EventClient struct {
 	events    chan *pb.Event
 	errChan   chan error
@@ -600,6 +761,7 @@ type EventClient struct {
 	closed    chan struct{}
 	client    *Client
 	eventMask uint32
+	subID     uint64
 }
 
 // Subscribe subscribes to events from the server.
@@ -613,17 +775,22 @@ func (c *Client) Subscribe(eventMask uint32) (*EventClient, error) {
 		eventMask: eventMask,
 	}
 
+	c.mu.Lock()
+	c.nextSubID++
+	ec.subID = c.nextSubID
+	c.subs[ec.subID] = ec
+	c.mu.Unlock()
+
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
 		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: eventMask}},
 	}
-
-	_, err := c.send(req)
-	if err != nil {
+	if _, err := c.send(req); err != nil {
+		c.mu.Lock()
+		delete(c.subs, ec.subID)
+		c.mu.Unlock()
 		return nil, fmt.Errorf("subscribe failed: %w", err)
 	}
-
-	go ec.readEvents()
 	return ec, nil
 }
 
@@ -638,11 +805,19 @@ func (c *Client) SubscribeWithRetry(eventMask uint32) *EventClient {
 		eventMask: eventMask,
 	}
 
+	c.mu.Lock()
+	c.nextSubID++
+	ec.subID = c.nextSubID
+	c.subs[ec.subID] = ec
+	c.mu.Unlock()
+
 	go ec.eventLoopWithRetry()
 	return ec
 }
 
-// eventLoopWithRetry handles reconnection automatically
+// eventLoopWithRetry re-subscribes until the client is closed, using
+// exponential backoff on failure. The reader goroutine signals a connection
+// drop by delivering to errChan (via notifyConnLost).
 func (ec *EventClient) eventLoopWithRetry() {
 	policy := backoff.NewExponential(100*time.Millisecond, 5*time.Second)
 	for {
@@ -652,7 +827,7 @@ func (ec *EventClient) eventLoopWithRetry() {
 		default:
 		}
 
-		err := ec.connect()
+		err := ec.resubscribe()
 		if err != nil {
 			if backoff.Wait(ec.closed, policy.Next()) {
 				return
@@ -661,48 +836,26 @@ func (ec *EventClient) eventLoopWithRetry() {
 		}
 
 		policy.Reset()
-		ec.readEventsLoop()
+		select {
+		case <-ec.closed:
+			return
+		case <-ec.errChan:
+			// Connection dropped; resubscribe.
+		}
 	}
 }
 
-// connect establishes the subscription connection
-func (ec *EventClient) connect() error {
+// resubscribe (re-)issues the Subscribe request on the shared connection.
+func (ec *EventClient) resubscribe() error {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
 		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: ec.eventMask}},
 	}
-
 	_, err := ec.client.send(req)
 	return err
 }
 
-// readEventsLoop continuously reads events from the server
-func (ec *EventClient) readEventsLoop() error {
-	for {
-		select {
-		case <-ec.closed:
-			return nil
-		default:
-		}
-
-		ec.client.mu.Lock()
-		if ec.client.conn != nil {
-			_ = ec.client.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout))
-		}
-		ec.client.mu.Unlock()
-
-		var event pb.Event
-		if err := wire.ReadMsg(ec.client.conn, &event); err != nil {
-			if err == io.EOF || strings.Contains(err.Error(), "use of closed") {
-				return err
-			}
-			return err
-		}
-		ec.sendEvent(&event)
-	}
-}
-
-// sendEvent sends an event to the channel with backpressure handling
+// sendEvent sends an event to the channel with backpressure handling.
 func (ec *EventClient) sendEvent(event *pb.Event) {
 	select {
 	case ec.events <- event:
@@ -720,31 +873,12 @@ func (ec *EventClient) sendEvent(event *pb.Event) {
 	}
 }
 
-// readEvents starts the event reader (non-retrying version)
-func (ec *EventClient) readEvents() {
-	go func() {
-		for {
-			select {
-			case <-ec.closed:
-				return
-			default:
-			}
-
-			ec.client.mu.Lock()
-			if ec.client.conn != nil {
-				_ = ec.client.conn.SetReadDeadline(time.Now().Add(domain.IPCReadTimeout))
-			}
-			ec.client.mu.Unlock()
-
-			var event pb.Event
-			err := wire.ReadMsg(ec.client.conn, &event)
-			if err != nil {
-				ec.errChan <- err
-				return
-			}
-			ec.sendEvent(&event)
-		}
-	}()
+// notifyConnLost delivers a connection-drop signal to the subscriber.
+func (ec *EventClient) notifyConnLost(err error) {
+	select {
+	case ec.errChan <- err:
+	default:
+	}
 }
 
 // Events returns the channel to receive events
@@ -758,23 +892,23 @@ func (ec *EventClient) Err() <-chan error {
 }
 
 // Close unsubscribes and closes the event client.
-// The unsubscribe request is written without waiting for a response: the event
-// reader and request round-trips share one connection, so a synchronous send
-// would block until the read deadline while readEventsLoop consumes the reply.
-// The server removes the subscription when the connection closes regardless.
+// The unsubscribe request is written without waiting for a response: the
+// server removes the subscription when the connection closes regardless.
 func (ec *EventClient) Close() error {
 	ec.closeOnce.Do(func() {
 		close(ec.closed)
-		req := &pb.Request{
-			ProtocolVersion: domain.IPCProtocolVersion,
-			Payload:         &pb.Request_Unsubscribe{Unsubscribe: &pb.UnsubscribeRequest{}},
-		}
-
 		ec.client.mu.Lock()
-		if ec.client.conn != nil {
-			_ = wire.WriteMsg(ec.client.conn, req)
-		}
+		delete(ec.client.subs, ec.subID)
+		conn := ec.client.conn
 		ec.client.mu.Unlock()
+
+		if conn != nil {
+			req := &pb.Request{
+				ProtocolVersion: domain.IPCProtocolVersion,
+				Payload:         &pb.Request_Unsubscribe{Unsubscribe: &pb.UnsubscribeRequest{}},
+			}
+			_ = wire.WriteMsg(conn, req)
+		}
 	})
 	return nil
 }
