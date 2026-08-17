@@ -2,6 +2,7 @@ package audio
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"sync"
 	"testing"
@@ -230,6 +231,7 @@ func TestStreamingSource_CancelContext(t *testing.T) {
 		rb:     NewRingBuffer(16 * 1024),
 		source: source,
 		done:   done,
+		dataCh: make(chan struct{}, 1),
 	}
 
 	ss.wg.Add(1)
@@ -273,5 +275,145 @@ func TestStreamingSource_MultipleClose(t *testing.T) {
 	}
 	if err2 != nil {
 		t.Errorf("Second close returned error: %v", err2)
+	}
+}
+
+// TestStreamingSource_ReadBlocksUntilData verifies Read blocks (rather than
+// returning ErrEmpty) when the buffer is empty, and returns data once the
+// source delivers it (§12.2.2 pre-roll / §12.2.3 underrun).
+func TestStreamingSource_ReadBlocksUntilData(t *testing.T) {
+	source := newBlockingSource()
+	ss := NewStreamingSource(source, 64*1024)
+	defer func() { _ = ss.Close() }()
+
+	readDone := make(chan struct{})
+	var got []byte
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 1024)
+		n, err := ss.Read(buf)
+		if err != nil && err != io.EOF {
+			t.Errorf("Read() error = %v", err)
+			return
+		}
+		got = buf[:n]
+	}()
+
+	// Give the reader time to block on the empty buffer.
+	time.Sleep(50 * time.Millisecond)
+
+	select {
+	case <-readDone:
+		t.Fatal("Read returned before data was available")
+	default:
+	}
+
+	source.ch <- []byte("hello")
+	select {
+	case <-readDone:
+		if string(got) != "hello" {
+			t.Errorf("Read() = %q, want %q", got, "hello")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Read did not unblock after data arrived")
+	}
+}
+
+// TestStreamingSource_WaitReady verifies the pre-roll gate: it blocks until the
+// minimum byte threshold is buffered and returns nil.
+func TestStreamingSource_WaitReady(t *testing.T) {
+	source := newBlockingSource()
+	ss := NewStreamingSource(source, 256*1024)
+	defer func() { _ = ss.Close() }()
+
+	ready := make(chan error, 1)
+	go func() {
+		ready <- ss.WaitReady(context.Background(), PreRollBytes)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case err := <-ready:
+		t.Fatalf("WaitReady returned early with %v", err)
+	default:
+	}
+
+	source.ch <- make([]byte, 32*1024)
+	source.ch <- make([]byte, 32*1024)
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("WaitReady() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitReady did not unblock after data arrived")
+	}
+}
+
+// TestStreamingSource_WaitReady_EmptySource verifies WaitReady surfaces a
+// terminal error when the source ends with no data.
+func TestStreamingSource_WaitReady_EmptySource(t *testing.T) {
+	source := &slowReader{data: []byte{}}
+	ss := NewStreamingSource(source, 16*1024)
+	defer func() { _ = ss.Close() }()
+
+	if err := ss.WaitReady(context.Background(), PreRollBytes); err == nil {
+		t.Fatal("WaitReady on empty source: expected error, got nil")
+	}
+}
+
+// TestStreamingSource_WaitReady_ContextCancel verifies WaitReady honors ctx.
+func TestStreamingSource_WaitReady_ContextCancel(t *testing.T) {
+	source := newBlockingSource()
+	ss := NewStreamingSource(source, 64*1024)
+	defer func() { _ = ss.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ready := make(chan error, 1)
+	go func() {
+		ready <- ss.WaitReady(ctx, PreRollBytes)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-ready:
+		if err == nil {
+			t.Fatal("WaitReady after cancel: expected error, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitReady did not honor context cancellation")
+	}
+}
+
+// blockingSource blocks on Read until data is pushed to its channel, and
+// returns EOF once closed.
+type blockingSource struct {
+	ch   chan []byte
+	done chan struct{}
+}
+
+func (s *blockingSource) Read(p []byte) (int, error) {
+	select {
+	case <-s.done:
+		return 0, io.EOF
+	case data, ok := <-s.ch:
+		if !ok {
+			return 0, io.EOF
+		}
+		return copy(p, data), nil
+	}
+}
+
+func (s *blockingSource) Close() error {
+	close(s.done)
+	return nil
+}
+
+func newBlockingSource() *blockingSource {
+	return &blockingSource{
+		ch:   make(chan []byte),
+		done: make(chan struct{}),
 	}
 }

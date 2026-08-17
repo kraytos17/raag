@@ -65,7 +65,7 @@ type PeerCapabilities struct {
 
 func NewPeerCapabilities() *PeerCapabilities {
 	return &PeerCapabilities{
-		SupportedCodecs:   []string{"mp3", "flac", "ogg", "wav", "aac"},
+		SupportedCodecs:   PlayableCodecs,
 		SupportedBitrates: SupportedBitrates,
 		CanTranscode:      false,
 		UploadBandwidth:   0,

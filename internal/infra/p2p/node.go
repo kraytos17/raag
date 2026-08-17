@@ -630,7 +630,7 @@ func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
 		delete(pm.caps, pid)
 	}
 	return &domain.PeerCapabilities{
-		SupportedCodecs: domain.AudioExtensions,
+		SupportedCodecs: domain.PlayableCodecs,
 	}
 }
 
@@ -876,7 +876,7 @@ type localCapabilities struct {
 
 func (lc *localCapabilities) GetLocalCapabilities() *pb.PeerCapabilities {
 	return &pb.PeerCapabilities{
-		SupportedCodecs:   domain.AudioExtensions,
+		SupportedCodecs:   domain.PlayableCodecs,
 		SupportedBitrates: domain.SupportedBitrates,
 		ProtocolVersion:   "1.0.0",
 		CanTranscode:      false,

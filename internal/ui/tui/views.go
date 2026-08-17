@@ -69,11 +69,13 @@ func (m *Model) renderWide() string {
 	m.Library.Title = " Library "
 	m.Queue.Title = " Queue "
 	m.Peers.Title = " Peers "
+	m.Playlists.Title = " Playlists "
 
-	var library, queue, peers string
+	var library, queue, peers, playlists string
 	library = activePanelStyle.Render(m.Library.View())
 	queue = panelStyle.Render(m.Queue.View())
 	peers = panelStyle.Render(m.Peers.View())
+	playlists = panelStyle.Render(m.Playlists.View())
 
 	switch active {
 	case PanelLibrary:
@@ -82,6 +84,8 @@ func (m *Model) renderWide() string {
 		queue = activePanelStyle.Render(m.Queue.View())
 	case PanelPeers:
 		peers = activePanelStyle.Render(m.Peers.View())
+	case PanelPlaylists:
+		playlists = activePanelStyle.Render(m.Playlists.View())
 	}
 
 	return lipgloss.JoinHorizontal(
@@ -89,6 +93,7 @@ func (m *Model) renderWide() string {
 		library,
 		queue,
 		peers,
+		playlists,
 	)
 }
 
@@ -103,6 +108,9 @@ func (m *Model) renderNarrow() string {
 	case PanelPeers:
 		m.Peers.Title = " ▶ Peers "
 		return activePanelStyle.Render(m.Peers.View())
+	case PanelPlaylists:
+		m.Playlists.Title = " ▶ Playlists "
+		return activePanelStyle.Render(m.Playlists.View())
 	}
 	return ""
 }
@@ -128,7 +136,8 @@ func (m *Model) renderFooter() string {
 	volumeBar := m.renderVolumeBar(volumeWidth)
 
 	controls := subtleStyle.Render(
-		"[space] play/pause  [n] next  [p] prev  [f] +10s  [b] -10s  [?] help  [q] quit")
+		"[space] play/pause  [n] next  [p] prev  [f] +10s  [b] -10s  [?] help  [q] quit",
+	)
 
 	modeTags := ""
 	if m.Player.Shuffle {
@@ -150,7 +159,6 @@ func (m *Model) renderFooter() string {
 	row3 := subtleStyle.Render("vol ") + volumeBar + subtleStyle.Render(fmt.Sprintf(" %d%%  ", m.Volume)) + modeTags + controls
 
 	borderLine := dimStyle.Render(strings.Repeat("─", m.Width))
-
 	return footerStyle.Render(borderLine + "\n" + row1 + "\n" + row2 + "\n" + row3)
 }
 
@@ -163,6 +171,7 @@ func (m *Model) renderSeekBar(width int) string {
 	if percent > 1.0 {
 		percent = 1.0
 	}
+
 	filled := min(int(float64(width-1)*percent), width-1)
 	rest := width - 1 - filled
 
@@ -181,7 +190,6 @@ func (m *Model) renderVolumeBar(width int) string {
 	var result strings.Builder
 	result.WriteString(strings.Repeat("█", filled))
 	result.WriteString(strings.Repeat("░", rest))
-
 	return lipgloss.NewStyle().Foreground(accentColor).Render(result.String())
 }
 
@@ -206,11 +214,8 @@ func (m *Model) renderHelpOverlay() string {
   [q]      Quit
 
 Press Esc or ? to close`
-
 	m.HelpViewport.SetContent(helpContent)
-
 	content := helpPanelStyle.Render(m.HelpViewport.View())
-
 	return lipgloss.Place(
 		m.Width,
 		m.Height,

@@ -76,4 +76,10 @@ var (
 			Background(surfaceColor).
 			Padding(1, 2).
 			Margin(1)
+
+	searchStyle = lipgloss.NewStyle().
+			Foreground(textColor).
+			Background(surfaceColor).
+			Padding(0, 1).
+			Margin(0, 2)
 )

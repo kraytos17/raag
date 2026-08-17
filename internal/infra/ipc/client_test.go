@@ -652,6 +652,30 @@ func TestTranslateEvent_QueueUpdated(t *testing.T) {
 	}
 }
 
+// TestTranslateEvent_PlaybackBufferingReady verifies buffering/refill domain
+// events translate to PLAYBACK_STATE with "buffering"/"playing" payloads
+// (§12.2.3).
+func TestTranslateEvent_PlaybackBufferingReady(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	et, payload := translateEvent(srv.Server, domain.NewEvent(domain.EventPlaybackBuffering, nil))
+	if et != pb.EventType_EVENT_TYPE_PLAYBACK_STATE {
+		t.Fatalf("buffering event type = %v, want PLAYBACK_STATE", et)
+	}
+	if string(payload) != "buffering" {
+		t.Fatalf("buffering payload = %q, want \"buffering\"", payload)
+	}
+
+	et, payload = translateEvent(srv.Server, domain.NewEvent(domain.EventPlaybackReady, nil))
+	if et != pb.EventType_EVENT_TYPE_PLAYBACK_STATE {
+		t.Fatalf("ready event type = %v, want PLAYBACK_STATE", et)
+	}
+	if string(payload) != "playing" {
+		t.Fatalf("ready payload = %q, want \"playing\"", payload)
+	}
+}
+
 // TestTranslateEvent_PeerConnected verifies peer events translate to
 // EVENT_TYPE_PEER_CONNECTED with a Peer payload.
 func TestTranslateEvent_PeerConnected(t *testing.T) {

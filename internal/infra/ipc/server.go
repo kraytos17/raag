@@ -188,6 +188,8 @@ func (s *Server) wireEventBus(bus domain.EventBus) {
 		domain.EventScanStarted,
 		domain.EventScanComplete,
 		domain.EventQueueUpdated,
+		domain.EventPlaybackBuffering,
+		domain.EventPlaybackReady,
 	} {
 		bus.Subscribe(t, func(e domain.Event) {
 			eventType, payload := translateEvent(s, e)
@@ -253,6 +255,10 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 			qt[i] = convert.TrackToProto(t)
 		}
 		return pb.EventType_EVENT_TYPE_QUEUE_UPDATED, mustMarshal(&pb.QueueResponse{Tracks: qt})
+	case domain.EventPlaybackBuffering:
+		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("buffering")
+	case domain.EventPlaybackReady:
+		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("playing")
 	default:
 		return pb.EventType_EVENT_TYPE_UNSPECIFIED, nil
 	}

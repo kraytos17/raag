@@ -21,6 +21,7 @@ const (
 	PanelLibrary Panel = iota
 	PanelQueue
 	PanelPeers
+	PanelPlaylists
 )
 
 type PlaybackState string
@@ -53,9 +54,10 @@ type Model struct {
 
 	ActivePanel Panel
 
-	Library list.Model
-	Queue   list.Model
-	Peers   list.Model
+	Library   list.Model
+	Queue     list.Model
+	Peers     list.Model
+	Playlists list.Model
 
 	SearchInput textinput.Model
 	InSearch    bool
@@ -178,6 +180,32 @@ func (p PeerItem) FilterValue() string {
 	return p.Peer.Id
 }
 
+// PlaylistItem is a list item wrapping a playlist.
+type PlaylistItem struct {
+	Playlist *pb.Playlist
+}
+
+func (p PlaylistItem) Title() string {
+	if p.Playlist == nil {
+		return unknownTitle
+	}
+	return p.Playlist.Name
+}
+
+func (p PlaylistItem) Description() string {
+	if p.Playlist == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d tracks", len(p.Playlist.TrackIds))
+}
+
+func (p PlaylistItem) FilterValue() string {
+	if p.Playlist == nil {
+		return ""
+	}
+	return p.Playlist.Name
+}
+
 func formatBandwidth(bps int64) string {
 	if bps > 1_000_000 {
 		return fmt.Sprintf("%.1fMB", float64(bps)/1_000_000)
@@ -235,18 +263,20 @@ func (m *Model) relayout(width, height int) {
 	headerHeight := 3
 	footerHeight := 5
 	availableHeight := max(height-headerHeight-footerHeight, 1)
-
 	if width >= 120 {
-		libWidth := width * 50 / 100
-		queueWidth := width * 30 / 100
-		peersWidth := width - libWidth - queueWidth
+		libWidth := width * 40 / 100
+		queueWidth := width * 20 / 100
+		peersWidth := width * 20 / 100
+		plWidth := width - libWidth - queueWidth - peersWidth
 		m.Library = newList(libWidth-2, availableHeight)
 		m.Queue = newList(queueWidth-2, availableHeight)
 		m.Peers = newList(peersWidth-2, availableHeight)
+		m.Playlists = newList(plWidth-2, availableHeight)
 	} else {
 		m.Library = newList(width-2, availableHeight)
 		m.Queue = newList(width-2, availableHeight)
 		m.Peers = newList(width-2, availableHeight)
+		m.Playlists = newList(width-2, availableHeight)
 	}
 }
 
@@ -257,6 +287,7 @@ func newList(width, height int) list.Model {
 	if height < 1 {
 		height = 1
 	}
+
 	delegate := list.NewDefaultDelegate()
 	l := list.New([]list.Item{}, delegate, width, height)
 	l.SetShowStatusBar(false)
@@ -269,7 +300,6 @@ func newList(width, height int) list.Model {
 // Init starts the program: connects to the daemon and starts the event stream.
 func (m *Model) Init() tea.Cmd {
 	m.IPCClient = ipc.NewClient(m.SocketPath)
-
 	m.EventCh = m.IPCClient.SubscribeWithRetry(
 		ipc.EventPlaybackState |
 			ipc.EventTrackChanged |
@@ -283,13 +313,13 @@ func (m *Model) Init() tea.Cmd {
 	)
 
 	go m.eventLoop()
-
 	return tea.Batch(
 		m.fetchInitialData(),
 		m.fetchLibrary(),
 		m.fetchQueue(),
 		m.fetchQueueMode(),
 		m.fetchPeers(),
+		m.fetchPlaylists(),
 	)
 }
 
@@ -381,6 +411,7 @@ type LibraryMsg struct {
 	Err    error
 	Tracks []*pb.Track
 }
+
 type QueueMsg struct {
 	Err    error
 	Tracks []*pb.Track
@@ -391,82 +422,78 @@ type QueueModeMsg struct {
 	Shuffle bool
 	Repeat  string
 }
+
 type PeersMsg struct {
 	Err   error
 	Peers []*pb.Peer
 }
 
+type PlaylistsMsg struct {
+	Err       error
+	Playlists []*pb.Playlist
+}
+
+type PlaylistTracksMsg struct {
+	Err      error
+	Playlist *pb.Playlist
+	Tracks   []*pb.Track
+}
+
 // Update handles all messages and updates the model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.relayout(msg.Width, msg.Height)
-
 	case tea.KeyPressMsg:
 		cmds = append(cmds, m.handleKey(msg)...)
-
 	case PlaybackStateMsg:
 		m.Player.State = PlaybackState(msg.State)
-
 	case TrackChangedMsg:
 		m.handleTrackChanged(msg)
-
 	case ProgressMsg:
 		m.Player.PositionMs = msg.PositionMs
 		if msg.DurationMs > 0 {
 			m.Player.DurationMs = msg.DurationMs
 		}
-
 	case VolumeMsg:
 		m.Volume = msg.Volume
-
 	case QueueUpdatedMsg:
 		m.setQueueItems(msg.Tracks)
-
 	case PeerConnectedMsg:
 		cmds = append(cmds, m.handlePeerConnected(msg)...)
-
 	case PeerDisconnectedMsg:
 		cmds = append(cmds, m.handlePeerDisconnected(msg)...)
-
 	case LibraryUpdatedMsg:
 		cmds = append(cmds, m.fetchLibrary())
-
 	case ReconnectingMsg:
 		m.Reconnecting = true
 		m.Connected = false
-
 	case ConnectedMsg:
 		cmds = append(cmds, m.handleConnected()...)
-
 	case ErrorMsg:
 		if msg.Err != "" {
 			m.Err = fmt.Errorf("%s", msg.Err)
 		}
-
 	case StatusMsg:
 		cmds = append(cmds, m.handleStatusMsg(msg)...)
-
 	case LibraryMsg:
 		cmds = append(cmds, m.handleLibraryMsg(msg)...)
-
 	case QueueMsg:
 		cmds = append(cmds, m.handleQueueMsg(msg)...)
-
 	case QueueModeMsg:
 		if msg.Err == nil {
 			m.Player.Shuffle = msg.Shuffle
 			m.Player.RepeatMode = msg.Repeat
 		}
-
 	case PeersMsg:
 		cmds = append(cmds, m.handlePeersMsg(msg)...)
+	case PlaylistsMsg:
+		cmds = append(cmds, m.handlePlaylistsMsg(msg)...)
+	case PlaylistTracksMsg:
+		cmds = append(cmds, m.handlePlaylistTracksMsg(msg)...)
 	}
-
 	cmds = append(cmds, m.updateChild(msg)...)
-
 	return m, tea.Batch(cmds...)
 }
 
@@ -486,7 +513,7 @@ func (m *Model) handlePeerConnected(msg PeerConnectedMsg) []tea.Cmd {
 	return nil
 }
 
-func (m *Model) handlePeerDisconnected(msg PeerDisconnectedMsg) []tea.Cmd {
+func (m *Model) handlePeerDisconnected(_ PeerDisconnectedMsg) []tea.Cmd {
 	if m.PeerCount > 0 {
 		m.PeerCount--
 	}
@@ -502,6 +529,7 @@ func (m *Model) handleConnected() []tea.Cmd {
 		m.fetchQueue(),
 		m.fetchQueueMode(),
 		m.fetchPeers(),
+		m.fetchPlaylists(),
 	}
 }
 
@@ -521,6 +549,7 @@ func (m *Model) handleStatusMsg(msg StatusMsg) []tea.Cmd {
 		m.Player.QueuePos = msg.Status.QueuePosition
 		m.Volume = msg.Status.Volume
 	}
+
 	m.Err = nil
 	m.Connected = true
 	return nil
@@ -531,6 +560,7 @@ func (m *Model) handleLibraryMsg(msg LibraryMsg) []tea.Cmd {
 		m.Err = msg.Err
 		return nil
 	}
+
 	m.Err = nil
 	items := make([]list.Item, len(msg.Tracks))
 	for i, t := range msg.Tracks {
@@ -554,18 +584,49 @@ func (m *Model) handlePeersMsg(msg PeersMsg) []tea.Cmd {
 		m.Err = msg.Err
 		return nil
 	}
+
 	items := make([]list.Item, len(msg.Peers))
 	for i, p := range msg.Peers {
 		items[i] = PeerItem{Peer: p}
 	}
+
 	m.Peers.SetItems(items)
 	m.PeerCount = len(msg.Peers)
 	return nil
 }
 
+func (m *Model) handlePlaylistsMsg(msg PlaylistsMsg) []tea.Cmd {
+	if msg.Err != nil {
+		m.Err = msg.Err
+		return nil
+	}
+
+	items := make([]list.Item, len(msg.Playlists))
+	for i, p := range msg.Playlists {
+		items[i] = PlaylistItem{Playlist: p}
+	}
+	m.Playlists.SetItems(items)
+	return nil
+}
+
+func (m *Model) handlePlaylistTracksMsg(msg PlaylistTracksMsg) []tea.Cmd {
+	if msg.Err != nil {
+		m.Err = msg.Err
+		return nil
+	}
+
+	items := make([]list.Item, len(msg.Tracks))
+	for i, t := range msg.Tracks {
+		items[i] = TrackItem{Track: t}
+	}
+
+	m.Library.SetItems(items)
+	m.Library.Title = " ▶ " + msg.Playlist.Name + " "
+	return nil
+}
+
 func (m *Model) updateChild(msg tea.Msg) []tea.Cmd {
 	var cmds []tea.Cmd
-
 	if m.InSearch {
 		newInput, cmd := m.SearchInput.Update(msg)
 		m.SearchInput = newInput
@@ -582,7 +643,6 @@ func (m *Model) updateChild(msg tea.Msg) []tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	}
-
 	return cmds
 }
 
@@ -599,11 +659,9 @@ func (m *Model) setQueueItems(tracks []*pb.Track) {
 func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 	keys := DefaultKeyMap()
-
 	if m.InSearch {
 		return m.handleSearchKey(msg)
 	}
-
 	if m.ShowHelp {
 		if key.Matches(msg, keys.Help) {
 			m.ShowHelp = false
@@ -620,7 +678,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 	case key.Matches(msg, keys.Help):
 		m.ShowHelp = !m.ShowHelp
 	case key.Matches(msg, keys.Tab):
-		m.ActivePanel = (m.ActivePanel + 1) % 3
+		m.ActivePanel = (m.ActivePanel + 1) % 4
 	case key.Matches(msg, keys.Search):
 		m.InSearch = true
 		m.SearchInput.Focus()
@@ -645,19 +703,22 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 	case key.Matches(msg, keys.VolDown):
 		cmds = append(cmds, m.cmdVolume(-5))
 	case key.Matches(msg, keys.Enter):
-		cmds = append(cmds, m.cmdPlaySelected())
+		if m.ActivePanel == PanelPlaylists {
+			cmds = append(cmds, m.cmdShowSelectedPlaylist())
+		} else {
+			cmds = append(cmds, m.cmdPlaySelected())
+		}
 	case key.Matches(msg, keys.Delete):
 		if m.ActivePanel == PanelQueue {
 			cmds = append(cmds, m.cmdQueueRemove())
 		}
 	case key.Matches(msg, keys.Refresh):
-		cmds = append(cmds, m.fetchLibrary(), m.fetchQueue(), m.fetchQueueMode(), m.fetchPeers())
+		cmds = append(cmds, m.fetchLibrary(), m.fetchQueue(), m.fetchQueueMode(), m.fetchPeers(), m.fetchPlaylists())
 	case key.Matches(msg, keys.Shuffle):
 		cmds = append(cmds, m.cmdQueueShuffle())
 	case key.Matches(msg, keys.Repeat):
 		cmds = append(cmds, m.cmdQueueRepeat())
 	}
-
 	return cmds
 }
 
@@ -686,6 +747,8 @@ func (m *Model) activeList() *list.Model {
 		return &m.Queue
 	case PanelPeers:
 		return &m.Peers
+	case PanelPlaylists:
+		return &m.Playlists
 	}
 	return nil
 }
@@ -773,6 +836,54 @@ func (m *Model) cmdPause() tea.Cmd {
 	}
 }
 
+// fetchPlaylists pulls the playlists from the daemon.
+func (m *Model) fetchPlaylists() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.IPCClient.ListPlaylists()
+		if err != nil {
+			return PlaylistsMsg{Err: err}
+		}
+		if !resp.Success {
+			return PlaylistsMsg{Err: fmt.Errorf("%s", resp.Error)}
+		}
+		if lp := resp.GetListPlaylists(); lp != nil {
+			return PlaylistsMsg{Playlists: lp.Playlists}
+		}
+		return PlaylistsMsg{}
+	}
+}
+
+// cmdShowSelectedPlaylist loads the tracks of the selected playlist into the
+// library panel so they can be played.
+func (m *Model) cmdShowSelectedPlaylist() tea.Cmd {
+	return func() tea.Msg {
+		idx := m.Playlists.Index()
+		items := m.Playlists.Items()
+		if idx < 0 || idx >= len(items) {
+			return nil
+		}
+
+		item, ok := items[idx].(PlaylistItem)
+		if !ok || item.Playlist == nil {
+			return nil
+		}
+
+		resp, err := m.IPCClient.GetPlaylist(item.Playlist.Id)
+		if err != nil {
+			return PlaylistTracksMsg{Err: err}
+		}
+		if !resp.Success {
+			return PlaylistTracksMsg{Err: fmt.Errorf("%s", resp.Error)}
+		}
+
+		gp := resp.GetGetPlaylist()
+		if gp == nil || gp.Playlist == nil {
+			return PlaylistTracksMsg{Err: fmt.Errorf("playlist not found")}
+		}
+		return PlaylistTracksMsg{Playlist: gp.Playlist, Tracks: gp.Tracks}
+	}
+}
+
 func (m *Model) cmdResume() tea.Cmd {
 	return func() tea.Msg {
 		_, err := m.IPCClient.Resume()
@@ -815,10 +926,7 @@ func (m *Model) cmdStop() tea.Cmd {
 
 func (m *Model) cmdSeek(deltaMs int64) tea.Cmd {
 	return func() tea.Msg {
-		newPos := max(m.Player.PositionMs+deltaMs, 0)
-		if newPos > m.Player.DurationMs {
-			newPos = m.Player.DurationMs
-		}
+		newPos := min(max(m.Player.PositionMs+deltaMs, 0), m.Player.DurationMs)
 		err := m.IPCClient.SeekTo(newPos)
 		if err != nil {
 			return ErrorMsg{Err: err.Error()}
@@ -829,10 +937,7 @@ func (m *Model) cmdSeek(deltaMs int64) tea.Cmd {
 
 func (m *Model) cmdVolume(delta int32) tea.Cmd {
 	return func() tea.Msg {
-		newVol := max(m.Volume+delta, 0)
-		if newVol > 100 {
-			newVol = 100
-		}
+		newVol := min(max(m.Volume+delta, 0), 100)
 		_, err := m.IPCClient.SetVolume(newVol)
 		if err != nil {
 			return ErrorMsg{Err: err.Error()}
@@ -941,6 +1046,11 @@ func (m *Model) renderContent() string {
 	header := m.renderHeader()
 	footer := m.renderFooter()
 
+	var searchBar string
+	if m.InSearch {
+		searchBar = searchStyle.Render(m.SearchInput.View())
+	}
+
 	var lists string
 	if m.Width >= 120 {
 		lists = m.renderWide()
@@ -956,7 +1066,6 @@ func (m *Model) renderContent() string {
 			help,
 		)
 	}
-
 	if m.Reconnecting {
 		overlay := reconnectStyle.Render(" ⟳ Reconnecting... ")
 		lists = lipgloss.JoinVertical(
@@ -966,10 +1075,14 @@ func (m *Model) renderContent() string {
 		)
 	}
 
+	parts := []string{header}
+	if searchBar != "" {
+		parts = append(parts, searchBar)
+	}
+
+	parts = append(parts, lists, footer)
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
-		header,
-		lists,
-		footer,
+		parts...,
 	)
 }

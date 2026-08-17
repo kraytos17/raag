@@ -172,8 +172,9 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 
 	player := audio.NewEngine(cfg.Playback.SampleRate)
 	queue := audio.NewQueue()
-	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolver, bus)
+	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolver, bus, cfg.Playback.Volume)
 	playback.SetQueue(queue)
+	applyConfiguredVolume(playback, cfg.Playback.Volume)
 	ipcServer, err := ipc.NewServer(cfg.Daemon.SocketPath, ipc.ServerConfig{
 		Playback:     playback,
 		Scanner:      scanner,
@@ -306,6 +307,15 @@ func startMetricsServer(ctx context.Context, cfg config.MetricsConfig) {
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	if err := metrics.Start(ctx, addr, cfg.Path); err != nil {
 		slog.Error("failed to start metrics server", "error", err)
+	}
+}
+
+// applyConfiguredVolume pushes the configured volume into the engine so it is
+// applied on the first playback (the controller's field alone does not touch
+// the engine).
+func applyConfiguredVolume(playback *app.PlaybackController, volume int) {
+	if err := playback.SetVolume(context.Background(), volume); err != nil {
+		slog.Warn("failed to apply configured volume", "error", err)
 	}
 }
 

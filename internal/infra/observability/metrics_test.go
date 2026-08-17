@@ -37,9 +37,7 @@ func TestNewMetrics_Collects(t *testing.T) {
 
 func TestMetricsServer_Serves(t *testing.T) {
 	m := NewMetrics()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	ctx := t.Context()
 	if err := m.Start(ctx, "127.0.0.1:0", "/metrics"); err != nil {
 		t.Fatalf("start: %v", err)
 	}

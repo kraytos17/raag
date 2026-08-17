@@ -26,17 +26,27 @@ type PlaybackController struct {
 	advanceCancel context.CancelFunc
 	advanceGen    atomic.Int64
 
+	bufferCancel     context.CancelFunc
+	bufferMonitorGen atomic.Int64
+
 	progressCb     func(positionMs, durationMs int64)
 	progressTicker *time.Ticker
 }
 
+// NewPlaybackController creates a playback controller. An optional initial
+// volume (0-100) may be passed as a trailing argument; it defaults to 80.
 func NewPlaybackController(
 	libraryRepo LibraryRepository,
 	searchHandler SearchHandler,
 	player Player,
 	resolver Resolver,
 	bus domain.EventBus,
+	initialVolume ...int,
 ) *PlaybackController {
+	vol := 80
+	if len(initialVolume) > 0 {
+		vol = initialVolume[0]
+	}
 	return &PlaybackController{
 		libraryRepo:   libraryRepo,
 		searchHandler: searchHandler,
@@ -44,7 +54,7 @@ func NewPlaybackController(
 		resolver:      resolver,
 		bus:           bus,
 		fsm:           NewPlaybackFSM(bus),
-		volume:        80,
+		volume:        vol,
 	}
 }
 
@@ -73,6 +83,17 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	var playErr error
 	if resolved.Source == SourceP2P {
 		src := audio.NewStreamingSource(resolved.Reader, audio.DefaultBufferSize)
+		// Pre-roll: wait until the buffer has enough data before decoding.
+		// Otherwise the decoder's first read races an empty buffer and the
+		// track fails on the very first play over the network
+		if err := src.WaitReady(ctx, audio.PreRollBytes); err != nil {
+			_ = src.Close()
+			_ = c.fsm.Send(ctx, domain.EventBufferFail)
+			c.mu.Lock()
+			c.currentTrack = nil
+			c.mu.Unlock()
+			return err
+		}
 		playErr = c.player.PlayStreaming(ctx, src, track.MimeType)
 	} else {
 		playErr = c.player.Play(ctx, resolved.Reader, track.MimeType)
@@ -91,6 +112,7 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 
 	c.startAdvanceWatcher(ctx)
 	c.startProgressTicker(ctx)
+	c.startBufferMonitor(ctx)
 	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
 		TrackID:  track.ID,
 		Title:    track.Title,
@@ -163,6 +185,10 @@ func (c *PlaybackController) Stop(ctx context.Context) error {
 	if c.advanceCancel != nil {
 		c.advanceCancel()
 		c.advanceCancel = nil
+	}
+	if c.bufferCancel != nil {
+		c.bufferCancel()
+		c.bufferCancel = nil
 	}
 	if c.progressTicker != nil {
 		c.progressTicker.Stop()
@@ -310,6 +336,66 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 
 func (c *PlaybackController) search(ctx context.Context, query string, limit int) ([]*domain.Track, error) {
 	return c.searchHandler.Search(ctx, query, limit)
+}
+
+// startBufferMonitor watches the player's buffer fill level and drives the
+// FSM Playing↔Buffering transitions on underrun and refill.
+// Without this, a drained buffer would silently stop the track.
+func (c *PlaybackController) startBufferMonitor(ctx context.Context) {
+	c.mu.Lock()
+	if c.bufferCancel != nil {
+		c.bufferCancel()
+	}
+
+	gen := c.bufferMonitorGen.Add(1)
+	monitorCtx, cancel := context.WithCancel(ctx)
+	c.bufferCancel = cancel
+	c.mu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-monitorCtx.Done():
+				return
+			case <-ticker.C:
+				if gen != c.bufferMonitorGen.Load() {
+					return
+				}
+				c.checkBufferLevel(monitorCtx)
+			}
+		}
+	}()
+}
+
+// checkBufferLevel emits underrun/refill events based on the live buffer fill.
+func (c *PlaybackController) checkBufferLevel(ctx context.Context) {
+	state := c.fsm.State()
+	fill := c.player.GetBufferFillLevel()
+	switch state {
+	case domain.PlayerStatePlaying:
+		if fill < audio.LowWatermark {
+			if err := c.fsm.Send(ctx, domain.EventUnderrun); err != nil {
+				return
+			}
+			slog.Debug("playback underrun — buffering", "fill", fill)
+			c.bus.Publish(ctx, domain.NewEvent(domain.EventPlaybackBuffering, domain.PlaybackBufferingPayload{
+				FillLevel: fill,
+			}))
+		}
+	case domain.PlayerStateBuffering:
+		if fill >= audio.HighWatermark {
+			if err := c.fsm.Send(ctx, domain.EventBufferReady); err != nil {
+				return
+			}
+
+			slog.Debug("playback buffered — resuming", "fill", fill)
+			c.bus.Publish(ctx, domain.NewEvent(domain.EventPlaybackReady, domain.PlaybackReadyPayload{
+				FillLevel: fill,
+			}))
+		}
+	}
 }
 
 func (c *PlaybackController) OnProgress(callback func(positionMs, durationMs int64)) {

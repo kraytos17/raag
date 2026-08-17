@@ -13,6 +13,13 @@ var AudioExtensions = []string{
 	".aac", ".opus", ".wma",
 }
 
+// PlayableCodecs are the audio codecs the local engine can decode
+// (internal/infra/audio/engine.go). They are advertised to peers as supported
+// so remote playback is honest about what this node can actually play.
+// Note: .m4a/.aac/.opus/.wma remain scannable/indexable (AudioExtensions) but
+// are NOT advertised as playable here.
+var PlayableCodecs = []string{"mp3", "flac", "ogg", "wav"}
+
 type PlaybackEvent string
 
 const (
