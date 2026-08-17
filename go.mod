@@ -24,6 +24,7 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
+	golang.org/x/time v0.15.0
 	google.golang.org/protobuf v1.36.12
 )
 
@@ -150,7 +151,6 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260814151720-d8c169486af1 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )

@@ -312,8 +312,22 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 			return
 		}
 
-		_ = c.fsm.Send(watchCtx, domain.EventEOF)
+		// Natural end of the current track: notify the UI before advancing.
+		// The watcher only fires on Done() (canceled on Stop or a new track),
+		// so this is the "track finished" signal.
+		c.mu.RLock()
+		track := c.currentTrack
+		c.mu.RUnlock()
+		if track != nil {
+			c.bus.Publish(watchCtx, domain.NewEvent(domain.EventTrackFinished, domain.TrackFinishedPayload{
+				TrackID:   track.ID,
+				PlayCount: track.PlayCount,
+				Duration:  track.Duration(),
+				Completed: true,
+			}))
+		}
 
+		_ = c.fsm.Send(watchCtx, domain.EventEOF)
 		c.mu.Lock()
 		state := c.fsm.State()
 		queue := c.queue

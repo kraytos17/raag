@@ -132,6 +132,7 @@ type QueueHandler interface {
 	Clear()
 	Length() int
 	Position() int
+	MoveTo(track *domain.Track) bool
 	Next() *domain.Track
 	Previous() *domain.Track
 	Tracks() []*domain.Track
@@ -549,6 +550,14 @@ func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Respon
 
 	switch {
 	case req.TrackId != "":
+		// Make the played track the current queue item so Next/Prev and the
+		// queue panel work during normal library playback. Resolve it first so
+		// the queued track carries full metadata.
+		if s.queue != nil {
+			if track, err := s.libraryRepo.FindByID(ctx, domain.TrackID(req.TrackId)); err == nil {
+				s.queue.MoveTo(track)
+			}
+		}
 		if err := s.playback.Play(ctx, domain.TrackID(req.TrackId)); err != nil {
 			return &pb.Response{Success: false, Error: err.Error()}
 		}
@@ -562,6 +571,9 @@ func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Respon
 
 	s.publishPlaybackState(string(s.playback.GetState()))
 	s.publishTrackChanged(s.playback.GetCurrentTrack())
+	if req.TrackId != "" && s.queue != nil {
+		s.publishQueueUpdated()
+	}
 	return &pb.Response{Success: true}
 }
 

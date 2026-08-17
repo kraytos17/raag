@@ -279,6 +279,22 @@ func (m *mockQueueHandler) Previous() *domain.Track {
 	return m.tracks[m.position]
 }
 
+func (m *mockQueueHandler) MoveTo(track *domain.Track) bool {
+	if track == nil {
+		return false
+	}
+	for i, t := range m.tracks {
+		if t.ID == track.ID {
+			m.position = i
+			return true
+		}
+	}
+
+	m.tracks = append(m.tracks, track)
+	m.position = len(m.tracks) - 1
+	return true
+}
+
 func (m *mockQueueHandler) Tracks() []*domain.Track {
 	out := make([]*domain.Track, len(m.tracks))
 	copy(out, m.tracks)
@@ -639,6 +655,52 @@ func TestPersistentClient_QueueList(t *testing.T) {
 
 // TestTranslateEvent_QueueUpdated verifies queue events translate to
 // EVENT_TYPE_QUEUE_UPDATED with the queue contents.
+// TestPersistentClient_Play_PopulatesQueue verifies that playing a track from
+// the library adds it to the queue as the current item (§12.4.3).
+func TestPersistentClient_Play_PopulatesQueue(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	track := &domain.Track{ID: domain.TrackID("play-me"), Title: "Play Me"}
+	mockLib, _ := srv.libraryRepo.(*mockLibraryRepoHandler)
+	mockLib.tracks = []*domain.Track{track}
+
+	queue := newMockQueueHandler()
+	srv.queue = queue
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.Play(string(track.ID), "")
+	if err != nil {
+		t.Fatalf("play: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("play failed: %s", resp.Error)
+	}
+
+	ql, err := c.GetQueue()
+	if err != nil {
+		t.Fatalf("get queue: %v", err)
+	}
+	if !ql.Success {
+		t.Fatalf("get queue failed: %s", ql.Error)
+	}
+
+	list := ql.GetQueueList()
+	if list == nil {
+		t.Fatal("expected QueueList response payload")
+	}
+	if len(list.Tracks) != 1 {
+		t.Fatalf("expected 1 queued track after play, got %d", len(list.Tracks))
+	}
+	if list.Tracks[0].Id != string(track.ID) {
+		t.Errorf("queued track id = %q, want %q", list.Tracks[0].Id, track.ID)
+	}
+	if queue.Position() != 0 {
+		t.Errorf("queue position = %d, want 0 (played track is current)", queue.Position())
+	}
+}
+
 func TestTranslateEvent_QueueUpdated(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()

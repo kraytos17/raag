@@ -62,6 +62,7 @@ type P2PConfig struct {
 	ConnMgrGrace    time.Duration
 
 	ConnectionGater *PeerGater
+	LANOnly         bool
 }
 
 func NewHost(privKey crypto.PrivKey, cfg P2PConfig) (host.Host, error) {
@@ -104,9 +105,10 @@ func NewHost(privKey crypto.PrivKey, cfg P2PConfig) (host.Host, error) {
 		libp2p.ResourceManager(resourceManager),
 		libp2p.ConnectionManager(connManager),
 		libp2p.Ping(true),
-		libp2p.ForceReachabilityPrivate(),
 	}
-
+	if cfg.LANOnly {
+		opts = append(opts, libp2p.ForceReachabilityPrivate())
+	}
 	if cfg.ConnectionGater != nil {
 		opts = append(opts, libp2p.ConnectionGater(cfg.ConnectionGater))
 	}

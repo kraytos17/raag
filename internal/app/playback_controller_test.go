@@ -395,6 +395,47 @@ func TestPlaybackController_Underrun_PublishesEvents(t *testing.T) {
 	}
 }
 
+func TestPlaybackController_TrackFinished_PublishedOnDone(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	track := &domain.Track{ID: domain.TrackID("track-1"), Title: "Finished Song", DurationMs: 180000, PlayCount: 3}
+	player := &testPlayer{done: make(chan struct{})}
+	c := NewPlaybackController(&testLibraryRepo{track: track}, testSearchHandler{}, player, &testResolver{}, bus)
+
+	if err := c.Play(ctx, track.ID); err != nil {
+		t.Fatalf("Play() error = %v", err)
+	}
+
+	finished := make(chan domain.TrackFinishedPayload, 1)
+	unsub := bus.Subscribe(domain.EventTrackFinished, func(e domain.Event) {
+		if p, ok := e.Payload.(domain.TrackFinishedPayload); ok {
+			finished <- p
+		}
+	})
+	defer unsub()
+
+	close(player.done) // simulate natural track end
+	select {
+	case p := <-finished:
+		if p.TrackID != track.ID {
+			t.Errorf("TrackID = %v, want %v", p.TrackID, track.ID)
+		}
+		if p.PlayCount != 3 {
+			t.Errorf("PlayCount = %d, want 3", p.PlayCount)
+		}
+		if p.Duration != 180*time.Second {
+			t.Errorf("Duration = %v, want 180s", p.Duration)
+		}
+		if !p.Completed {
+			t.Error("Completed = false, want true")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for EventTrackFinished")
+	}
+}
+
 func TestPlaybackController_InitialVolume(t *testing.T) {
 	bus := events.New()
 	defer bus.Close()

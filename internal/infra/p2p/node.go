@@ -55,29 +55,36 @@ type P2PNode struct {
 	mu              sync.Mutex
 	started         bool
 	lanOnly         bool
+	maxPeers        int
 	maxKnownPeers   int
 	chunkSize       int
 	peerDataTTL     time.Duration
 }
 
 type P2PNodeConfig struct {
-	DataDir         string
-	ListenAddrs     []string
-	AnnounceAddrs   []string
-	BootstrapPeers  []string
-	MdnsServiceName string
-	ShareManifest   bool
-	ConnMgrLowMark  int
-	ConnMgrHighMark int
-	ConnMgrGrace    time.Duration
-	ConnectionGater *PeerGater
-	LANOnly         bool
-	MaxKnownPeers   int
-	ChunkSize       int
-	PeerDataTTL     time.Duration
-	Transcoder      *transcoder.Transcoder
-	PeerRepo        app.PeerRepository
-	Search          app.SearchHandler
+	DataDir            string
+	ListenAddrs        []string
+	AnnounceAddrs      []string
+	BootstrapPeers     []string
+	MdnsServiceName    string
+	ShareManifest      bool
+	ConnMgrLowMark     int
+	ConnMgrHighMark    int
+	ConnMgrGrace       time.Duration
+	ConnectionGater    *PeerGater
+	LANOnly            bool
+	MaxPeers           int
+	StreamPort         int
+	PerPeerRateLimit   int
+	UploadBandwidth    int64
+	CBFailureThreshold int
+	CBCooldown         time.Duration
+	MaxKnownPeers      int
+	ChunkSize          int
+	PeerDataTTL        time.Duration
+	Transcoder         *transcoder.Transcoder
+	PeerRepo           app.PeerRepository
+	Search             app.SearchHandler
 }
 
 func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode, error) {
@@ -91,6 +98,9 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 	if gater == nil {
 		gater = NewPeerGater()
 	}
+	if cfg.LANOnly {
+		gater.SetLANOnly(true)
+	}
 
 	p2pHost, err := NewHost(privKey, P2PConfig{
 		ListenAddrs:     cfg.ListenAddrs,
@@ -100,6 +110,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		ConnMgrLowMark:  cfg.ConnMgrLowMark,
 		ConnMgrHighMark: cfg.ConnMgrHighMark,
 		ConnMgrGrace:    cfg.ConnMgrGrace,
+		LANOnly:         cfg.LANOnly,
 		ConnectionGater: gater,
 	})
 	if err != nil {
@@ -119,12 +130,14 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 	syncHandler := protocols.NewSyncHandler(libraryRepo, cfg.Search, p2pHost.ID())
 	syncHandler.SetAnnounceLibrary(cfg.ShareManifest)
 	syncHandler.SetCapabilitiesProvider(&localCapabilities{
-		libraryRepo:  libraryRepo,
-		peerID:       p2pHost.ID(),
-		canTranscode: cfg.Transcoder != nil,
+		libraryRepo:     libraryRepo,
+		peerID:          p2pHost.ID(),
+		canTranscode:    cfg.Transcoder != nil,
+		uploadBandwidth: cfg.UploadBandwidth,
 	})
 
 	streamHandler := protocols.NewStreamHandler(libraryRepo)
+	streamHandler.SetRateLimiters(cfg.PerPeerRateLimit, cfg.UploadBandwidth)
 	if cfg.Transcoder != nil {
 		streamHandler.SetTranscoder(cfg.Transcoder)
 	}
@@ -157,6 +170,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		shareManifest:   cfg.ShareManifest,
 		admission:       admission,
 		lanOnly:         cfg.LANOnly,
+		maxPeers:        cfg.MaxPeers,
 		maxKnownPeers:   cfg.MaxKnownPeers,
 		chunkSize:       cfg.ChunkSize,
 		peerDataTTL:     cfg.PeerDataTTL,
@@ -187,6 +201,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 		done:          n.done,
 		streamPool:    n.streamPool,
 		admission:     n.admission,
+		maxPeers:      n.maxPeers,
 	})
 
 	for _, conn := range n.host.Network().Conns() {
@@ -303,6 +318,19 @@ func (n *P2PNode) Peers() []peer.ID {
 	return out
 }
 
+// connectedPeerCount returns the number of distinct connected peers, excluding
+// self. Used to enforce the MaxPeers connection cap.
+func (cn *connNotifier) connectedPeerCount() int {
+	self := cn.host.ID()
+	count := 0
+	for _, p := range cn.host.Network().Peers() {
+		if p != self {
+			count++
+		}
+	}
+	return count
+}
+
 // PeerStatus enriches a peer with live connection state and capabilities.
 // The peer's score (if any) is preserved from the supplied info.
 func (n *P2PNode) PeerStatus(info *domain.PeerInfo) *pb.Peer {
@@ -392,6 +420,7 @@ type connNotifier struct {
 	done          <-chan struct{}
 	streamPool    *StreamPool
 	admission     *protocols.AdmissionRegistry
+	maxPeers      int
 }
 
 func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
@@ -404,6 +433,13 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 		return
 	}
 	if len(cn.host.Network().ConnsToPeer(pid)) > 1 {
+		return
+	}
+	if cn.maxPeers > 0 && cn.connectedPeerCount() >= cn.maxPeers {
+		slog.Warn("peer connection rejected: max peers reached", "peer", pid, "max_peers", cn.maxPeers)
+		if err := conn.Close(); err != nil {
+			slog.Debug("failed to close excess peer connection", "peer", pid, "err", err)
+		}
 		return
 	}
 
@@ -652,6 +688,7 @@ func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
 			SupportedCodecs:   pc.data.SupportedCodecs,
 			SupportedBitrates: pc.data.SupportedBitrates,
 			CanTranscode:      pc.data.CanTranscode,
+			UploadBandwidth:   pc.data.UploadBandwidth,
 			ProtocolVersion:   pc.data.ProtocolVersion,
 		}
 	} else if ok {
@@ -898,9 +935,10 @@ func (pm *peerManager) HasTrack(pid peer.ID, trackID string) bool {
 }
 
 type localCapabilities struct {
-	libraryRepo  app.LibraryRepository
-	peerID       peer.ID
-	canTranscode bool
+	libraryRepo     app.LibraryRepository
+	peerID          peer.ID
+	canTranscode    bool
+	uploadBandwidth int64
 }
 
 func (lc *localCapabilities) GetLocalCapabilities() *pb.PeerCapabilities {
@@ -909,6 +947,7 @@ func (lc *localCapabilities) GetLocalCapabilities() *pb.PeerCapabilities {
 		SupportedBitrates: domain.SupportedBitrates,
 		ProtocolVersion:   "1.0.0",
 		CanTranscode:      lc.canTranscode,
+		UploadBandwidth:   lc.uploadBandwidth,
 	}
 }
 

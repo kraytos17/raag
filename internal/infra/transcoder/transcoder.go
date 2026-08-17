@@ -104,6 +104,7 @@ func (t *Transcoder) StreamTo(ctx context.Context, path, codec, bitrate string, 
 	if err != nil {
 		return err
 	}
+
 	cmd.Stdout = w
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
@@ -128,12 +129,13 @@ func (t *Transcoder) TranscodeToFile(ctx context.Context, path, codec, bitrate s
 		}
 		delete(t.cache, key)
 	}
-	t.mu.Unlock()
 
+	t.mu.Unlock()
 	tmp, err := os.CreateTemp("", tmpFilePrefix+"*.bin")
 	if err != nil {
 		return "", fmt.Errorf("transcoder: create temp file: %w", err)
 	}
+
 	tmpName := tmp.Name()
 	_ = tmp.Close()
 
@@ -145,10 +147,12 @@ func (t *Transcoder) TranscodeToFile(ctx context.Context, path, codec, bitrate s
 		_ = os.Remove(tmpName)
 		return "", err
 	}
+
 	out, err := os.Create(tmpName)
 	if err != nil {
 		return "", fmt.Errorf("transcoder: open temp output: %w", err)
 	}
+
 	cmd.Stdout = out
 	cmd.Stderr = io.Discard
 	runErr := cmd.Run()
@@ -203,7 +207,8 @@ func (t *Transcoder) buildCmd(ctx context.Context, path, codec, bitrate string, 
 	if offset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", float64(offset)/1e9))
 	}
-	args = append(args,
+	args = append(
+		args,
 		"-i", path,
 		"-vn",
 		"-acodec", codecFlag(codec),
