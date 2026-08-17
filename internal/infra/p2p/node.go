@@ -16,6 +16,7 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/backoff"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	protocols "github.com/p-society/raag/internal/infra/p2p/protocols"
 	"github.com/p-society/raag/internal/infra/transcoder"
@@ -727,11 +728,8 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 				slog.Warn("failed to fetch manifest", "peer", pid, "err", err)
 				return
 			}
-
-			select {
-			case <-baseCtx.Done():
+			if backoff.Wait(baseCtx.Done(), backoff.Linear(attempt+1, 100*time.Millisecond)) {
 				return
-			case <-time.After(time.Duration(100*(attempt+1)) * time.Millisecond):
 			}
 		}
 	}()
@@ -746,10 +744,8 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 				slog.Warn("failed to fetch capabilities", "peer", pid, "err", err)
 				return
 			}
-			select {
-			case <-baseCtx.Done():
+			if backoff.Wait(baseCtx.Done(), backoff.Linear(attempt+1, 100*time.Millisecond)) {
 				return
-			case <-time.After(time.Duration(100*(attempt+1)) * time.Millisecond):
 			}
 		}
 	}()

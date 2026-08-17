@@ -8,6 +8,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/p-society/raag/internal/infra/backoff"
 	"github.com/p-society/raag/internal/infra/p2p/protocols"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
@@ -35,11 +36,8 @@ func (c *StreamClient) GetChunk(ctx context.Context, req *pb.ChunkRequest) (*pb.
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(attempt*100) * time.Millisecond
-			select {
-			case <-ctx.Done():
+			if backoff.Wait(ctx.Done(), backoff.Linear(attempt, 100*time.Millisecond)) {
 				return nil, ctx.Err()
-			case <-time.After(backoff):
 			}
 		}
 
