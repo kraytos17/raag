@@ -1,29 +1,18 @@
 #!/bin/sh
 set -e
 
-PORT="${PORT:-8080}"
-LIBP2P_PORT="${LIBP2P_PORT:-45678}"
+RAAG_DATA_DIR="${RAAG_DATA_DIR:-/home/raag/.local/share/raag}"
+RAAG_SOCKET="${RAAG_SOCKET:-$RAAG_DATA_DIR/raag.sock}"
 
-set -- --http-port "$PORT" --libp2p-port "$LIBP2P_PORT" --relay
-if [ "$TLS_ENABLED" = "true" ]; then
-    set -- "$@" --tls
-    if [ -n "$TLS_CERT_FILE" ] && [ -n "$TLS_KEY_FILE" ]; then
-        set -- "$@" --tls-cert "$TLS_CERT_FILE" --tls-key "$TLS_KEY_FILE"
-    fi
+mkdir -p "$RAAG_DATA_DIR"
+
+set -- --socket "$RAAG_SOCKET" --music-path "${RAAG_MUSIC:-/music}" --p2p
+if [ -n "$RAAG_DATA_DIR_OVERRIDE" ]; then
+    set -- "$@" --data-dir "$RAAG_DATA_DIR_OVERRIDE"
+fi
+if [ -n "$RAAG_NO_SCAN" ]; then
+    set -- "$@" --no-scan
 fi
 
-if [ -n "$AUTH_KEY" ]; then
-    OLD_IFS="$IFS"
-    IFS=','
-    for key in $AUTH_KEY; do
-        key=$(echo "$key" | xargs)
-        if [ -n "$key" ]; then
-            set -- "$@" --auth-key "$key"
-        fi
-    done
-    IFS="$OLD_IFS"
-fi
-
-# Note: AUTH_SECRET is handled internally by the tracker application
-echo "Starting tracker with arguments: $*"
-exec ./tracker "$@"
+echo "Starting raagd with arguments: $*"
+exec ./raagd "$@"

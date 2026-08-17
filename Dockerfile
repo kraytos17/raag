@@ -20,48 +20,38 @@ ARG TARGETARCH=amd64
 
 RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
-    -o tracker ./tracker/cmd/tracker && \
+    -o raagd ./cmd/raagd && \
     CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
     -o raag ./cmd/raag
 
 FROM debian:bookworm-slim AS runtime
 
-ARG PORT=8080
-ARG LIBP2P_PORT=45678
-ARG AUTH_SECRET=
-ARG TLS_ENABLED=false
-ARG TLS_CERT_FILE=
-ARG TLS_KEY_FILE=
+ARG RAAG_DATA_DIR=/home/raag/.local/share/raag
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libasound2 \
-    wget \
     && rm -rf /var/lib/apt/lists/* \
     && (getent group raag >/dev/null || groupadd --gid 1000 raag) \
     && (getent passwd raag >/dev/null || useradd -o --uid 1000 --gid raag --shell /bin/false --create-home raag)
 
 WORKDIR /home/raag
 
-COPY --from=builder /app/tracker /app/raag ./
+COPY --from=builder /app/raagd /app/raag ./
 COPY --from=builder /app/entrypoint.sh ./
 
-RUN chmod +x entrypoint.sh && \
+RUN mkdir -p /home/raag/.config/raag ${RAAG_DATA_DIR} && \
+    chmod +x entrypoint.sh && \
     chown -R raag:raag /home/raag
 
 USER raag
 
-ENV PORT=${PORT}
-ENV LIBP2P_PORT=${LIBP2P_PORT}
-ENV AUTH_SECRET=${AUTH_SECRET}
-ENV TLS_ENABLED=${TLS_ENABLED}
-ENV TLS_CERT_FILE=${TLS_CERT_FILE}
-ENV TLS_KEY_FILE=${TLS_KEY_FILE}
+ENV RAAG_DATA_DIR=${RAAG_DATA_DIR}
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD ["./raag", "--socket", "/home/raag/.local/share/raag/raag.sock", "status"] || exit 1
 
-EXPOSE ${PORT} ${LIBP2P_PORT}
+EXPOSE 7844/tcp 7844/udp 7845/udp
 
 ENTRYPOINT ["./entrypoint.sh"]

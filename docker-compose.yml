@@ -1,27 +1,27 @@
 services:
-  tracker:
+  raagd:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: raag-tracker
+    container_name: raag-daemon
     ports:
-      - "${PORT:-8080}:${PORT:-8080}"
-      - "${LIBP2P_PORT:-45678}:${LIBP2P_PORT:-45678}"
+      - "7844:7844/tcp"
+      - "7844:7844/udp"
+      - "7845:7845/udp"
     environment:
-      PORT: "${PORT:-8080}"
-      LIBP2P_PORT: "${LIBP2P_PORT:-45678}"
-      AUTH_SECRET: "${AUTH_SECRET:-raag-secret}"
-      TLS_ENABLED: "${TLS_ENABLED:-false}"
-      # Uncomment and set these for TLS:
-      # TLS_CERT_FILE: "/app/certs/cert.pem"
-      # TLS_KEY_FILE: "/app/certs/key.pem"
-      #
-      # For Railway: set AUTH_SECRET in Railway Dashboard → Variables
-      # For custom secret: AUTH_SECRET=yourpassword docker compose up -d
-      # For HTTPS: TLS_ENABLED=true docker compose up -d
+      RAAG_DATA_DIR: "${RAAG_DATA_DIR:-/home/raag/.local/share/raag}"
+      RAAG_SOCKET: "${RAAG_SOCKET:-/home/raag/.local/share/raag/raag.sock}"
+      RAAG_MUSIC: "${RAAG_MUSIC:-/music}"
+      # Optional overrides:
+      # RAAG_NO_SCAN: "true"
+      # RAAG_DATA_DIR_OVERRIDE: "/home/raag/.local/share/raag"
+    volumes:
+      - "./config:/home/raag/.config/raag"
+      - "${MUSIC_DIR:-~/Music}:/music"
+      - raag-data:/home/raag/.local/share/raag
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8080}/health"]
+      test: ["CMD", "./raag", "--socket", "/home/raag/.local/share/raag/raag.sock", "status"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -33,6 +33,9 @@ services:
         max-file: "3"
     networks:
       - raag-network
+
+volumes:
+  raag-data:
 
 networks:
   raag-network:
