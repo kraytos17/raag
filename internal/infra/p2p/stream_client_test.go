@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -733,5 +734,86 @@ func TestChunkedReader_Seek_CurrentGenPrefetchConsumed(t *testing.T) {
 	}
 	if string(buf[:n]) != "fresh" {
 		t.Errorf("Read() = %q, want %q", buf[:n], "fresh")
+	}
+}
+
+func TestChunkedReader_SetReadDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := &chunkedReader{
+		trackID:     testTrackID,
+		chunkSize:   1024,
+		ctx:         ctx,
+		fetchCancel: cancel,
+	}
+	if got := r.Deadline(); !got.IsZero() {
+		t.Fatalf("Deadline() initially = %v, want zero", got)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	if err := r.SetReadDeadline(deadline); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	if got := r.Deadline(); got != deadline {
+		t.Errorf("Deadline() = %v, want %v", got, deadline)
+	}
+	if err := r.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatalf("SetReadDeadline(zero) error = %v", err)
+	}
+	if got := r.Deadline(); !got.IsZero() {
+		t.Errorf("Deadline() after clear = %v, want zero", got)
+	}
+}
+
+func TestChunkedReader_Read_ExpiredDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := &chunkedReader{
+		trackID:     testTrackID,
+		chunkSize:   1024,
+		offset:      0,
+		ctx:         ctx,
+		fetchCancel: cancel,
+	}
+
+	r.deadline = time.Now().Add(-time.Second) // already expired
+	buf := make([]byte, 16)
+	_, err := r.Read(buf)
+	if err == nil {
+		t.Fatal("Read() with expired deadline: expected timeout error")
+	}
+	if _, ok := errors.AsType[timeoutError](err); !ok {
+		t.Errorf("Read() error = %v, want timeoutError", err)
+	}
+}
+
+func TestChunkedReader_Read_StalledPeer_RespectsDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := &chunkedReader{
+		trackID:     testTrackID,
+		chunkSize:   1024,
+		offset:      0,
+		ctx:         ctx,
+		fetchCancel: cancel,
+	}
+	// A prefetch that never delivers: the reader must time out, not block
+	// forever on <-r.ahead.
+	r.ahead = make(chan prefetchResult)
+	r.deadline = time.Now().Add(50 * time.Millisecond)
+
+	start := time.Now()
+	buf := make([]byte, 16)
+	_, err := r.Read(buf)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Read() on stalled peer: expected timeout error")
+	}
+	if _, ok := errors.AsType[timeoutError](err); !ok {
+		t.Errorf("Read() error = %v, want timeoutError", err)
+	}
+	if elapsed > time.Second {
+		t.Errorf("Read() took %v, want to respect the 50ms deadline", elapsed)
 	}
 }

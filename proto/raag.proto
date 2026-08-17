@@ -428,6 +428,7 @@ enum EventType {
   EVENT_TYPE_PEER_DISCONNECTED = 64; // string peer_id
   EVENT_TYPE_LIBRARY_UPDATED = 128; // LibraryStats
   EVENT_TYPE_ERROR = 256; // string error message
+  EVENT_TYPE_PEER_SCORE_UPDATED = 512; // Peer (score refreshed)
 }
 
 // Lightweight progress event - only position and duration

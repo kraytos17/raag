@@ -109,6 +109,46 @@ type prefetchResult struct {
 	gen  uint64
 }
 
+// timeoutError reports a read that exceeded its deadline. It satisfies
+// net.Error so the streaming fill goroutine treats it as a retryable timeout
+// rather than a terminal error.
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "chunk read timed out" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+// deadlineWait blocks until the channel delivers, the read deadline elapses, or
+// the reader is closed. Returns (true, result, nil) when a value is delivered,
+// (false, {}, timeoutError) on deadline, and (false, {}, ctxErr) if closed.
+func (r *chunkedReader) deadlineWait(ch <-chan prefetchResult) (bool, prefetchResult, error) {
+	remaining := r.remaining()
+	if remaining == 0 {
+		// No deadline set: block until delivery or close.
+		select {
+		case result := <-ch:
+			return true, result, nil
+		case <-r.ctx.Done():
+			return false, prefetchResult{}, r.ctx.Err()
+		}
+	}
+	if remaining < 0 {
+		return false, prefetchResult{}, timeoutError{}
+	}
+
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+
+	select {
+	case result := <-ch:
+		return true, result, nil
+	case <-timer.C:
+		return false, prefetchResult{}, timeoutError{}
+	case <-r.ctx.Done():
+		return false, prefetchResult{}, r.ctx.Err()
+	}
+}
+
 type chunkedReader struct {
 	client      *StreamClient
 	trackID     string
@@ -125,6 +165,33 @@ type chunkedReader struct {
 	fetchCancel context.CancelFunc
 	ahead       chan prefetchResult
 	seekGen     uint64
+	deadline    time.Time
+}
+
+// SetReadDeadline sets an absolute time after which Read should return a
+// timeout error even if no data has arrived, so a stalled peer can't block the
+// fill goroutine indefinitely. A zero time clears the deadline.
+func (r *chunkedReader) SetReadDeadline(t time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deadline = t
+	return nil
+}
+
+// Deadline returns the current read deadline, or the zero time if unset.
+func (r *chunkedReader) Deadline() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deadline
+}
+
+// remaining returns the time until the read deadline, or 0 if no deadline is
+// set. The caller must hold r.mu.
+func (r *chunkedReader) remaining() time.Duration {
+	if r.deadline.IsZero() {
+		return 0
+	}
+	return time.Until(r.deadline)
 }
 
 // streamPos returns the current absolute byte position in the stream, i.e. the
@@ -214,11 +281,17 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 		var resp *pb.ChunkResponse
 		var err error
 		if r.ahead != nil {
-			r.mu.Unlock()
-			result := <-r.ahead
-			r.mu.Lock()
-
+			ch := r.ahead
 			r.ahead = nil
+			r.mu.Unlock()
+			delivered, result, waitErr := r.deadlineWait(ch)
+			r.mu.Lock()
+			if !delivered {
+				if errors.Is(waitErr, context.Canceled) {
+					return 0, io.EOF
+				}
+				return 0, waitErr
+			}
 			if r.closed {
 				return 0, io.EOF
 			}
@@ -244,9 +317,32 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 			}
 			gen := r.seekGen
 
+			// If the deadline has already expired, fail fast without spawning a
+			// fetch that can never be consumed. remaining()==0 means no deadline.
+			if remaining := r.remaining(); remaining < 0 {
+				return 0, timeoutError{}
+			}
+
+			// Run the fetch in a goroutine so the read deadline can bound it:
+			// a stalled peer must not block the fill goroutine for GetChunk's
+			// full 30s timeout. The late result is discarded on timeout.
+			ch := make(chan prefetchResult, 1)
 			r.mu.Unlock()
-			resp, err = r.client.GetChunk(r.ctx, req)
+			go func() {
+				rresp, rerr := r.client.GetChunk(r.ctx, req)
+				ch <- prefetchResult{resp: rresp, err: rerr, gen: gen}
+			}()
+
+			delivered, result, waitErr := r.deadlineWait(ch)
 			r.mu.Lock()
+			if !delivered {
+				if errors.Is(waitErr, context.Canceled) {
+					return 0, io.EOF
+				}
+				return 0, waitErr
+			}
+
+			resp, err = result.resp, result.err
 			if r.closed {
 				return 0, io.EOF
 			}

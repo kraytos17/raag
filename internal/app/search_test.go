@@ -240,6 +240,39 @@ func TestSearchService_Weights(t *testing.T) {
 	}
 }
 
+// TestSearchService_Rebuild_FromRepo verifies Rebuild populates the index from
+// the repository, so search works without a scan
+func TestSearchService_Rebuild_FromRepo(t *testing.T) {
+	idx := NewSearchIndex(nil)
+	repo := NewMockSearchRepo()
+	svc := NewSearchService(idx, repo)
+	ctx := context.Background()
+
+	repo.AddTrack(&domain.Track{ID: domain.GenerateTrackID("/music/rock1.mp3"), Title: "Rock Song 1", Artist: rockBand, Album: rockAlbum})
+	repo.AddTrack(&domain.Track{ID: domain.GenerateTrackID("/music/rock2.mp3"), Title: "Rock Song 2", Artist: rockBand, Album: rockAlbum})
+	repo.AddTrack(&domain.Track{ID: domain.GenerateTrackID("/music/jazz1.mp3"), Title: "Jazz Song 1", Artist: jazzBand, Album: jazzAlbum})
+
+	// Before rebuild the empty index returns nothing.
+	results, err := svc.Search(ctx, rockQuery, 10)
+	if err != nil {
+		t.Fatalf("Search() before rebuild error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Search() before rebuild len = %d, want 0", len(results))
+	}
+	if err := svc.Index().Rebuild(ctx, repo); err != nil {
+		t.Fatalf("Rebuild() error = %v", err)
+	}
+
+	results, err = svc.Search(ctx, rockQuery, 10)
+	if err != nil {
+		t.Fatalf("Search() after rebuild error = %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Search(\"rock\") after rebuild len = %d, want 2", len(results))
+	}
+}
+
 func TestSearchService_Search_Integration(t *testing.T) {
 	idx := NewSearchIndex(nil)
 	repo := NewMockSearchRepo()

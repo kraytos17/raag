@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -281,7 +282,7 @@ func TestStreamingSource_MultipleClose(t *testing.T) {
 
 // TestStreamingSource_ReadBlocksUntilData verifies Read blocks (rather than
 // returning ErrEmpty) when the buffer is empty, and returns data once the
-// source delivers it (§12.2.2 pre-roll / §12.2.3 underrun).
+// source delivers it.
 func TestStreamingSource_ReadBlocksUntilData(t *testing.T) {
 	source := newBlockingSource()
 	ss := NewStreamingSource(source, 64*1024)
@@ -558,5 +559,71 @@ func TestStreamingSource_Seek_AfterClose(t *testing.T) {
 
 	if _, err := ss.Seek(10, io.SeekStart); err != io.ErrClosedPipe {
 		t.Errorf("Seek() after Close = %v, want io.ErrClosedPipe", err)
+	}
+}
+
+// deadlineSource is a fake io.ReadCloser that implements SetReadDeadline and
+// blocks on Read until the deadline fires, simulating a stalled peer.
+type deadlineSource struct {
+	mu       sync.Mutex
+	deadline time.Time
+	closed   bool
+}
+
+func (s *deadlineSource) Read(p []byte) (int, error) {
+	for {
+		s.mu.Lock()
+		deadline := s.deadline
+		closed := s.closed
+		s.mu.Unlock()
+
+		if closed {
+			return 0, io.EOF
+		}
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			return 0, os.ErrDeadlineExceeded
+		}
+		time.Sleep(wait)
+	}
+}
+
+func (s *deadlineSource) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
+
+func (s *deadlineSource) SetReadDeadline(t time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deadline = t
+	return nil
+}
+
+func TestStreamingSource_Read_StalledPeer_TimesOut(t *testing.T) {
+	src := &deadlineSource{deadline: time.Now().Add(30 * time.Millisecond)}
+	ss := NewStreamingSource(src, 64*1024)
+	defer func() { _ = ss.Close() }()
+
+	// The fill goroutine sets a 100ms read deadline per iteration; the source
+	// blocks until the deadline fires. Give it a moment to apply the deadline,
+	// then verify it was actually passed through to the source.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for {
+		src.mu.Lock()
+		applied := !src.deadline.IsZero()
+		src.mu.Unlock()
+		if applied || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	src.mu.Lock()
+	applied := !src.deadline.IsZero()
+	src.mu.Unlock()
+	if !applied {
+		t.Fatal("fill goroutine did not apply a read deadline to the source")
 	}
 }

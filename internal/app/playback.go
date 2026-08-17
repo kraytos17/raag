@@ -286,6 +286,11 @@ func (c *PlaybackController) GetCurrentTrack() *domain.Track {
 	return c.currentTrack
 }
 
+// GetPosition returns the current playback position from the engine.
+func (c *PlaybackController) GetPosition() time.Duration {
+	return c.player.GetPosition()
+}
+
 func (c *PlaybackController) SetQueue(q Queue) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

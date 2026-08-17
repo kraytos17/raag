@@ -269,6 +269,25 @@ func (r *streamingReader) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
+// SetReadDeadline forwards to the underlying chunkedReader so the streaming
+// fill goroutine's deadline actually bounds reads from a stalled peer.
+func (r *streamingReader) SetReadDeadline(t time.Time) error {
+	if dr, ok := r.reader.(interface {
+		SetReadDeadline(time.Time) error
+	}); ok {
+		return dr.SetReadDeadline(t)
+	}
+	return errors.New("streaming reader: underlying source does not support read deadlines")
+}
+
+// Deadline forwards to the underlying chunkedReader.
+func (r *streamingReader) Deadline() time.Time {
+	if dr, ok := r.reader.(interface{ Deadline() time.Time }); ok {
+		return dr.Deadline()
+	}
+	return time.Time{}
+}
+
 // Seek forwards the seek to the underlying chunkedReader, repositioning the
 // remote stream to the requested byte offset.
 func (r *streamingReader) Seek(offset int64, whence int) (int64, error) {
