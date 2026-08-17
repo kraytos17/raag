@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/backoff"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
@@ -99,7 +100,7 @@ func (c *Client) reconnect() error {
 		c.conn = nil
 	}
 
-	delay := domain.IPCReconnectBaseDelay
+	delay := backoff.NewExponential(domain.IPCReconnectBaseDelay, domain.IPCReconnectMaxDelay)
 	for attempt := range domain.IPCReconnectMaxAttempts {
 		select {
 		case <-c.closed:
@@ -118,15 +119,11 @@ func (c *Client) reconnect() error {
 		}
 
 		c.mu.Unlock()
-		select {
-		case <-c.closed:
+		if backoff.Wait(c.closed, delay.Next()) {
 			c.mu.Lock()
 			return ErrClientClosed
-		case <-time.After(delay):
 		}
-
 		c.mu.Lock()
-		delay = min(delay*2, domain.IPCReconnectMaxDelay)
 	}
 	return errors.New("ipc: reconnect exhausted")
 }
@@ -647,9 +644,7 @@ func (c *Client) SubscribeWithRetry(eventMask uint32) *EventClient {
 
 // eventLoopWithRetry handles reconnection automatically
 func (ec *EventClient) eventLoopWithRetry() {
-	backoff := 100 * time.Millisecond
-	maxBackoff := 5 * time.Second
-
+	policy := backoff.NewExponential(100*time.Millisecond, 5*time.Second)
 	for {
 		select {
 		case <-ec.closed:
@@ -659,16 +654,13 @@ func (ec *EventClient) eventLoopWithRetry() {
 
 		err := ec.connect()
 		if err != nil {
-			select {
-			case <-ec.closed:
+			if backoff.Wait(ec.closed, policy.Next()) {
 				return
-			case <-time.After(backoff):
 			}
-			backoff = min(backoff*2, maxBackoff)
 			continue
 		}
 
-		backoff = 100 * time.Millisecond
+		policy.Reset()
 		ec.readEventsLoop()
 	}
 }

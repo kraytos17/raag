@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 
 	"github.com/p-society/raag/internal/domain"
@@ -14,11 +15,8 @@ type PlayerComponent struct {
 
 // NewPlayerComponent creates a Component wrapper for the audio player
 func NewPlayerComponent(player Player, name string) Component {
-	if name == "" {
-		name = "player"
-	}
 	return &PlayerComponent{
-		name:   name,
+		name:   cmp.Or(name, "player"),
 		player: player,
 	}
 }
@@ -49,11 +47,8 @@ type P2PNode interface {
 
 // NewP2PComponent creates a Component wrapper for the P2P node
 func NewP2PComponent(node P2PNode, bus domain.EventBus, name string) Component {
-	if name == "" {
-		name = "p2p"
-	}
 	return &P2PComponent{
-		name: name,
+		name: cmp.Or(name, "p2p"),
 		node: node,
 		bus:  bus,
 	}
@@ -79,11 +74,8 @@ type FileWatcherComponent struct {
 
 // NewFileWatcherComponent creates a Component wrapper for the library file watcher.
 func NewFileWatcherComponent(fw *FileWatcher, name string) Component {
-	if name == "" {
-		name = "filewatcher"
-	}
 	return &FileWatcherComponent{
-		name: name,
+		name: cmp.Or(name, "filewatcher"),
 		fw:   fw,
 	}
 }

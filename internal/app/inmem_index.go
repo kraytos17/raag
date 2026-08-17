@@ -123,21 +123,9 @@ func (idx *inmemoryIndex) removeExistingLocked(id domain.TrackID) {
 
 func (idx *inmemoryIndex) indexOneLocked(track *domain.Track) {
 	idx.removeExistingLocked(track.ID)
-	title := track.NormalizedTitle
-	if title == "" {
-		title = domain.Normalize(track.Title)
-	}
-
-	artist := track.NormalizedArtist
-	if artist == "" {
-		artist = domain.Normalize(track.Artist)
-	}
-
-	album := track.NormalizedAlbum
-	if album == "" {
-		album = domain.Normalize(track.Album)
-	}
-
+	title := cmp.Or(track.NormalizedTitle, domain.Normalize(track.Title))
+	artist := cmp.Or(track.NormalizedArtist, domain.Normalize(track.Artist))
+	album := cmp.Or(track.NormalizedAlbum, domain.Normalize(track.Album))
 	filename := domain.Normalize(filepath.Base(track.Path))
 	tokens := uniqueStrings(tokenize(title + " " + artist + " " + album + " " + filename))
 	for _, token := range tokens {
