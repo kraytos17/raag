@@ -47,6 +47,13 @@ func (h *StreamHandler) SetTranscoder(t *transcoder.Transcoder) {
 	h.transcoder = t
 }
 
+// Transcoder returns the configured transcoder, or nil if none is set.
+func (h *StreamHandler) Transcoder() *transcoder.Transcoder {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.transcoder
+}
+
 func (h *StreamHandler) Handle(stream network.Stream) {
 	defer func() {
 		if err := stream.Close(); err != nil {
@@ -65,6 +72,7 @@ func (h *StreamHandler) Handle(stream network.Stream) {
 			if errors.Is(err, io.EOF) {
 				return
 			}
+
 			slog.Error("failed to read chunk request", "err", err)
 			if err := stream.Reset(); err != nil {
 				slog.Debug("stream reset error", "err", err)
@@ -75,7 +83,8 @@ func (h *StreamHandler) Handle(stream network.Stream) {
 			slog.Debug("failed to clear read deadline", "err", err)
 		}
 		if h.admission == nil || !h.admission.IsAdmitted(peerID) {
-			slog.Warn("chunk request from unadmitted peer",
+			slog.Warn(
+				"chunk request from unadmitted peer",
 				"peer", peerID,
 				"track", req.TrackId,
 			)
@@ -107,7 +116,6 @@ func (h *StreamHandler) serveChunk(ctx context.Context, stream network.Stream, r
 		h.serveTranscoded(ctx, stream, tr, track, req)
 		return
 	}
-
 	h.serveRaw(ctx, stream, track, req)
 }
 
@@ -119,7 +127,11 @@ func (h *StreamHandler) serveTranscoded(ctx context.Context, stream network.Stre
 		bitrate = "128k"
 	}
 
-	tmpPath, err := tr.TranscodeToFile(ctx, track.Path, req.Codec, bitrate)
+	// The transcode runs outside the chunk request's deadline: a long track can
+	// take minutes to transcode, and the request ctx is a 30s bound on serving
+	// the response, not on producing it. transcodeCtx inside TranscodeToFile
+	// still enforces its own cap.
+	tmpPath, err := tr.TranscodeToFile(context.WithoutCancel(ctx), track.Path, req.Codec, bitrate)
 	if err != nil {
 		slog.Error("transcode failed", "track_id", req.TrackId, "codec", req.Codec, "err", err)
 		h.sendError(stream, req.TrackId, "transcode error", pb.ErrorCode_ERROR_CODE_TRANSCODE_FAILED)
@@ -136,6 +148,11 @@ func (h *StreamHandler) serveTranscoded(ctx context.Context, stream network.Stre
 			slog.Debug("failed to close transcode output", "err", err)
 		}
 	}()
+
+	var totalSize int64
+	if info, err := f.Stat(); err == nil {
+		totalSize = info.Size()
+	}
 
 	if req.Offset > 0 {
 		if _, err := f.Seek(req.Offset, io.SeekStart); err != nil {
@@ -158,6 +175,7 @@ func (h *StreamHandler) serveTranscoded(ctx context.Context, stream network.Stre
 		Offset:    req.Offset,
 		Data:      data[:n],
 		LastChunk: lastChunk,
+		TotalSize: totalSize,
 		MimeType:  "audio/" + req.Codec,
 	}
 	if err := wire.WriteMsg(stream, resp); err != nil {

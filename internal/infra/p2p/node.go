@@ -24,7 +24,15 @@ import (
 	pb "github.com/p-society/raag/proto/gen"
 )
 
-const codecMP3 = "mp3"
+const (
+	codecMP3    = "mp3"
+	codecFlac   = "flac"
+	codecVorbis = "vorbis"
+	codecPCM    = "pcm"
+	codecAAC    = "aac"
+	codecOpus   = "opus"
+	codecWMA    = "wma"
+)
 
 type P2PNode struct {
 	host            host.Host
@@ -111,8 +119,9 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 	syncHandler := protocols.NewSyncHandler(libraryRepo, cfg.Search, p2pHost.ID())
 	syncHandler.SetAnnounceLibrary(cfg.ShareManifest)
 	syncHandler.SetCapabilitiesProvider(&localCapabilities{
-		libraryRepo: libraryRepo,
-		peerID:      p2pHost.ID(),
+		libraryRepo:  libraryRepo,
+		peerID:       p2pHost.ID(),
+		canTranscode: cfg.Transcoder != nil,
 	})
 
 	streamHandler := protocols.NewStreamHandler(libraryRepo)
@@ -241,6 +250,9 @@ func (n *P2PNode) Stop(ctx context.Context) error {
 	n.streamPool.Close()
 	if err := n.host.Close(); err != nil {
 		slog.Warn("failed to close host", "error", err)
+	}
+	if tr := n.streamHandler.Transcoder(); tr != nil {
+		tr.Cleanup()
 	}
 	slog.Info("P2P node stopped")
 	return nil
@@ -861,7 +873,7 @@ func (pm *peerManager) GetBestCodec(pid peer.ID, preferredCodec string) string {
 	defer pm.mu.RUnlock()
 
 	if pc, ok := pm.caps[pid]; ok && time.Since(pc.addedAt) < pm.ttl {
-		for _, codec := range []string{preferredCodec, "opus", codecMP3, "flac"} {
+		for _, codec := range []string{preferredCodec, codecOpus, codecMP3, codecFlac} {
 			if slices.Contains(pc.data.SupportedCodecs, codec) {
 				return codec
 			}
@@ -885,8 +897,9 @@ func (pm *peerManager) HasTrack(pid peer.ID, trackID string) bool {
 }
 
 type localCapabilities struct {
-	libraryRepo app.LibraryRepository
-	peerID      peer.ID
+	libraryRepo  app.LibraryRepository
+	peerID       peer.ID
+	canTranscode bool
 }
 
 func (lc *localCapabilities) GetLocalCapabilities() *pb.PeerCapabilities {
@@ -894,7 +907,7 @@ func (lc *localCapabilities) GetLocalCapabilities() *pb.PeerCapabilities {
 		SupportedCodecs:   domain.PlayableCodecs,
 		SupportedBitrates: domain.SupportedBitrates,
 		ProtocolVersion:   "1.0.0",
-		CanTranscode:      false,
+		CanTranscode:      lc.canTranscode,
 	}
 }
 

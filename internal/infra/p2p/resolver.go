@@ -63,6 +63,39 @@ func (r *P2PResolver) LastPeerIDString() string {
 	return r.lastPeerID.String()
 }
 
+// fetchTrackMetadata requests a track's metadata from a specific peer over the
+// sync protocol.
+func (r *P2PResolver) fetchTrackMetadata(ctx context.Context, trackID domain.TrackID, pid peer.ID) (*domain.Track, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	stream, err := r.host.NewStream(ctx, pid, protocols.SyncProtocol)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	req := &pb.SyncRequest{
+		Payload: &pb.SyncRequest_TrackDetailRequest{
+			TrackDetailRequest: &pb.TrackDetailRequest{
+				TrackId: string(trackID),
+			},
+		},
+	}
+	if err := wire.WriteMsg(stream, req); err != nil {
+		return nil, err
+	}
+
+	var resp pb.SyncResponse
+	if err := wire.ReadMsg(stream, &resp); err != nil {
+		return nil, err
+	}
+	if tr, ok := resp.GetPayload().(*pb.SyncResponse_Track); ok {
+		return convert.ProtoToTrack(tr.Track), nil
+	}
+	return nil, errors.New("unexpected response type")
+}
+
 func (r *P2PResolver) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []string {
 	pids := r.peerMgr.GetTrackOwners(string(trackID))
 	result := make([]string, len(pids))
@@ -109,7 +142,24 @@ func (r *P2PResolver) resolveRemote(ctx context.Context, trackID domain.TrackID)
 	if len(scoredPeers) == 0 {
 		return nil, domain.ErrTrackNotFound
 	}
-	return r.tryPeers(ctx, trackID, scoredPeers)
+
+	nativeCodec := r.nativeCodec(ctx, trackID, scoredPeers)
+	return r.tryPeers(ctx, trackID, scoredPeers, nativeCodec)
+}
+
+// nativeCodec fetches the remote track's codec once from the best-scored peer
+// so tryPeers can decide whether to request transcoding. Best-effort: any
+// failure leaves the codec unknown ("") and tryPeers falls back to raw streaming.
+func (r *P2PResolver) nativeCodec(ctx context.Context, trackID domain.TrackID, scoredPeers []scoredPeer) string {
+	if len(scoredPeers) == 0 {
+		return ""
+	}
+
+	track, err := r.fetchTrackMetadata(ctx, trackID, scoredPeers[0].pid)
+	if err != nil || track == nil {
+		return ""
+	}
+	return track.Codec
 }
 
 type scoredPeer struct {
@@ -150,15 +200,16 @@ func (r *P2PResolver) scorePeers(ctx context.Context, peers []peer.ID) []scoredP
 	return scored
 }
 
-func (r *P2PResolver) tryPeers(ctx context.Context, trackID domain.TrackID, scoredPeers []scoredPeer) (io.ReadCloser, error) {
+func (r *P2PResolver) tryPeers(ctx context.Context, trackID domain.TrackID, scoredPeers []scoredPeer, nativeCodec string) (io.ReadCloser, error) {
 	var lastErr error
 	for _, sp := range scoredPeers {
 		if r.peerMgr.IsBanned(sp.pid) {
 			continue
 		}
 
+		codec := requestedCodecFor(nativeCodec, sp)
 		client := NewStreamClient(sp.pid, r.pool, r.scorer)
-		reader, err := client.GetTrack(ctx, string(trackID), "", 0)
+		reader, err := client.GetTrack(ctx, string(trackID), codec, 0)
 		if err != nil {
 			lastErr = err
 			r.peerMgr.RecordFailure(sp.pid)
@@ -170,7 +221,8 @@ func (r *P2PResolver) tryPeers(ctx context.Context, trackID domain.TrackID, scor
 		r.lastPeerMu.Lock()
 		r.lastPeerID = sp.pid
 		r.lastPeerMu.Unlock()
-		slog.Info("streaming track from peer", "track", trackID, "peer", sp.pid, "score", sp.score)
+
+		slog.Info("streaming track from peer", "track", trackID, "peer", sp.pid, "score", sp.score, "codec", codec)
 		return &streamingReader{
 			reader:  reader,
 			trackID: trackID,
@@ -178,6 +230,31 @@ func (r *P2PResolver) tryPeers(ctx context.Context, trackID domain.TrackID, scor
 		}, nil
 	}
 	return nil, lastErr
+}
+
+// requestedCodecFor picks the codec to request from a peer. A codec that is
+// locally decodable is streamed raw (""). Otherwise, if the peer can transcode,
+// request mp3 — libmp3lame output the local engine always decodes. An unknown
+// native codec with a transcoding peer is also safe to request as mp3.
+func requestedCodecFor(nativeCodec string, sp scoredPeer) string {
+	if isLocallyDecodable(nativeCodec) {
+		return ""
+	}
+	if sp.canTranscode {
+		return codecMP3
+	}
+	return ""
+}
+
+// isLocallyDecodable reports whether the local engine's decode() can handle the
+// given codec, mirroring codecFromExtension's outputs and the engine's decode switch.
+func isLocallyDecodable(codec string) bool {
+	switch codec {
+	case codecMP3, codecFlac, codecVorbis, codecPCM:
+		return true
+	default:
+		return false
+	}
 }
 
 type streamingReader struct {
@@ -428,35 +505,7 @@ func (a *P2PResolverAdapter) FetchTrackMetadata(ctx context.Context, trackID dom
 	if err != nil {
 		return nil, err
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	stream, err := a.resolver.host.NewStream(ctx, pid, protocols.SyncProtocol)
-	if err != nil {
-		return nil, err
-	}
-	defer stream.Close()
-
-	req := &pb.SyncRequest{
-		Payload: &pb.SyncRequest_TrackDetailRequest{
-			TrackDetailRequest: &pb.TrackDetailRequest{
-				TrackId: string(trackID),
-			},
-		},
-	}
-	if err := wire.WriteMsg(stream, req); err != nil {
-		return nil, err
-	}
-
-	var resp pb.SyncResponse
-	if err := wire.ReadMsg(stream, &resp); err != nil {
-		return nil, err
-	}
-	if tr, ok := resp.GetPayload().(*pb.SyncResponse_Track); ok {
-		return convert.ProtoToTrack(tr.Track), nil
-	}
-	return nil, errors.New("unexpected response type")
+	return a.resolver.fetchTrackMetadata(ctx, trackID, pid)
 }
 
 // SearchPeer asks a single peer to search its own library and returns the
