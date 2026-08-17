@@ -27,15 +27,17 @@ type CapabilitiesProvider interface {
 type SyncHandler struct {
 	mu              sync.RWMutex
 	library         app.LibraryRepository
+	search          app.SearchHandler
 	localPeerID     peer.ID
 	capsProvider    CapabilitiesProvider
 	announceLibrary bool
 	admission       *AdmissionRegistry
 }
 
-func NewSyncHandler(library app.LibraryRepository, localPeerID peer.ID) *SyncHandler {
+func NewSyncHandler(library app.LibraryRepository, search app.SearchHandler, localPeerID peer.ID) *SyncHandler {
 	return &SyncHandler{
 		library:     library,
+		search:      search,
 		localPeerID: localPeerID,
 	}
 }
@@ -97,6 +99,12 @@ func (h *SyncHandler) Handle(stream network.Stream) {
 			return
 		}
 		h.handleTrackDetailRequest(ctx, stream, payload.TrackDetailRequest.TrackId)
+	case *pb.SyncRequest_RemoteSearchRequest:
+		if h.admission == nil || !h.admission.IsAdmitted(peerID) {
+			h.sendError(stream, "manifest exchange required", pb.ErrorCode_ERROR_CODE_UNAUTHORIZED)
+			return
+		}
+		h.handleRemoteSearchRequest(ctx, stream, payload.RemoteSearchRequest.Query, int(payload.RemoteSearchRequest.Limit))
 	case *pb.SyncRequest_CapabilitiesRequest:
 		h.handleCapabilitiesRequest(ctx, stream)
 	default:
@@ -166,6 +174,38 @@ func (h *SyncHandler) handleTrackDetailRequest(ctx context.Context, stream netwo
 	}
 	if err := wire.WriteMsg(stream, resp); err != nil {
 		slog.Error("failed to send track", "err", err)
+	}
+}
+
+func (h *SyncHandler) handleRemoteSearchRequest(ctx context.Context, stream network.Stream, query string, limit int) {
+	if h.search == nil {
+		h.sendError(stream, "search unavailable", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
+		return
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	tracks, err := h.search.Search(ctx, query, limit)
+	if err != nil {
+		h.sendError(stream, "search failed: "+err.Error(), pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
+		return
+	}
+
+	pbTracks := make([]*pb.Track, len(tracks))
+	for i, t := range tracks {
+		pbTracks[i] = convert.TrackToProto(t)
+	}
+
+	resp := &pb.SyncResponse{
+		Payload: &pb.SyncResponse_Search{
+			Search: &pb.SearchResult{
+				Tracks: pbTracks,
+			},
+		},
+	}
+	if err := wire.WriteMsg(stream, resp); err != nil {
+		slog.Error("failed to send search results", "err", err)
 	}
 }
 

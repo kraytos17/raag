@@ -278,7 +278,8 @@ func newStatusCmd() *cobra.Command {
 }
 
 func newSearchCmd() *cobra.Command {
-	return &cobra.Command{
+	var includePeers bool
+	cmd := &cobra.Command{
 		Use:   "search [query]",
 		Short: "Search library for tracks",
 		Args:  cobra.ExactArgs(1),
@@ -288,7 +289,13 @@ func newSearchCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := client.Search(args[0], 20)
+			var resp *pb.Response
+			if includePeers {
+				resp, err = client.SearchRemote(args[0], 20)
+			} else {
+				resp, err = client.Search(args[0], 20)
+			}
+
 			if err != nil {
 				return err
 			}
@@ -301,12 +308,18 @@ func newSearchCmd() *cobra.Command {
 					return nil
 				}
 				for i, track := range searchResp.Tracks {
-					slog.Info("track", "index", i+1, "title", track.Title, "artist", track.Artist, "album", track.Album)
+					fields := []any{"index", i + 1, "title", track.Title, "artist", track.Artist, "album", track.Album}
+					if track.PeerId != "" {
+						fields = append(fields, "peer", track.PeerId)
+					}
+					slog.Info("track", fields...)
 				}
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&includePeers, "peers", false, "also search connected peers' libraries")
+	return cmd
 }
 
 func newQueueCmd() *cobra.Command {

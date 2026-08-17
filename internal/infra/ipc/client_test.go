@@ -108,14 +108,22 @@ func (m *mockScannerHandler) OnProgress(fn func(app.ScanProgress)) {
 }
 
 // mockSearchHandler implements SearchHandler for testing.
-type mockSearchHandler struct{}
+type mockSearchHandler struct {
+	tracks []*domain.Track
+}
 
 func newMockSearchHandler() *mockSearchHandler {
 	return &mockSearchHandler{}
 }
 
 func (m *mockSearchHandler) Search(_ context.Context, _ string, _ int) ([]*domain.Track, error) {
-	return nil, nil
+	return m.tracks, nil
+}
+
+// SearchWithRemote satisfies the optional interface used by handleSearch when
+// include_peers is set.
+func (m *mockSearchHandler) SearchWithRemote(_ context.Context, _ string, _ int) ([]*domain.Track, error) {
+	return m.tracks, nil
 }
 
 // mockLibraryRepoHandler implements LibraryRepoHandler for testing.
@@ -683,13 +691,13 @@ func TestTranslateEvent_PeerConnected(t *testing.T) {
 	defer srv.Stop()
 
 	et, payload := translateEvent(srv.Server, domain.NewEvent(domain.EventPeerConnected, domain.PeerConnectedPayload{
-		PeerID: domain.PeerID("peer-1"),
+		PeerID: domain.PeerID(testPeerID),
 	}))
 	if et != pb.EventType_EVENT_TYPE_PEER_CONNECTED {
 		t.Fatalf("event type = %v, want PEER_CONNECTED", et)
 	}
 	// mockPeerRepoHandler returns ErrPeerUnavailable, so payload falls back to raw peer id
-	if string(payload) != "peer-1" {
+	if string(payload) != testPeerID {
 		t.Fatalf("payload = %q, want raw peer id", payload)
 	}
 }
@@ -727,14 +735,14 @@ func TestPersistentClient_ListPeers_Enriched(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	score := domain.NewPeerScore(domain.PeerID("peer-1"))
+	score := domain.NewPeerScore(domain.PeerID(testPeerID))
 	score.AvgLatency = 10 * time.Millisecond
 	score.AvgBandwidth = 1_000_000
 	score.SuccessCount = 10
 
 	mock := newMockPeerRepoHandler()
 	mock.peers = append(mock.peers, &domain.PeerInfo{
-		ID:    domain.PeerID("peer-1"),
+		ID:    domain.PeerID(testPeerID),
 		Addrs: []string{"/ip4/127.0.0.1/tcp/7844"},
 		Score: score,
 	})
@@ -758,7 +766,7 @@ func TestPersistentClient_ListPeers_Enriched(t *testing.T) {
 		t.Fatalf("expected 1 peer, got %d", len(lp.Peers))
 	}
 	p := lp.Peers[0]
-	if p.Id != "peer-1" {
+	if p.Id != testPeerID {
 		t.Fatalf("unexpected peer id: %s", p.Id)
 	}
 	if p.Score == nil {
@@ -980,5 +988,45 @@ collect:
 	}
 	if queueEvents < 5 {
 		t.Errorf("received %d queue-updated events, want >= 5", queueEvents)
+	}
+}
+
+// TestPersistentClient_SearchRemote verifies the include_peers search path
+// round-trips and returns tracks tagged with their source peer.
+func TestPersistentClient_SearchRemote(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	search := newMockSearchHandler()
+	search.tracks = []*domain.Track{
+		{ID: domain.TrackID("local-1"), Title: "Local Song", Artist: "A", Album: "X"},
+		{ID: domain.TrackID("remote-1"), Title: "Remote Song", Artist: "B", Album: "Y", PeerID: testPeerID},
+	}
+
+	srv.search = search
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.SearchRemote("song", 20)
+	if err != nil {
+		t.Fatalf("SearchRemote() error = %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("SearchRemote() failed: %s", resp.Error)
+	}
+
+	sr := resp.GetSearch()
+	if sr == nil || len(sr.Tracks) != 2 {
+		t.Fatalf("SearchRemote() tracks = %+v, want 2", sr)
+	}
+
+	var remoteFound bool
+	for _, tr := range sr.Tracks {
+		if tr.Id == "remote-1" && tr.PeerId == testPeerID {
+			remoteFound = true
+		}
+	}
+	if !remoteFound {
+		t.Fatalf("expected remote track with peer_id, got %+v", sr.Tracks)
 	}
 }

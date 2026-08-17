@@ -42,6 +42,7 @@ func TrackToProto(t *domain.Track) *pb.Track {
 		ContentHash:      t.ContentHash,
 		IsDuplicate:      t.IsDuplicate,
 		DuplicateOf:      string(t.DuplicateOf),
+		PeerId:           t.PeerID,
 	}
 }
 
@@ -80,6 +81,7 @@ func ProtoToTrack(p *pb.Track) *domain.Track {
 		ContentHash:      p.ContentHash,
 		IsDuplicate:      p.IsDuplicate,
 		DuplicateOf:      domain.TrackID(p.DuplicateOf),
+		PeerID:           p.PeerId,
 	}
 	if t.NormalizedTitle == "" {
 		t.NormalizedTitle = domain.Normalize(t.Title)

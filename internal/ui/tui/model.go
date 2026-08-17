@@ -103,6 +103,13 @@ func (t TrackItem) Description() string {
 	if t.Track == nil {
 		return ""
 	}
+	if t.Track.PeerId != "" {
+		peer := t.Track.PeerId
+		if len(peer) > 8 {
+			peer = peer[:8]
+		}
+		return fmt.Sprintf("%s (%s) · peer %s", t.Track.Album, formatDuration(t.Track.DurationMs), peer)
+	}
 	return fmt.Sprintf("%s (%s)", t.Track.Album, formatDuration(t.Track.DurationMs))
 }
 
@@ -948,7 +955,7 @@ func (m *Model) cmdVolume(delta int32) tea.Cmd {
 
 func (m *Model) cmdSearch(query string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := m.IPCClient.Search(query, 200)
+		resp, err := m.IPCClient.SearchRemote(query, 200)
 		if err != nil {
 			return LibraryMsg{Err: err}
 		}

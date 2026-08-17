@@ -55,6 +55,9 @@ type Track struct {
 	ContentHash      string
 	IsDuplicate      bool
 	DuplicateOf      TrackID
+	// PeerID is set only for tracks resolved from a remote peer (transient,
+	// never persisted)
+	PeerID string
 }
 
 func NewTrack(path string) *Track {
