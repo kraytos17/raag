@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/control"
@@ -22,10 +23,22 @@ var (
 type PeerGater struct {
 	bannedPeers sync.Map
 	bannedIPs   sync.Map
+	lanOnly     atomic.Bool
 }
 
 func NewPeerGater() *PeerGater {
 	return &PeerGater{}
+}
+
+// SetLANOnly toggles private-IP-only enforcement: when enabled, inbound and
+// outbound connections are restricted to private, link-local, and loopback
+// addresses (RFC1918, ULA, 169.254/16, fe80::/10, 127/8, ::1).
+func (g *PeerGater) SetLANOnly(enabled bool) {
+	g.lanOnly.Store(enabled)
+}
+
+func (g *PeerGater) isLANOnly() bool {
+	return g.lanOnly.Load()
 }
 
 func (g *PeerGater) Ban(pid peer.ID) {
@@ -63,12 +76,21 @@ func (g *PeerGater) InterceptPeerDial(p peer.ID) bool {
 }
 
 func (g *PeerGater) InterceptAddrDial(p peer.ID, m ma.Multiaddr) bool {
-	return !g.IsBanned(p)
+	if g.IsBanned(p) {
+		return false
+	}
+	if g.isLANOnly() && !isPrivateMultiaddr(m) {
+		return false
+	}
+	return true
 }
 
 func (g *PeerGater) InterceptAccept(addrs network.ConnMultiaddrs) bool {
 	ip := extractIPFromMultiaddrs(addrs)
 	if ip != "" && g.IsIPBanned(ip) {
+		return false
+	}
+	if g.isLANOnly() && !isPrivateIP(ip) {
 		return false
 	}
 	return true
@@ -81,6 +103,9 @@ func (g *PeerGater) InterceptSecured(direction network.Direction, p peer.ID, add
 
 	ip := extractIPFromMultiaddrs(addrs)
 	if ip != "" && g.IsIPBanned(ip) {
+		return false
+	}
+	if g.isLANOnly() && !isPrivateIP(ip) {
 		return false
 	}
 	return true
@@ -109,6 +134,33 @@ func extractIPFromMultiaddrs(addrs network.ConnMultiaddrs) string {
 	}
 
 	return ""
+}
+
+// isPrivateMultiaddr reports whether the address contains only private,
+// link-local, or loopback IPs. Used to enforce LAN-only mode.
+func isPrivateMultiaddr(m ma.Multiaddr) bool {
+	if m == nil {
+		return false
+	}
+	if ip, err := m.ValueForProtocol(ma.P_IP4); err == nil {
+		return isPrivateIP(ip)
+	}
+	if ip, err := m.ValueForProtocol(ma.P_IP6); err == nil {
+		return isPrivateIP(ip)
+	}
+	return false
+}
+
+// isPrivateIP reports whether ip is in a private, link-local, or loopback
+// range: RFC1918 (10/8, 172.16/12, 192.168/16), ULA (fc00::/7),
+// link-local (169.254/16, fe80::/10), and loopback (127/8, ::1). An empty or
+// unparseable value is treated as non-private so LAN-only mode stays strict.
+func isPrivateIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	return parsed.IsPrivate() || parsed.IsLinkLocalUnicast() || parsed.IsLoopback()
 }
 
 func (g *PeerGater) BlockPeer(pid peer.ID) error {

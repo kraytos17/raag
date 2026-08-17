@@ -125,6 +125,39 @@ func (q *Queue) Add(track *domain.Track) {
 	}
 }
 
+// MoveTo makes the given track the current queue position. If the track is not
+// already queued it is appended first (preserving its metadata). Returns true
+// when the track is now current (always, unless the queue is nil-backed).
+func (q *Queue) MoveTo(track *domain.Track) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if track == nil {
+		return false
+	}
+	for i, t := range q.tracks {
+		if t.ID == track.ID {
+			q.pos = i
+			return true
+		}
+	}
+
+	q.tracks = append(q.tracks, track)
+	if q.shuffle {
+		last := len(q.tracks) - 1
+		j := rand.IntN(last + 1)
+		q.tracks[last], q.tracks[j] = q.tracks[j], q.tracks[last]
+	}
+	// Re-find after shuffle so pos points at the moved track.
+	for i, t := range q.tracks {
+		if t.ID == track.ID {
+			q.pos = i
+			break
+		}
+	}
+	return true
+}
+
 func (q *Queue) Insert(position int, track *domain.Track) {
 	q.mu.Lock()
 	defer q.mu.Unlock()

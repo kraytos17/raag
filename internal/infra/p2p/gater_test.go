@@ -412,3 +412,110 @@ func TestPeerGater_MultipleIPsIndependent(t *testing.T) {
 		t.Fatal("10.0.0.2 should not be banned")
 	}
 }
+
+func TestPeerGater_LANOnly_InterceptAddrDial(t *testing.T) {
+	g := NewPeerGater()
+	g.SetLANOnly(true)
+
+	pid := peer.ID("peer")
+
+	tests := []struct {
+		name    string
+		addr    string
+		allowed bool
+	}{
+		{name: "public ipv4 rejected", addr: "/ip4/8.8.8.8/tcp/4001", allowed: false},
+		{name: "private ipv4 allowed", addr: "/ip4/192.168.1.5/tcp/4001", allowed: true},
+		{name: "rfc1918 10/8 allowed", addr: "/ip4/10.0.0.2/tcp/4001", allowed: true},
+		{name: "link-local allowed", addr: "/ip4/169.254.10.10/tcp/4001", allowed: true},
+		{name: "loopback allowed", addr: "/ip4/127.0.0.1/tcp/4001", allowed: true},
+		{name: "public ipv6 rejected", addr: "/ip6/2606:4700::1111/tcp/4001", allowed: false},
+		{name: "ula ipv6 allowed", addr: "/ip6/fd00::1/tcp/4001", allowed: true},
+		{name: "link-local ipv6 allowed", addr: "/ip6/fe80::1/tcp/4001", allowed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := mustMultiaddr(t, tt.addr)
+			if got := g.InterceptAddrDial(pid, m); got != tt.allowed {
+				t.Errorf("InterceptAddrDial(%s) = %v, want %v", tt.addr, got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestPeerGater_LANOnly_InterceptAccept(t *testing.T) {
+	g := NewPeerGater()
+	g.SetLANOnly(true)
+
+	private := &mockConnMultiaddrs{remote: mustMultiaddr(t, "/ip4/192.168.1.10/tcp/4001")}
+	public := &mockConnMultiaddrs{remote: mustMultiaddr(t, "/ip4/8.8.8.8/tcp/4001")}
+
+	if !g.InterceptAccept(private) {
+		t.Error("InterceptAccept(private) should be allowed")
+	}
+	if g.InterceptAccept(public) {
+		t.Error("InterceptAccept(public) should be rejected")
+	}
+}
+
+func TestPeerGater_LANOnly_InterceptSecured(t *testing.T) {
+	g := NewPeerGater()
+	g.SetLANOnly(true)
+
+	pid := peer.ID("peer")
+	private := &mockConnMultiaddrs{remote: mustMultiaddr(t, "/ip4/192.168.1.10/tcp/4001")}
+	public := &mockConnMultiaddrs{remote: mustMultiaddr(t, "/ip4/8.8.8.8/tcp/4001")}
+
+	if !g.InterceptSecured(network.DirInbound, pid, private) {
+		t.Error("InterceptSecured(private) should be allowed")
+	}
+	if g.InterceptSecured(network.DirInbound, pid, public) {
+		t.Error("InterceptSecured(public) should be rejected")
+	}
+}
+
+func TestPeerGater_NoLANOnly_AllowsPublic(t *testing.T) {
+	g := NewPeerGater() // lanOnly defaults false
+
+	pid := peer.ID("peer")
+	public := mustMultiaddr(t, "/ip4/8.8.8.8/tcp/4001")
+	addrs := &mockConnMultiaddrs{remote: public}
+
+	if !g.InterceptAddrDial(pid, public) {
+		t.Error("InterceptAddrDial(public) should be allowed when not LAN-only")
+	}
+	if !g.InterceptAccept(addrs) {
+		t.Error("InterceptAccept(public) should be allowed when not LAN-only")
+	}
+	if !g.InterceptSecured(network.DirInbound, pid, addrs) {
+		t.Error("InterceptSecured(public) should be allowed when not LAN-only")
+	}
+}
+
+func TestIsPrivateIP(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want bool
+	}{
+		{"10.0.0.1", true},
+		{"172.16.0.1", true},
+		{"192.168.1.1", true},
+		{"169.254.1.1", true},
+		{"127.0.0.1", true},
+		{"8.8.8.8", false},
+		{"1.1.1.1", false},
+		{"fd00::1", true},
+		{"fe80::1", true},
+		{"::1", true},
+		{"2606:4700::1111", false},
+		{"", false},
+		{"not-an-ip", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ip, func(t *testing.T) {
+			if got := isPrivateIP(tt.ip); got != tt.want {
+				t.Errorf("isPrivateIP(%q) = %v, want %v", tt.ip, got, tt.want)
+			}
+		})
+	}
+}

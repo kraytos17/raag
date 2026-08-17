@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	protocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
@@ -232,3 +233,117 @@ var (
 	_ app.LibraryRepository = (*testLibrary)(nil)
 	_ network.Stream        = (*recordingStream)(nil)
 )
+
+func TestStreamHandler_NoRateLimit_WhenZero(t *testing.T) {
+	h := NewStreamHandler(&testLibrary{})
+	h.SetRateLimiters(0, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	start := time.Now()
+	if err := h.waitRequest(ctx, peer.ID("a")); err != nil {
+		t.Fatalf("waitRequest() error = %v", err)
+	}
+	if err := h.waitUpload(ctx, 1024); err != nil {
+		t.Fatalf("waitUpload() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Errorf("zero limits should not block, took %v", elapsed)
+	}
+}
+
+func TestStreamHandler_RateLimit_RequestsPerPeer(t *testing.T) {
+	h := NewStreamHandler(&testLibrary{})
+	// 2 requests/sec per peer with burst = 2.
+	h.SetRateLimiters(2, 0)
+
+	pidA := peer.ID("peer-a")
+	pidB := peer.ID("peer-b")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// First two requests pass immediately (burst).
+	if err := h.waitRequest(ctx, pidA); err != nil {
+		t.Fatalf("first waitRequest() error = %v", err)
+	}
+	if err := h.waitRequest(ctx, pidA); err != nil {
+		t.Fatalf("second waitRequest() error = %v", err)
+	}
+
+	// Third request must wait ~0.5s for the bucket to refill.
+	start := time.Now()
+	if err := h.waitRequest(ctx, pidA); err != nil {
+		t.Fatalf("third waitRequest() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
+		t.Errorf("third request served too fast: %v, want >= ~0.5s", elapsed)
+	}
+
+	// A different peer has its own bucket and is not throttled.
+	startB := time.Now()
+	if err := h.waitRequest(ctx, pidB); err != nil {
+		t.Fatalf("peer-b waitRequest() error = %v", err)
+	}
+	if elapsed := time.Since(startB); elapsed > 100*time.Millisecond {
+		t.Errorf("peer-b was throttled by peer-a's limiter: %v", elapsed)
+	}
+}
+
+func TestStreamHandler_RateLimit_UploadBandwidth_Global(t *testing.T) {
+	h := NewStreamHandler(&testLibrary{})
+	// 1000 bytes/sec, burst = 1000 (below MaxChunkSize).
+	h.SetRateLimiters(0, 1000)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// One 500-byte response passes instantly.
+	if err := h.waitUpload(ctx, 500); err != nil {
+		t.Fatalf("first waitUpload() error = %v", err)
+	}
+
+	// The next 900-byte response exceeds remaining budget and must wait.
+	start := time.Now()
+	if err := h.waitUpload(ctx, 900); err != nil {
+		t.Fatalf("second waitUpload() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
+		t.Errorf("oversized upload served too fast: %v, want >= ~0.4s", elapsed)
+	}
+}
+
+func TestStreamHandler_RateLimit_UploadBandwidth_SharedAcrossPeers(t *testing.T) {
+	h := NewStreamHandler(&testLibrary{})
+	h.SetRateLimiters(0, 500) // 500 bytes/sec global
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// peer-a and peer-b both draw from the single global bucket.
+	if err := h.waitUpload(ctx, 500); err != nil {
+		t.Fatalf("peer-a waitUpload() error = %v", err)
+	}
+
+	start := time.Now()
+	if err := h.waitUpload(ctx, 500); err != nil {
+		t.Fatalf("peer-b waitUpload() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
+		t.Errorf("peer-b did not share the global bucket: %v", elapsed)
+	}
+}
+
+func TestStreamHandler_RateLimit_Upload_Timeout(t *testing.T) {
+	h := NewStreamHandler(&testLibrary{})
+	h.SetRateLimiters(0, 100) // 100 bytes/sec
+
+	// Exhaust the budget, then request far more than can refill in time.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_ = h.waitUpload(context.Background(), 100)
+	if err := h.waitUpload(ctx, 100000); err == nil {
+		t.Fatal("waitUpload() with tiny budget and deadline: expected error, got nil")
+	}
+}
