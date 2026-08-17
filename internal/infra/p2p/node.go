@@ -18,6 +18,7 @@ import (
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	protocols "github.com/p-society/raag/internal/infra/p2p/protocols"
+	"github.com/p-society/raag/internal/infra/transcoder"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
@@ -65,6 +66,7 @@ type P2PNodeConfig struct {
 	MaxKnownPeers   int
 	ChunkSize       int
 	PeerDataTTL     time.Duration
+	Transcoder      *transcoder.Transcoder
 }
 
 func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode, error) {
@@ -111,6 +113,9 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 	})
 
 	streamHandler := protocols.NewStreamHandler(libraryRepo)
+	if cfg.Transcoder != nil {
+		streamHandler.SetTranscoder(cfg.Transcoder)
+	}
 	streamPool := NewStreamPool(p2pHost, protocols.StreamProtocol)
 	scorer := NewPeerScorer()
 

@@ -16,6 +16,7 @@ import (
 )
 
 const queueTrackTitle = "Queue Track"
+const testSongTitle = "Test Song"
 
 // mockPlaybackHandler implements PlaybackHandler for testing.
 type mockPlaybackHandler struct {
@@ -122,7 +123,12 @@ func newMockLibraryRepoHandler() *mockLibraryRepoHandler {
 	return &mockLibraryRepoHandler{}
 }
 
-func (m *mockLibraryRepoHandler) FindByID(_ context.Context, _ domain.TrackID) (*domain.Track, error) {
+func (m *mockLibraryRepoHandler) FindByID(_ context.Context, id domain.TrackID) (*domain.Track, error) {
+	for _, t := range m.tracks {
+		if t.ID == id {
+			return t, nil
+		}
+	}
 	return nil, domain.ErrTrackNotFound
 }
 
@@ -160,6 +166,44 @@ func (m *mockPeerRepoHandler) GetPeerInfo(_ context.Context, id domain.PeerID) (
 		}
 	}
 	return nil, domain.ErrPeerUnavailable
+}
+
+// mockPlaylistRepo implements app.PlaylistRepository for testing.
+type mockPlaylistRepo struct {
+	playlists map[domain.PlaylistID]*domain.Playlist
+}
+
+func newMockPlaylistRepo() *mockPlaylistRepo {
+	return &mockPlaylistRepo{
+		playlists: make(map[domain.PlaylistID]*domain.Playlist),
+	}
+}
+
+func (m *mockPlaylistRepo) Save(_ context.Context, playlist *domain.Playlist) error {
+	m.playlists[playlist.ID] = playlist
+	return nil
+}
+
+func (m *mockPlaylistRepo) FindByID(_ context.Context, id domain.PlaylistID) (*domain.Playlist, error) {
+	if p, ok := m.playlists[id]; ok {
+		return p, nil
+	}
+	return nil, domain.ErrPlaylistNotFound
+}
+
+func (m *mockPlaylistRepo) ListAll(_ context.Context) iter.Seq2[*domain.Playlist, error] {
+	return func(yield func(*domain.Playlist, error) bool) {
+		for _, p := range m.playlists {
+			if !yield(p, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (m *mockPlaylistRepo) Delete(_ context.Context, id domain.PlaylistID) error {
+	delete(m.playlists, id)
+	return nil
 }
 
 // mockQueueHandler implements QueueHandler for testing.
@@ -269,13 +313,14 @@ func startTestServerAt(t *testing.T, socketPath string) *testServer {
 	_ = os.Remove(socketPath)
 	bus := events.New()
 	config := ServerConfig{
-		Playback:    newMockPlaybackHandler(),
-		Scanner:     newMockScannerHandler(),
-		Search:      newMockSearchHandler(),
-		LibraryRepo: newMockLibraryRepoHandler(),
-		PeerRepo:    newMockPeerRepoHandler(),
-		Queue:       newMockQueueHandler(),
-		EventBus:    bus,
+		Playback:     newMockPlaybackHandler(),
+		Scanner:      newMockScannerHandler(),
+		Search:       newMockSearchHandler(),
+		LibraryRepo:  newMockLibraryRepoHandler(),
+		PeerRepo:     newMockPeerRepoHandler(),
+		Queue:        newMockQueueHandler(),
+		PlaylistRepo: newMockPlaylistRepo(),
+		EventBus:     bus,
 	}
 
 	srv, err := NewServer(socketPath, config)
@@ -515,7 +560,7 @@ func TestPersistentClient_ListTracks(t *testing.T) {
 	// Seed the mock library repo with tracks.
 	track := &domain.Track{
 		ID:     domain.TrackID("track-1"),
-		Title:  "Test Song",
+		Title:  testSongTitle,
 		Artist: "Test Artist",
 		Album:  "Test Album",
 	}
@@ -540,7 +585,7 @@ func TestPersistentClient_ListTracks(t *testing.T) {
 	if len(lt.Tracks) != 1 {
 		t.Fatalf("expected 1 track, got %d", len(lt.Tracks))
 	}
-	if lt.Tracks[0].Title != "Test Song" {
+	if lt.Tracks[0].Title != testSongTitle {
 		t.Fatalf("unexpected track title: %s", lt.Tracks[0].Title)
 	}
 }
@@ -741,5 +786,72 @@ func TestPersistentClient_QueueShuffleRepeat(t *testing.T) {
 	}
 	if resp.Success {
 		t.Fatal("expected invalid repeat mode to fail")
+	}
+}
+
+// TestPersistentClient_Playlists verifies playlist create/list/add/get round-trips.
+func TestPersistentClient_Playlists(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	// Seed the mock playlist repo with a known playlist containing a track.
+	pl := &domain.Playlist{
+		ID:       domain.PlaylistID("pl-1"),
+		Name:     "My Favorites",
+		TrackIDs: []domain.TrackID{domain.TrackID("track-1")},
+	}
+	srv.playlistRepo.(*mockPlaylistRepo).playlists[pl.ID] = pl
+
+	// Seed the library repo so GetPlaylist can resolve the track.
+	mock := newMockLibraryRepoHandler()
+	mock.tracks = append(mock.tracks, &domain.Track{ID: domain.TrackID("track-1"), Title: testSongTitle, Artist: "Test Artist"})
+	srv.libraryRepo = mock
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	// List.
+	resp, err := c.ListPlaylists()
+	if err != nil || !resp.Success {
+		t.Fatalf("list playlists: err=%v resp=%+v", err, resp)
+	}
+	if got := len(resp.GetListPlaylists().Playlists); got != 1 {
+		t.Fatalf("list playlists count = %d, want 1", got)
+	}
+
+	// Create.
+	resp, err = c.CreatePlaylist("New List")
+	if err != nil || !resp.Success {
+		t.Fatalf("create playlist: err=%v resp=%+v", err, resp)
+	}
+	cp := resp.GetCreatePlaylist()
+	if cp == nil || cp.PlaylistId == "" {
+		t.Fatal("expected created playlist id")
+	}
+
+	// Get with tracks resolved.
+	resp, err = c.GetPlaylist("pl-1")
+	if err != nil || !resp.Success {
+		t.Fatalf("get playlist: err=%v resp=%+v", err, resp)
+	}
+	gp := resp.GetGetPlaylist()
+	if gp == nil || gp.Playlist == nil {
+		t.Fatal("expected playlist payload")
+	}
+	if gp.Playlist.Name != "My Favorites" {
+		t.Fatalf("playlist name = %q, want My Favorites", gp.Playlist.Name)
+	}
+	if len(gp.Tracks) != 1 || gp.Tracks[0].Title != testSongTitle {
+		t.Fatalf("expected 1 resolved track, got %+v", gp.Tracks)
+	}
+
+	// Add track.
+	resp, err = c.AddToPlaylist("pl-1", "track-2")
+	if err != nil || !resp.Success {
+		t.Fatalf("add to playlist: err=%v resp=%+v", err, resp)
+	}
+	ap := resp.GetAddToPlaylist()
+	if ap == nil || ap.TrackCount != 2 {
+		t.Fatalf("track count = %+v, want 2", ap)
 	}
 }

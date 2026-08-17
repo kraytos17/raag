@@ -983,9 +983,19 @@ func (s *Server) handleGetPlaylist(ctx context.Context, req *pb.GetPlaylistReque
 	}
 
 	pbPlaylist := convert.PlaylistToProto(playlist)
+	resp := &pb.GetPlaylistResponse{Playlist: pbPlaylist}
+	if s.libraryRepo != nil {
+		for _, trackID := range playlist.TrackIDs {
+			track, err := s.libraryRepo.FindByID(ctx, trackID)
+			if err != nil {
+				continue
+			}
+			resp.Tracks = append(resp.Tracks, convert.TrackToProto(track))
+		}
+	}
 	return &pb.Response{
 		Success: true,
-		Payload: &pb.Response_GetPlaylist{GetPlaylist: &pb.GetPlaylistResponse{Playlist: pbPlaylist}},
+		Payload: &pb.Response_GetPlaylist{GetPlaylist: resp},
 	}
 }
 
