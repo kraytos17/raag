@@ -37,6 +37,7 @@ func FFmpegHealthCheck(ffmpegPath string) HealthChecker {
 		if ffmpegPath == "" {
 			ffmpegPath = defaultFFmpegPath
 		}
+
 		cmdCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		if err := exec.CommandContext(cmdCtx, ffmpegPath, "-version").Run(); err != nil {

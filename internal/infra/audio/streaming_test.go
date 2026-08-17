@@ -3,6 +3,7 @@ package audio
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -415,5 +416,147 @@ func newBlockingSource() *blockingSource {
 	return &blockingSource{
 		ch:   make(chan []byte),
 		done: make(chan struct{}),
+	}
+}
+
+// seekableSource is an in-memory io.ReadSeekCloser that records the last seek.
+type seekableSource struct {
+	mu   sync.Mutex
+	data []byte
+	pos  int
+}
+
+func (s *seekableSource) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pos >= len(s.data) {
+		return 0, io.EOF
+	}
+
+	n := copy(p, s.data[s.pos:])
+	s.pos += n
+	return n, nil
+}
+
+func (s *seekableSource) Seek(offset int64, whence int) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var target int64
+	switch whence {
+	case io.SeekStart:
+		target = offset
+	case io.SeekCurrent:
+		target = int64(s.pos) + offset
+	case io.SeekEnd:
+		target = int64(len(s.data)) + offset
+	default:
+		return 0, errors.New("invalid whence")
+	}
+	if target < 0 {
+		return 0, errors.New("negative seek position")
+	}
+	s.pos = int(target)
+	return target, nil
+}
+
+func (s *seekableSource) Close() error {
+	return nil
+}
+
+func TestStreamingSource_Seek(t *testing.T) {
+	data := bytes.Repeat([]byte("0123456789"), 1000) // 10k bytes
+	src := &seekableSource{data: data}
+	ss := NewStreamingSource(src, 64*1024)
+	defer func() { _ = ss.Close() }()
+
+	if !waitForData(ss, 500*time.Millisecond) {
+		t.Fatal("timeout waiting for initial data")
+	}
+
+	// Seek to a mid-stream byte offset and read; the data must match the
+	// underlying source at that position.
+	pos, err := ss.Seek(5000, io.SeekStart)
+	if err != nil {
+		t.Fatalf("Seek() error = %v", err)
+	}
+	if pos != 5000 {
+		t.Errorf("Seek() pos = %d, want 5000", pos)
+	}
+	if !waitForData(ss, 500*time.Millisecond) {
+		t.Fatal("timeout waiting for data after seek")
+	}
+
+	buf := make([]byte, 64)
+	n, err := ss.Read(buf)
+	if err != nil && err != io.EOF {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if n == 0 {
+		t.Fatal("Read() returned 0 bytes after seek")
+	}
+	if !bytes.Equal(buf[:n], data[5000:5000+n]) {
+		t.Errorf("Read() after seek = %q, want %q", buf[:n], data[5000:5000+n])
+	}
+}
+
+func TestStreamingSource_Seek_FromCurrent(t *testing.T) {
+	data := bytes.Repeat([]byte("abcdefgh"), 2000) // 16k bytes
+	src := &seekableSource{data: data}
+	ss := NewStreamingSource(src, 64*1024)
+	defer func() { _ = ss.Close() }()
+
+	if !waitForData(ss, 500*time.Millisecond) {
+		t.Fatal("timeout waiting for initial data")
+	}
+
+	// Advance the read position by consuming some bytes, then seek relative to it.
+	consume := make([]byte, 1024)
+	if n, err := io.ReadFull(ss, consume); err != nil || n != 1024 {
+		t.Fatalf("initial read: n=%d err=%v", n, err)
+	}
+
+	pos, err := ss.Seek(2048, io.SeekCurrent)
+	if err != nil {
+		t.Fatalf("Seek(current) error = %v", err)
+	}
+
+	want := int64(1024) + 2048
+	if pos != want {
+		t.Errorf("Seek(current) pos = %d, want %d", pos, want)
+	}
+	if !waitForData(ss, 500*time.Millisecond) {
+		t.Fatal("timeout waiting for data after seek")
+	}
+
+	buf := make([]byte, 64)
+	n, err := ss.Read(buf)
+	if err != nil && err != io.EOF {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if n == 0 {
+		t.Fatal("Read() returned 0 bytes after seek")
+	}
+	if !bytes.Equal(buf[:n], data[want:want+int64(n)]) {
+		t.Errorf("Read() after relative seek = %q, want %q", buf[:n], data[want:want+int64(n)])
+	}
+}
+
+func TestStreamingSource_Seek_NonSeekableSource(t *testing.T) {
+	src := &slowReader{data: bytes.Repeat([]byte("x"), 1024)}
+	ss := NewStreamingSource(src, 64*1024)
+	defer func() { _ = ss.Close() }()
+
+	if _, err := ss.Seek(10, io.SeekStart); err == nil {
+		t.Fatal("Seek() on non-seekable source: expected error")
+	}
+}
+
+func TestStreamingSource_Seek_AfterClose(t *testing.T) {
+	src := &seekableSource{data: bytes.Repeat([]byte("x"), 1024)}
+	ss := NewStreamingSource(src, 64*1024)
+	_ = ss.Close()
+
+	if _, err := ss.Seek(10, io.SeekStart); err != io.ErrClosedPipe {
+		t.Errorf("Seek() after Close = %v, want io.ErrClosedPipe", err)
 	}
 }

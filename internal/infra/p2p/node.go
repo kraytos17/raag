@@ -162,8 +162,6 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		peerDataTTL:     cfg.PeerDataTTL,
 	}
 
-	scorer.node = node
-
 	node.done = make(chan struct{})
 	return node, nil
 }
@@ -411,7 +409,10 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 
 	pi := cn.host.Peerstore().PeerInfo(pid)
 	cn.peerMgr.peerCache.Add(pi)
-	cn.admission.Admit(pid)
+	// Admission is intentionally NOT granted here. A peer becomes admitted only
+	// after it completes manifest exchange (SyncHandler.Handle grants it on a
+	// ManifestRequest). Granting it eagerly on connect would make the chunk /
+	// track-detail / remote-search guards meaningless.
 	slog.Debug("peer connected", "peer", pid, "addr", conn.RemoteMultiaddr().String())
 	cn.peerMgr.persist(pid)
 

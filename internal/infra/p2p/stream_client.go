@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -105,6 +106,7 @@ func (c *StreamClient) GetTrack(ctx context.Context, trackID string, codec strin
 type prefetchResult struct {
 	resp *pb.ChunkResponse
 	err  error
+	gen  uint64
 }
 
 type chunkedReader struct {
@@ -122,6 +124,51 @@ type chunkedReader struct {
 	ctx         context.Context
 	fetchCancel context.CancelFunc
 	ahead       chan prefetchResult
+	seekGen     uint64
+}
+
+// streamPos returns the current absolute byte position in the stream, i.e. the
+// offset the next Read would serve data from.
+func (r *chunkedReader) streamPos() int64 {
+	return r.offset - int64(len(r.current)) + int64(r.pos)
+}
+
+// Seek repositions the stream to a byte offset so subsequent Reads fetch
+// chunks from the new position. The peer serves byte ranges, so a seek is just
+// a reposition of the next request offset. seekGen invalidates any in-flight
+// prefetch issued before the seek so a stale response is never consumed.
+func (r *chunkedReader) Seek(offset int64, whence int) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.closed {
+		return 0, io.ErrClosedPipe
+	}
+
+	var target int64
+	switch whence {
+	case io.SeekStart:
+		target = offset
+	case io.SeekCurrent:
+		target = r.streamPos() + offset
+	case io.SeekEnd:
+		if r.totalSize <= 0 {
+			return 0, errors.New("chunked reader: unknown total size, cannot seek from end")
+		}
+		target = r.totalSize + offset
+	default:
+		return 0, errors.New("chunked reader: invalid whence")
+	}
+	if target < 0 {
+		return 0, errors.New("chunked reader: negative seek position")
+	}
+
+	r.offset = target
+	r.current = nil
+	r.pos = 0
+	r.ahead = nil
+	r.seekGen++
+	return target, nil
 }
 
 func (r *chunkedReader) startPrefetch() {
@@ -144,10 +191,11 @@ func (r *chunkedReader) startPrefetch() {
 
 	ch := make(chan prefetchResult, 1)
 	r.ahead = ch
+	gen := r.seekGen
 
 	go func() {
 		resp, err := r.client.GetChunk(r.ctx, req)
-		ch <- prefetchResult{resp: resp, err: err}
+		ch <- prefetchResult{resp: resp, err: err, gen: gen}
 	}()
 }
 
@@ -169,9 +217,16 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 			r.mu.Unlock()
 			result := <-r.ahead
 			r.mu.Lock()
+
 			r.ahead = nil
 			if r.closed {
 				return 0, io.EOF
+			}
+			// A seek happened while this prefetch was in flight; the chunk was
+			// fetched from a stale offset. Drop it and loop to refetch from the
+			// new position.
+			if result.gen != r.seekGen {
+				continue
 			}
 			resp, err = result.resp, result.err
 		} else {
@@ -187,12 +242,17 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 				Codec:   r.codec,
 				Bitrate: r.bitrate,
 			}
+			gen := r.seekGen
 
 			r.mu.Unlock()
 			resp, err = r.client.GetChunk(r.ctx, req)
 			r.mu.Lock()
 			if r.closed {
 				return 0, io.EOF
+			}
+			// Same staleness guard for the synchronous fetch path.
+			if gen != r.seekGen {
+				continue
 			}
 		}
 

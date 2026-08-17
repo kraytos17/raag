@@ -174,3 +174,14 @@ func (rb *RingBuffer) Discard(n int) int {
 	rb.count -= n
 	return n
 }
+
+// Reset clears the buffer and un-closes it, so a closed (EOF) ring can be
+// reused after a seek repositions the source.
+func (rb *RingBuffer) Reset() {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	rb.count = 0
+	rb.readPos = 0
+	rb.writePos = 0
+	rb.closed = false
+}

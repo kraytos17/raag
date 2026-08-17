@@ -549,3 +549,189 @@ func TestChunkedReader_ConcurrentIndependentReaders(t *testing.T) {
 		t.Fatalf("completed = %d, want 10", c)
 	}
 }
+
+func newSeekTestReader() *chunkedReader {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &chunkedReader{
+		trackID:     testTrackID,
+		chunkSize:   1024,
+		current:     []byte("0123456789abcdef"),
+		pos:         4, // 4 bytes consumed: stream position is 4
+		offset:      16,
+		totalSize:   100,
+		ctx:         ctx,
+		fetchCancel: cancel,
+	}
+}
+
+func TestChunkedReader_SeekStart(t *testing.T) {
+	r := newSeekTestReader()
+	defer r.Close()
+
+	pos, err := r.Seek(50, io.SeekStart)
+	if err != nil {
+		t.Fatalf("Seek() error = %v", err)
+	}
+	if pos != 50 {
+		t.Errorf("Seek() pos = %d, want 50", pos)
+	}
+	if r.offset != 50 {
+		t.Errorf("offset = %d, want 50", r.offset)
+	}
+	if r.pos != 0 || r.current != nil {
+		t.Errorf("buffered data not cleared: pos=%d current=%v", r.pos, r.current)
+	}
+}
+
+func TestChunkedReader_SeekCurrent(t *testing.T) {
+	r := newSeekTestReader()
+	defer r.Close()
+
+	// streamPos = offset - len(current) + pos = 16 - 16 + 4 = 4
+	pos, err := r.Seek(10, io.SeekCurrent)
+	if err != nil {
+		t.Fatalf("Seek() error = %v", err)
+	}
+	if pos != 14 {
+		t.Errorf("Seek() pos = %d, want 14 (streamPos 4 + 10)", pos)
+	}
+	if r.offset != 14 {
+		t.Errorf("offset = %d, want 14", r.offset)
+	}
+}
+
+func TestChunkedReader_SeekEnd(t *testing.T) {
+	r := newSeekTestReader()
+	defer r.Close()
+
+	pos, err := r.Seek(-20, io.SeekEnd)
+	if err != nil {
+		t.Fatalf("Seek() error = %v", err)
+	}
+	if pos != 80 {
+		t.Errorf("Seek() pos = %d, want 80 (totalSize 100 - 20)", pos)
+	}
+	if r.offset != 80 {
+		t.Errorf("offset = %d, want 80", r.offset)
+	}
+}
+
+func TestChunkedReader_SeekEnd_UnknownTotal(t *testing.T) {
+	r := newSeekTestReader()
+	r.totalSize = 0
+	defer r.Close()
+
+	if _, err := r.Seek(0, io.SeekEnd); err == nil {
+		t.Fatal("Seek(End) with unknown totalSize: expected error")
+	}
+}
+
+func TestChunkedReader_Seek_Negative(t *testing.T) {
+	r := newSeekTestReader()
+	defer r.Close()
+
+	if _, err := r.Seek(-5, io.SeekStart); err == nil {
+		t.Fatal("Seek() negative position: expected error")
+	}
+}
+
+func TestChunkedReader_Seek_InvalidWhence(t *testing.T) {
+	r := newSeekTestReader()
+	defer r.Close()
+
+	if _, err := r.Seek(0, 99); err == nil {
+		t.Fatal("Seek() invalid whence: expected error")
+	}
+}
+
+func TestChunkedReader_Seek_AfterClose(t *testing.T) {
+	r := newSeekTestReader()
+	r.Close()
+
+	if _, err := r.Seek(10, io.SeekStart); err != io.ErrClosedPipe {
+		t.Errorf("Seek() after Close = %v, want io.ErrClosedPipe", err)
+	}
+}
+
+func TestChunkedReader_Seek_InvalidatesPrefetch(t *testing.T) {
+	host := newMockHost()
+	pool := NewStreamPool(host, "/test/1.0.0")
+	defer pool.Close()
+
+	scorer := NewPeerScorer()
+	client := NewStreamClient(peer.ID("test-peer"), pool, scorer)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := &chunkedReader{
+		client:      client,
+		trackID:     testTrackID,
+		chunkSize:   1024,
+		offset:      0,
+		totalSize:   0,
+		ctx:         ctx,
+		fetchCancel: cancel,
+	}
+
+	// A prefetch from an older generation must be discarded: Read refetches via
+	// the client, which hits the mock host and errors (stream EOF), surfacing
+	// the error instead of the stale bytes.
+	stale := prefetchResult{
+		resp: &pb.ChunkResponse{Data: []byte("stale"), TotalSize: 100},
+		gen:  0,
+	}
+
+	ch := make(chan prefetchResult, 1)
+	ch <- stale
+	r.ahead = ch
+	r.seekGen = 1
+
+	buf := make([]byte, 16)
+	if _, err := r.Read(buf); err == nil {
+		t.Fatal("Read() with stale prefetch: expected refetch error, got data")
+	}
+	if r.current != nil {
+		t.Error("current buffer should be empty after stale prefetch discard")
+	}
+	if r.ahead != nil {
+		t.Error("ahead should be cleared after stale prefetch discard")
+	}
+}
+
+func TestChunkedReader_Seek_CurrentGenPrefetchConsumed(t *testing.T) {
+	host := newMockHost()
+	pool := NewStreamPool(host, "/test/1.0.0")
+	defer pool.Close()
+
+	scorer := NewPeerScorer()
+	client := NewStreamClient(peer.ID("test-peer"), pool, scorer)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := &chunkedReader{
+		client:      client,
+		trackID:     testTrackID,
+		chunkSize:   1024,
+		offset:      0,
+		totalSize:   0,
+		ctx:         ctx,
+		fetchCancel: cancel,
+	}
+
+	r.seekGen = 5
+	fresh := prefetchResult{
+		resp: &pb.ChunkResponse{Data: []byte("fresh"), TotalSize: 100},
+		gen:  5,
+	}
+
+	ch := make(chan prefetchResult, 1)
+	ch <- fresh
+	r.ahead = ch
+
+	buf := make([]byte, 16)
+	n, err := r.Read(buf)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if string(buf[:n]) != "fresh" {
+		t.Errorf("Read() = %q, want %q", buf[:n], "fresh")
+	}
+}

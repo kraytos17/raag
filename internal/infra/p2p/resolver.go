@@ -269,6 +269,16 @@ func (r *streamingReader) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
+// Seek forwards the seek to the underlying chunkedReader, repositioning the
+// remote stream to the requested byte offset.
+func (r *streamingReader) Seek(offset int64, whence int) (int64, error) {
+	seeker, ok := r.reader.(io.Seeker)
+	if !ok {
+		return 0, errors.New("streaming reader: underlying source is not seekable")
+	}
+	return seeker.Seek(offset, whence)
+}
+
 func (r *streamingReader) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -291,7 +301,6 @@ type PeerScorer struct {
 	latencies   map[peer.ID][]time.Duration
 	failLimit   int
 	cooldown    time.Duration
-	node        *P2PNode
 }
 
 func NewPeerScorer() *PeerScorer {
@@ -389,9 +398,10 @@ func (s *PeerScorer) RecordFailure(pid peer.ID) {
 	if s.failures[pid] >= s.failLimit {
 		s.banned[pid] = true
 		slog.Warn("peer banned due to failures", "peer", pid, "failures", s.failures[pid])
-		if s.node != nil {
-			s.node.BanPeer(pid)
-		}
+		// Deliberately no gater escalation: the scorer's ban is cooldown-based
+		// (IsBanned auto-clears after the cooldown and RecordSuccess clears it),
+		// while a gater ban is permanent for the session and can't be undone by
+		// success. Manual/admin bans go through the gater separately.
 	} else {
 		slog.Debug("peer failure recorded", "peer", pid, "failures", s.failures[pid])
 	}
