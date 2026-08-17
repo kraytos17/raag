@@ -26,11 +26,11 @@ import (
 
 func main() {
 	cfg, skipScan := loadConfig()
-	database, libraryRepo, p2pNode, p2pEnabled, searchService := initializeServices(cfg)
-	runDaemon(cfg, database, libraryRepo, p2pNode, p2pEnabled, searchService, skipScan)
+	database, libraryRepo, p2pNode, p2pEnabled, searchService, metrics := initializeServices(cfg)
+	runDaemon(cfg, database, libraryRepo, p2pNode, p2pEnabled, searchService, skipScan, metrics)
 }
 
-func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool, *app.SearchService) {
+func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool, *app.SearchService, *observability.Metrics) {
 	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
 	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
 	if err != nil {
@@ -45,11 +45,13 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		os.Exit(1)
 	}
 
+	metrics := observability.NewMetrics()
+
 	searchIndex := app.NewSearchIndex(libraryRepo)
 	searchService := app.NewSearchService(searchIndex, libraryRepo)
 	enabled := cfg.P2P.Enabled
 	if !enabled {
-		return database, libraryRepo, nil, false, searchService
+		return database, libraryRepo, nil, false, searchService, metrics
 	}
 
 	peerRepo := db.NewPeerRepo(database)
@@ -76,12 +78,13 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		Transcoder:         transcoder.New(transcoder.Config{FFmpegPath: cfg.Transcoder.FFmpegPath, StreamCodec: cfg.Transcoder.StreamCodec, StreamBitrate: cfg.Transcoder.StreamBitrate}),
 		PeerRepo:           peerRepo,
 		Search:             searchService,
+		Metrics:            metrics,
 	}, libraryRepo)
 	if err != nil {
 		slog.Error("failed to create P2P node", "error", err)
-		return database, libraryRepo, nil, false, searchService
+		return database, libraryRepo, nil, false, searchService, metrics
 	}
-	return database, libraryRepo, p2pNode, true, searchService
+	return database, libraryRepo, p2pNode, true, searchService, metrics
 }
 
 func loadConfig() (*config.Config, bool) {
@@ -147,7 +150,10 @@ func loadConfig() (*config.Config, bool) {
 	return cfg, *noScan
 }
 
-func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, p2pNode *p2p.P2PNode, p2pEnabled bool, searchService *app.SearchService, skipScan bool) {
+func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
+	p2pNode *p2p.P2PNode, p2pEnabled bool, searchService *app.SearchService,
+	skipScan bool, metrics *observability.Metrics,
+) {
 	bus := events.New()
 	peerRepo := db.NewPeerRepo(database)
 	duplicateDetector := duplicate.NewDetector(database, duplicate.ConfigToHandler(cfg.Library.DuplicateHandling))
@@ -193,6 +199,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		PlaylistRepo: db.NewPlaylistRepo(database),
 		P2PNode:      p2pNode,
 		EventBus:     bus,
+		Metrics:      metrics,
 	})
 	if err != nil {
 		slog.Error("failed to create IPC server", "error", err)
@@ -237,26 +244,9 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	if cfg.Metrics.Enabled {
-		startMetricsServer(sigCtx, cfg.Metrics)
+		startMetricsServer(sigCtx, cfg.Metrics, metrics)
 	}
-	if cfg.Library.ScanOnStart && !skipScan {
-		slog.Info("starting library scan", "paths", cfg.Library.Paths)
-		go func() {
-			if _, err := scanner.Scan(sigCtx); err != nil {
-				if sigCtx.Err() != nil {
-					slog.Info("library scan canceled due to shutdown")
-					return
-				}
-				slog.Error("library scan failed", "error", err)
-			}
-			if dups := duplicateDetector.GetDuplicates(); len(dups) > 0 {
-				slog.Warn("duplicates detected", "groups", len(dups))
-				for _, dup := range dups {
-					slog.Info("duplicate group", "hash", dup.Hash[:16]+"...", "original", dup.OriginalID, "duplicates", len(dup.DuplicateIDs))
-				}
-			}
-		}()
-	}
+	startIndexAndScan(sigCtx, cfg, skipScan, searchService, libraryRepo, scanner, duplicateDetector)
 
 	slog.Info(
 		"raag daemon started",
@@ -309,13 +299,53 @@ func registerFileWatcher(lc *app.LifecycleManager, paths []string, scanner *app.
 	}
 }
 
-// startMetricsServer exposes the Prometheus metrics endpoint.
-func startMetricsServer(ctx context.Context, cfg config.MetricsConfig) {
-	metrics := observability.NewMetrics()
+// startIndexAndScan rebuilds the search index when the scan is skipped (so
+// search works without one), otherwise kicks off the library scan.
+func startIndexAndScan(sigCtx context.Context, cfg *config.Config, skipScan bool,
+	searchService *app.SearchService, libraryRepo db.LibraryRepo,
+	scanner *app.LibraryScanner, duplicateDetector *duplicate.Detector,
+) {
+	if skipScan {
+		if err := searchService.Index().Rebuild(sigCtx, libraryRepo); err != nil {
+			slog.Warn("failed to rebuild search index at startup", "error", err)
+		} else {
+			slog.Info("search index rebuilt from database")
+		}
+		return
+	}
+	if !cfg.Library.ScanOnStart {
+		return
+	}
+
+	slog.Info("starting library scan", "paths", cfg.Library.Paths)
+	go func() {
+		if _, err := scanner.Scan(sigCtx); err != nil {
+			if sigCtx.Err() != nil {
+				slog.Info("library scan canceled due to shutdown")
+				return
+			}
+			slog.Error("library scan failed", "error", err)
+		}
+		if dups := duplicateDetector.GetDuplicates(); len(dups) > 0 {
+			slog.Warn("duplicates detected", "groups", len(dups))
+			for _, dup := range dups {
+				slog.Info("duplicate group", "hash", dup.Hash[:16]+"...", "original", dup.OriginalID, "duplicates", len(dup.DuplicateIDs))
+			}
+		}
+	}()
+}
+
+// startMetricsServer exposes the Prometheus metrics endpoint on the given
+// instance. Returns the instance so callers can keep wiring collectors.
+func startMetricsServer(ctx context.Context, cfg config.MetricsConfig, metrics *observability.Metrics) *observability.Metrics {
+	if metrics == nil {
+		metrics = observability.NewMetrics()
+	}
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	if err := metrics.Start(ctx, addr, cfg.Path); err != nil {
 		slog.Error("failed to start metrics server", "error", err)
 	}
+	return metrics
 }
 
 // applyConfiguredVolume pushes the configured volume into the engine so it is

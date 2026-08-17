@@ -90,8 +90,7 @@ func (m *memPeerRepo) ListAll(_ context.Context) iter.Seq2[*domain.PeerInfo, err
 }
 
 // TestPeerManager_PersistRoundTrip verifies that persist() writes peer info,
-// score, and manifest through the repository (fixes §12.3.1/§12.3.2: the
-// peer repo was never written, so `raag peers` was always empty).
+// score, and manifest through the repository.
 func TestPeerManager_PersistRoundTrip(t *testing.T) {
 	repo := newMemPeerRepo()
 	pm := newPeerManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, repo)

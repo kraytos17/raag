@@ -17,6 +17,7 @@ import (
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/backoff"
+	"github.com/p-society/raag/internal/infra/observability"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	protocols "github.com/p-society/raag/internal/infra/p2p/protocols"
 	"github.com/p-society/raag/internal/infra/transcoder"
@@ -59,6 +60,8 @@ type P2PNode struct {
 	maxKnownPeers   int
 	chunkSize       int
 	peerDataTTL     time.Duration
+	metrics         *observability.Metrics
+	bus             domain.EventBus
 }
 
 type P2PNodeConfig struct {
@@ -85,6 +88,7 @@ type P2PNodeConfig struct {
 	Transcoder         *transcoder.Transcoder
 	PeerRepo           app.PeerRepository
 	Search             app.SearchHandler
+	Metrics            *observability.Metrics
 }
 
 func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode, error) {
@@ -174,6 +178,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		maxKnownPeers:   cfg.MaxKnownPeers,
 		chunkSize:       cfg.ChunkSize,
 		peerDataTTL:     cfg.PeerDataTTL,
+		metrics:         cfg.Metrics,
 	}
 
 	node.done = make(chan struct{})
@@ -189,6 +194,8 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 
 	n.started = true
 	n.mu.Unlock()
+
+	n.bus = bus
 
 	n.host.SetStreamHandler(protocols.StreamProtocol, n.streamHandler.Handle)
 	n.host.SetStreamHandler(protocols.SyncProtocol, n.syncHandler.Handle)
@@ -499,11 +506,32 @@ func (n *P2PNode) measureLatencyLoop() {
 }
 
 func (n *P2PNode) measureAllPeersLatency() {
+	if n.metrics != nil && n.metrics.ConnectedPeers != nil {
+		n.metrics.ConnectedPeers.Set(float64(len(n.Peers())))
+	}
 	for _, pi := range n.peerCache.All() {
 		latency := n.host.Peerstore().LatencyEWMA(pi.ID)
 		if latency > 0 {
 			n.scorer.RecordLatency(pi.ID, latency)
 		}
+	}
+	// Publish score updates so the UI can refresh a peer's score without
+	// treating it as a new connection
+	if n.bus == nil {
+		return
+	}
+	for _, pid := range n.Peers() {
+		latency, bandwidth, successes, failures, _ := n.scorer.Snapshot(pid)
+		successRate := 0.0
+		if successes+failures > 0 {
+			successRate = float64(successes) / float64(successes+failures)
+		}
+
+		score := n.scorer.Score(pid, latency, bandwidth, successRate)
+		n.bus.Publish(context.Background(), domain.NewEvent(
+			domain.EventPeerScoreUpdated,
+			domain.PeerScoreUpdatedPayload{PeerID: domain.PeerID(pid.String()), Score: score},
+		))
 	}
 }
 

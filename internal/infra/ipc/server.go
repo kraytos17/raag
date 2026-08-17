@@ -18,6 +18,7 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/observability"
 	p2p "github.com/p-society/raag/internal/infra/p2p"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
@@ -51,6 +52,7 @@ type Server struct {
 	playlistRepo app.PlaylistRepository
 	p2pNode      *p2p.P2PNode
 	eventBus     domain.EventBus
+	metrics      *observability.Metrics
 
 	maxConns     *semaphore.Weighted
 	progressCb   func(jobID string, scanned int, total int, currentFile string, phase string)
@@ -69,6 +71,7 @@ type ServerConfig struct {
 	PlaylistRepo app.PlaylistRepository
 	P2PNode      *p2p.P2PNode
 	EventBus     domain.EventBus
+	Metrics      *observability.Metrics
 }
 
 func (c *ServerConfig) Validate() error {
@@ -101,6 +104,7 @@ type PlaybackHandler interface {
 	GetState() domain.PlayerState
 	GetVolume() int
 	GetCurrentTrack() *domain.Track
+	GetPosition() time.Duration
 	OnProgress(callback func(positionMs, durationMs int64))
 }
 
@@ -159,6 +163,7 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 		playlistRepo: config.PlaylistRepo,
 		p2pNode:      config.P2PNode,
 		eventBus:     config.EventBus,
+		metrics:      config.Metrics,
 		maxConns:     semaphore.NewWeighted(64),
 		subMgr:       NewSubscriptionManager(),
 	}
@@ -215,12 +220,10 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("playing")
 	case domain.EventTrackSeeked:
 		return pb.EventType_EVENT_TYPE_TRACK_CHANGED, mustMarshal(convert.TrackToProto(s.playback.GetCurrentTrack()))
-	case domain.EventPeerConnected, domain.EventPeerScoreUpdated:
+	case domain.EventPeerConnected:
 		var pid domain.PeerID
 		switch p := e.Payload.(type) {
 		case domain.PeerConnectedPayload:
-			pid = p.PeerID
-		case domain.PeerScoreUpdatedPayload:
 			pid = p.PeerID
 		case domain.PeerID:
 			pid = p
@@ -234,6 +237,23 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 		}
 		peer := convert.PeerInfoToProto(info)
 		return pb.EventType_EVENT_TYPE_PEER_CONNECTED, mustMarshal(peer)
+	case domain.EventPeerScoreUpdated:
+		// Score refresh is not a new connection: map to its own event type so
+		// the TUI doesn't inflate PeerCount.
+		var pid domain.PeerID
+		switch p := e.Payload.(type) {
+		case domain.PeerScoreUpdatedPayload:
+			pid = p.PeerID
+		default:
+			return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, nil
+		}
+
+		info, err := s.peerRepo.GetPeerInfo(context.Background(), pid)
+		if err != nil {
+			return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, []byte(string(pid))
+		}
+		peer := convert.PeerInfoToProto(info)
+		return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, mustMarshal(peer)
 	case domain.EventPeerDisconnected:
 		var pid domain.PeerID
 		switch p := e.Payload.(type) {
@@ -454,6 +474,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			slog.Debug("client subscribed to events", "mask", eventMask)
 		}
 
+		start := time.Now()
 		resp := s.dispatch(ctx, &req)
 		if err := conn.SetWriteDeadline(time.Now().Add(domain.IPCWriteTimeout)); err != nil {
 			slog.Warn("failed to set write deadline", "error", err)
@@ -463,7 +484,19 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			slog.Warn("write response failed", "error", err)
 			return
 		}
+		if s.metrics != nil && s.metrics.IPCDuration != nil {
+			s.metrics.IPCDuration.WithLabelValues(ipcCommandLabel(&req)).Observe(time.Since(start).Seconds())
+		}
 	}
+}
+
+// ipcCommandLabel returns a stable label for an IPC request based on its
+// payload message name (e.g. "Request_Play"), or "unknown" if the payload is nil.
+func ipcCommandLabel(req *pb.Request) string {
+	if req == nil || req.Payload == nil {
+		return "unknown"
+	}
+	return string(proto.MessageName(req.Payload.(proto.Message)))
 }
 
 //nolint:gocyclo // dispatch function has many cases for IPC requests
@@ -965,6 +998,7 @@ func (s *Server) handleStatus() *pb.Response {
 		Payload: &pb.Response_Status{Status: &pb.StatusResponse{
 			State:         string(state),
 			CurrentTrack:  pbTrack,
+			PositionMs:    s.playback.GetPosition().Milliseconds(),
 			Volume:        int32(volume),
 			QueueLength:   int32(queueSize),
 			QueuePosition: int32(queuePos),

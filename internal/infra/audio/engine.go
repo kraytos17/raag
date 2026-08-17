@@ -27,10 +27,21 @@ var (
 	ErrNotPaused  = errors.New("audio: not paused")
 )
 
-var initSpeaker = sync.OnceValue(func() error {
-	bufferSize := beep.SampleRate(44100).N(time.Millisecond * 100)
-	return speaker.Init(beep.SampleRate(44100), bufferSize)
-})
+var (
+	initSpeakerOnce sync.Once
+	initSpeakerErr  error
+)
+
+// initSpeaker initializes the global speaker at the requested sample rate.
+// speaker.Init can only be called once per process, so the first call wins;
+// subsequent calls with a different rate are ignored.
+func initSpeaker(rate beep.SampleRate) error {
+	initSpeakerOnce.Do(func() {
+		bufferSize := rate.N(time.Millisecond * 100)
+		initSpeakerErr = speaker.Init(rate, bufferSize)
+	})
+	return initSpeakerErr
+}
 
 type Engine struct {
 	mu            sync.RWMutex
@@ -320,7 +331,7 @@ func (e *Engine) Done() <-chan struct{} {
 }
 
 func (e *Engine) initSpeaker() error {
-	return initSpeaker()
+	return initSpeaker(e.sampleRate)
 }
 
 func decode(rc io.ReadCloser, mimeType string) (beep.StreamSeekCloser, beep.Format, error) {

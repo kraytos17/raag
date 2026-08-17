@@ -379,6 +379,12 @@ func (m *Model) parseEvent(event *pb.Event) tea.Msg {
 			return nil
 		}
 		return PeerConnectedMsg{Peer: &peer}
+	case pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED:
+		var peer pb.Peer
+		if err := proto.Unmarshal(event.Payload, &peer); err != nil {
+			return nil
+		}
+		return PeerScoreUpdatedMsg{Peer: &peer}
 	case pb.EventType_EVENT_TYPE_PEER_DISCONNECTED:
 		return PeerDisconnectedMsg{PeerID: string(event.Payload)}
 	case pb.EventType_EVENT_TYPE_LIBRARY_UPDATED:
@@ -404,6 +410,7 @@ type (
 	QueueUpdatedMsg     struct{ Tracks []*pb.Track }
 	PeerConnectedMsg    struct{ Peer *pb.Peer }
 	PeerDisconnectedMsg struct{ PeerID string }
+	PeerScoreUpdatedMsg struct{ Peer *pb.Peer }
 	LibraryUpdatedMsg   struct{}
 	ErrorMsg            struct{ Err string }
 	ConnectedMsg        struct{}
@@ -469,6 +476,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setQueueItems(msg.Tracks)
 	case PeerConnectedMsg:
 		cmds = append(cmds, m.handlePeerConnected(msg)...)
+	case PeerScoreUpdatedMsg:
+		cmds = append(cmds, m.handlePeerScoreUpdated(msg)...)
 	case PeerDisconnectedMsg:
 		cmds = append(cmds, m.handlePeerDisconnected(msg)...)
 	case LibraryUpdatedMsg:
@@ -518,6 +527,12 @@ func (m *Model) handlePeerConnected(msg PeerConnectedMsg) []tea.Cmd {
 		return []tea.Cmd{m.fetchPeers()}
 	}
 	return nil
+}
+
+// handlePeerScoreUpdated refreshes a peer's score without treating it as a new
+// connection (no PeerCount change).
+func (m *Model) handlePeerScoreUpdated(_ PeerScoreUpdatedMsg) []tea.Cmd {
+	return []tea.Cmd{m.fetchPeers()}
 }
 
 func (m *Model) handlePeerDisconnected(_ PeerDisconnectedMsg) []tea.Cmd {
@@ -974,8 +989,17 @@ func (m *Model) cmdPlaySelected() tea.Cmd {
 			idx := activeList.Index()
 			items := activeList.Items()
 			if idx >= 0 && idx < len(items) {
-				if t, ok := items[idx].(TrackItem); ok && t.Track != nil {
-					trackID = t.Track.Id
+				switch item := items[idx].(type) {
+				case TrackItem:
+					if item.Track != nil {
+						trackID = item.Track.Id
+					}
+				case QueueItem:
+					// Playing a queued track: Play(trackId) already makes it the
+					// queue-current item
+					if item.Track != nil {
+						trackID = item.Track.Id
+					}
 				}
 			}
 		}

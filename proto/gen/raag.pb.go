@@ -83,16 +83,17 @@ func (ErrorCode) EnumDescriptor() ([]byte, []int) {
 type EventType int32
 
 const (
-	EventType_EVENT_TYPE_UNSPECIFIED       EventType = 0
-	EventType_EVENT_TYPE_PLAYBACK_STATE    EventType = 1   // string: "playing", "paused", "stopped"
-	EventType_EVENT_TYPE_TRACK_CHANGED     EventType = 2   // Track
-	EventType_EVENT_TYPE_PROGRESS          EventType = 4   // ProgressEvent (lightweight)
-	EventType_EVENT_TYPE_VOLUME_CHANGED    EventType = 8   // int32 volume
-	EventType_EVENT_TYPE_QUEUE_UPDATED     EventType = 16  // QueueResponse
-	EventType_EVENT_TYPE_PEER_CONNECTED    EventType = 32  // Peer
-	EventType_EVENT_TYPE_PEER_DISCONNECTED EventType = 64  // string peer_id
-	EventType_EVENT_TYPE_LIBRARY_UPDATED   EventType = 128 // LibraryStats
-	EventType_EVENT_TYPE_ERROR             EventType = 256 // string error message
+	EventType_EVENT_TYPE_UNSPECIFIED        EventType = 0
+	EventType_EVENT_TYPE_PLAYBACK_STATE     EventType = 1   // string: "playing", "paused", "stopped"
+	EventType_EVENT_TYPE_TRACK_CHANGED      EventType = 2   // Track
+	EventType_EVENT_TYPE_PROGRESS           EventType = 4   // ProgressEvent (lightweight)
+	EventType_EVENT_TYPE_VOLUME_CHANGED     EventType = 8   // int32 volume
+	EventType_EVENT_TYPE_QUEUE_UPDATED      EventType = 16  // QueueResponse
+	EventType_EVENT_TYPE_PEER_CONNECTED     EventType = 32  // Peer
+	EventType_EVENT_TYPE_PEER_DISCONNECTED  EventType = 64  // string peer_id
+	EventType_EVENT_TYPE_LIBRARY_UPDATED    EventType = 128 // LibraryStats
+	EventType_EVENT_TYPE_ERROR              EventType = 256 // string error message
+	EventType_EVENT_TYPE_PEER_SCORE_UPDATED EventType = 512 // Peer (score refreshed)
 )
 
 // Enum value maps for EventType.
@@ -108,18 +109,20 @@ var (
 		64:  "EVENT_TYPE_PEER_DISCONNECTED",
 		128: "EVENT_TYPE_LIBRARY_UPDATED",
 		256: "EVENT_TYPE_ERROR",
+		512: "EVENT_TYPE_PEER_SCORE_UPDATED",
 	}
 	EventType_value = map[string]int32{
-		"EVENT_TYPE_UNSPECIFIED":       0,
-		"EVENT_TYPE_PLAYBACK_STATE":    1,
-		"EVENT_TYPE_TRACK_CHANGED":     2,
-		"EVENT_TYPE_PROGRESS":          4,
-		"EVENT_TYPE_VOLUME_CHANGED":    8,
-		"EVENT_TYPE_QUEUE_UPDATED":     16,
-		"EVENT_TYPE_PEER_CONNECTED":    32,
-		"EVENT_TYPE_PEER_DISCONNECTED": 64,
-		"EVENT_TYPE_LIBRARY_UPDATED":   128,
-		"EVENT_TYPE_ERROR":             256,
+		"EVENT_TYPE_UNSPECIFIED":        0,
+		"EVENT_TYPE_PLAYBACK_STATE":     1,
+		"EVENT_TYPE_TRACK_CHANGED":      2,
+		"EVENT_TYPE_PROGRESS":           4,
+		"EVENT_TYPE_VOLUME_CHANGED":     8,
+		"EVENT_TYPE_QUEUE_UPDATED":      16,
+		"EVENT_TYPE_PEER_CONNECTED":     32,
+		"EVENT_TYPE_PEER_DISCONNECTED":  64,
+		"EVENT_TYPE_LIBRARY_UPDATED":    128,
+		"EVENT_TYPE_ERROR":              256,
+		"EVENT_TYPE_PEER_SCORE_UPDATED": 512,
 	}
 )
 
@@ -5389,7 +5392,7 @@ const file_raag_proto_rawDesc = "" +
 	"\x1cERROR_CODE_PERMISSION_DENIED\x10\x02\x12\x1b\n" +
 	"\x17ERROR_CODE_UNAUTHORIZED\x10\x05\x12\x1b\n" +
 	"\x17ERROR_CODE_RATE_LIMITED\x10\x03\x12\x1f\n" +
-	"\x1bERROR_CODE_TRANSCODE_FAILED\x10\x04*\xb3\x02\n" +
+	"\x1bERROR_CODE_TRANSCODE_FAILED\x10\x04*\xd7\x02\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19EVENT_TYPE_PLAYBACK_STATE\x10\x01\x12\x1c\n" +
@@ -5400,7 +5403,8 @@ const file_raag_proto_rawDesc = "" +
 	"\x19EVENT_TYPE_PEER_CONNECTED\x10 \x12 \n" +
 	"\x1cEVENT_TYPE_PEER_DISCONNECTED\x10@\x12\x1f\n" +
 	"\x1aEVENT_TYPE_LIBRARY_UPDATED\x10\x80\x01\x12\x15\n" +
-	"\x10EVENT_TYPE_ERROR\x10\x80\x02B%Z#github.com/p-society/raag/proto/genb\x06proto3"
+	"\x10EVENT_TYPE_ERROR\x10\x80\x02\x12\"\n" +
+	"\x1dEVENT_TYPE_PEER_SCORE_UPDATED\x10\x80\x04B%Z#github.com/p-society/raag/proto/genb\x06proto3"
 
 var (
 	file_raag_proto_rawDescOnce sync.Once

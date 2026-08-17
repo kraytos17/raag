@@ -27,6 +27,7 @@ type mockPlaybackHandler struct {
 	state        domain.PlayerState
 	volume       int
 	currentTrack *domain.Track
+	position     time.Duration
 }
 
 func newMockPlaybackHandler() *mockPlaybackHandler {
@@ -80,6 +81,10 @@ func (m *mockPlaybackHandler) GetVolume() int {
 
 func (m *mockPlaybackHandler) GetCurrentTrack() *domain.Track {
 	return m.currentTrack
+}
+
+func (m *mockPlaybackHandler) GetPosition() time.Duration {
+	return m.position
 }
 
 func (m *mockPlaybackHandler) OnProgress(callback func(positionMs, durationMs int64)) {
@@ -656,7 +661,7 @@ func TestPersistentClient_QueueList(t *testing.T) {
 // TestTranslateEvent_QueueUpdated verifies queue events translate to
 // EVENT_TYPE_QUEUE_UPDATED with the queue contents.
 // TestPersistentClient_Play_PopulatesQueue verifies that playing a track from
-// the library adds it to the queue as the current item (§12.4.3).
+// the library adds it to the queue as the current item.
 func TestPersistentClient_Play_PopulatesQueue(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -701,6 +706,60 @@ func TestPersistentClient_Play_PopulatesQueue(t *testing.T) {
 	}
 }
 
+// TestPersistentClient_Status_PopulatesPositionMs verifies handleStatus reports
+// the current playback position (§12.5.4).
+func TestPersistentClient_Status_PopulatesPositionMs(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	mockPlayback, _ := srv.playback.(*mockPlaybackHandler)
+	mockPlayback.position = 90 * time.Second
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.Status()
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("status failed: %s", resp.Error)
+	}
+
+	st := resp.GetStatus()
+	if st == nil {
+		t.Fatal("expected StatusResponse payload")
+	}
+	if st.PositionMs != 90000 {
+		t.Errorf("PositionMs = %d, want 90000", st.PositionMs)
+	}
+}
+
+// TestTranslateEvent_PeerScoreUpdated verifies score updates map to their own
+// event type, not PEER_CONNECTED (§12.4.6).
+func TestTranslateEvent_PeerScoreUpdated(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	pid := domain.PeerID("peer-1")
+	et, _ := translateEvent(srv.Server, domain.NewEvent(
+		domain.EventPeerScoreUpdated,
+		domain.PeerScoreUpdatedPayload{PeerID: pid, Score: 1.5},
+	))
+	if et != pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED {
+		t.Errorf("event type = %v, want EVENT_TYPE_PEER_SCORE_UPDATED", et)
+	}
+
+	// Peer connect still maps to PEER_CONNECTED.
+	et2, _ := translateEvent(srv.Server, domain.NewEvent(
+		domain.EventPeerConnected,
+		domain.PeerConnectedPayload{PeerID: pid},
+	))
+	if et2 != pb.EventType_EVENT_TYPE_PEER_CONNECTED {
+		t.Errorf("peer connected event type = %v, want EVENT_TYPE_PEER_CONNECTED", et2)
+	}
+}
+
 func TestTranslateEvent_QueueUpdated(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -723,8 +782,7 @@ func TestTranslateEvent_QueueUpdated(t *testing.T) {
 }
 
 // TestTranslateEvent_PlaybackBufferingReady verifies buffering/refill domain
-// events translate to PLAYBACK_STATE with "buffering"/"playing" payloads
-// (§12.2.3).
+// events translate to PLAYBACK_STATE with "buffering"/"playing" payloads.
 func TestTranslateEvent_PlaybackBufferingReady(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -960,7 +1018,7 @@ func TestPersistentClient_Playlists(t *testing.T) {
 
 // TestPersistentClient_ConcurrentRequestsWithEvents exercises the single-reader
 // demultiplexer: requests and event broadcasts interleave on one connection.
-// Under -race this would previously corrupt frames (§12.5.1).
+// Under -race this would previously corrupt frames.
 func TestPersistentClient_ConcurrentRequestsWithEvents(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
