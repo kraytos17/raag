@@ -10,7 +10,12 @@ import (
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/events"
+	pb "github.com/p-society/raag/proto/gen"
+	"google.golang.org/protobuf/proto"
 )
+
+const queueTrackTitle = "Queue Track"
 
 // mockPlaybackHandler implements PlaybackHandler for testing.
 type mockPlaybackHandler struct {
@@ -130,20 +135,39 @@ func (m *mockLibraryRepoHandler) ListAll(_ context.Context) ([]*domain.Track, er
 }
 
 // mockPeerRepoHandler implements PeerRepoHandler for testing.
-type mockPeerRepoHandler struct{}
+type mockPeerRepoHandler struct {
+	peers []*domain.PeerInfo
+}
 
 func newMockPeerRepoHandler() *mockPeerRepoHandler {
 	return &mockPeerRepoHandler{}
 }
 
 func (m *mockPeerRepoHandler) ListAll(_ context.Context) iter.Seq2[*domain.PeerInfo, error] {
-	return func(yield func(*domain.PeerInfo, error) bool) {}
+	return func(yield func(*domain.PeerInfo, error) bool) {
+		for _, p := range m.peers {
+			if !yield(p, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (m *mockPeerRepoHandler) GetPeerInfo(_ context.Context, id domain.PeerID) (*domain.PeerInfo, error) {
+	for _, p := range m.peers {
+		if p.ID == id {
+			return p, nil
+		}
+	}
+	return nil, domain.ErrPeerUnavailable
 }
 
 // mockQueueHandler implements QueueHandler for testing.
 type mockQueueHandler struct {
 	tracks   []*domain.Track
 	position int
+	shuffle  bool
+	repeat   domain.RepeatMode
 }
 
 func newMockQueueHandler() *mockQueueHandler {
@@ -205,6 +229,22 @@ func (m *mockQueueHandler) Tracks() []*domain.Track {
 	return out
 }
 
+func (m *mockQueueHandler) ToggleShuffle() {
+	m.shuffle = !m.shuffle
+}
+
+func (m *mockQueueHandler) SetRepeat(mode domain.RepeatMode) {
+	m.repeat = mode
+}
+
+func (m *mockQueueHandler) GetShuffle() bool {
+	return m.shuffle
+}
+
+func (m *mockQueueHandler) GetRepeat() domain.RepeatMode {
+	return m.repeat
+}
+
 // testServer wraps Server with helpers for testing.
 type testServer struct {
 	*Server
@@ -227,6 +267,7 @@ func startTestServerAt(t *testing.T, socketPath string) *testServer {
 	t.Helper()
 
 	_ = os.Remove(socketPath)
+	bus := events.New()
 	config := ServerConfig{
 		Playback:    newMockPlaybackHandler(),
 		Scanner:     newMockScannerHandler(),
@@ -234,6 +275,7 @@ func startTestServerAt(t *testing.T, socketPath string) *testServer {
 		LibraryRepo: newMockLibraryRepoHandler(),
 		PeerRepo:    newMockPeerRepoHandler(),
 		Queue:       newMockQueueHandler(),
+		EventBus:    bus,
 	}
 
 	srv, err := NewServer(socketPath, config)
@@ -509,7 +551,7 @@ func TestPersistentClient_QueueList(t *testing.T) {
 	defer srv.Stop()
 
 	queue := newMockQueueHandler()
-	queue.Add(&domain.Track{ID: domain.TrackID("q-1"), Title: "Queue Track"})
+	queue.Add(&domain.Track{ID: domain.TrackID("q-1"), Title: queueTrackTitle})
 	srv.queue = queue
 
 	c := NewClient(srv.socketPath)
@@ -529,7 +571,175 @@ func TestPersistentClient_QueueList(t *testing.T) {
 	if len(ql.Tracks) != 1 {
 		t.Fatalf("expected 1 queue track, got %d", len(ql.Tracks))
 	}
-	if ql.Tracks[0].Title != "Queue Track" {
+	if ql.Tracks[0].Title != queueTrackTitle {
 		t.Fatalf("unexpected queue track title: %s", ql.Tracks[0].Title)
+	}
+}
+
+// TestTranslateEvent_QueueUpdated verifies queue events translate to
+// EVENT_TYPE_QUEUE_UPDATED with the queue contents.
+func TestTranslateEvent_QueueUpdated(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	queue := newMockQueueHandler()
+	queue.Add(&domain.Track{ID: domain.TrackID("q-1"), Title: queueTrackTitle})
+	srv.queue = queue
+
+	et, payload := translateEvent(srv.Server, domain.NewEvent(domain.EventQueueUpdated, nil))
+	if et != pb.EventType_EVENT_TYPE_QUEUE_UPDATED {
+		t.Fatalf("event type = %v, want QUEUE_UPDATED", et)
+	}
+	var qr pb.QueueResponse
+	if err := proto.Unmarshal(payload, &qr); err != nil {
+		t.Fatalf("unmarshal queue payload: %v", err)
+	}
+	if len(qr.Tracks) != 1 || qr.Tracks[0].Title != queueTrackTitle {
+		t.Fatalf("unexpected queue payload: %+v", qr.Tracks)
+	}
+}
+
+// TestTranslateEvent_PeerConnected verifies peer events translate to
+// EVENT_TYPE_PEER_CONNECTED with a Peer payload.
+func TestTranslateEvent_PeerConnected(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	et, payload := translateEvent(srv.Server, domain.NewEvent(domain.EventPeerConnected, domain.PeerConnectedPayload{
+		PeerID: domain.PeerID("peer-1"),
+	}))
+	if et != pb.EventType_EVENT_TYPE_PEER_CONNECTED {
+		t.Fatalf("event type = %v, want PEER_CONNECTED", et)
+	}
+	// mockPeerRepoHandler returns ErrPeerUnavailable, so payload falls back to raw peer id
+	if string(payload) != "peer-1" {
+		t.Fatalf("payload = %q, want raw peer id", payload)
+	}
+}
+
+// TestWireEventBus_DeliversToClient verifies domain bus events reach a
+// subscribed IPC client end-to-end.
+func TestWireEventBus_DeliversToClient(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	ec, err := c.Subscribe(EventPeerConnected | EventQueueUpdated)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer func() { _ = ec.Close() }()
+
+	srv.eventBus.Publish(context.Background(), domain.NewEvent(domain.EventQueueUpdated, nil))
+
+	select {
+	case ev := <-ec.Events():
+		if ev.EventType != pb.EventType_EVENT_TYPE_QUEUE_UPDATED {
+			t.Fatalf("received event type = %v, want QUEUE_UPDATED", ev.EventType)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for queued event")
+	}
+}
+
+// TestPersistentClient_ListPeers_Enriched verifies ListPeers returns peers
+// with score attached (enriched via the p2p node when available).
+func TestPersistentClient_ListPeers_Enriched(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	score := domain.NewPeerScore(domain.PeerID("peer-1"))
+	score.AvgLatency = 10 * time.Millisecond
+	score.AvgBandwidth = 1_000_000
+	score.SuccessCount = 10
+
+	mock := newMockPeerRepoHandler()
+	mock.peers = append(mock.peers, &domain.PeerInfo{
+		ID:    domain.PeerID("peer-1"),
+		Addrs: []string{"/ip4/127.0.0.1/tcp/7844"},
+		Score: score,
+	})
+	srv.peerRepo = mock
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.ListPeers()
+	if err != nil {
+		t.Fatalf("list peers: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("list peers failed: %s", resp.Error)
+	}
+	lp := resp.GetListPeers()
+	if lp == nil {
+		t.Fatal("expected ListPeers response payload")
+	}
+	if len(lp.Peers) != 1 {
+		t.Fatalf("expected 1 peer, got %d", len(lp.Peers))
+	}
+	p := lp.Peers[0]
+	if p.Id != "peer-1" {
+		t.Fatalf("unexpected peer id: %s", p.Id)
+	}
+	if p.Score == nil {
+		t.Fatal("expected peer score to be populated")
+	}
+	if p.Score.Score <= 0 {
+		t.Fatalf("expected positive score, got %f", p.Score.Score)
+	}
+}
+
+// TestPersistentClient_QueueShuffleRepeat verifies shuffle/repeat round-trips.
+func TestPersistentClient_QueueShuffleRepeat(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	queue := newMockQueueHandler()
+	srv.queue = queue
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	// Toggle shuffle on.
+	resp, err := c.QueueSetShuffle(true)
+	if err != nil || !resp.Success {
+		t.Fatalf("queue shuffle: err=%v resp=%+v", err, resp)
+	}
+	if !queue.GetShuffle() {
+		t.Fatal("expected shuffle to be enabled")
+	}
+
+	// Set repeat to all.
+	resp, err = c.QueueSetRepeat("all")
+	if err != nil || !resp.Success {
+		t.Fatalf("queue repeat: err=%v resp=%+v", err, resp)
+	}
+	if queue.GetRepeat() != domain.RepeatModeAll {
+		t.Fatalf("repeat = %q, want all", queue.GetRepeat())
+	}
+
+	// Query mode.
+	resp, err = c.QueueGetMode()
+	if err != nil || !resp.Success {
+		t.Fatalf("queue mode: err=%v resp=%+v", err, resp)
+	}
+	qm := resp.GetQueueMode()
+	if qm == nil {
+		t.Fatal("expected QueueMode payload")
+	}
+	if !qm.Shuffle || qm.Repeat != "all" {
+		t.Fatalf("mode = shuffle=%v repeat=%q, want true/all", qm.Shuffle, qm.Repeat)
+	}
+
+	// Invalid repeat mode is rejected.
+	resp, err = c.QueueSetRepeat("bogus")
+	if err != nil {
+		t.Fatalf("queue repeat bogus: err=%v", err)
+	}
+	if resp.Success {
+		t.Fatal("expected invalid repeat mode to fail")
 	}
 }

@@ -26,3 +26,4 @@ go.work
 bin/
 coverage.html
 raag.md
+PLAN_IMPLEMENTATION.md

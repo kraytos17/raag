@@ -171,6 +171,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		PeerRepo:    peerRepo,
 		Queue:       queue,
 		P2PNode:     p2pNode,
+		EventBus:    bus,
 	})
 	if err != nil {
 		slog.Error("failed to create IPC server", "error", err)
@@ -200,6 +201,9 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		slog.Error("failed to register ipc server", "error", err)
 		_ = database.Close()
 		os.Exit(1)
+	}
+	if cfg.Library.Watch {
+		registerFileWatcher(lc, cfg.Library.Paths, scanner, database)
 	}
 	if err := lc.StartAll(context.Background()); err != nil {
 		slog.Error("failed to start components", "error", err)
@@ -261,6 +265,22 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		slog.Info("database closed")
 	}
 	slog.Info("raag daemon stopped")
+}
+
+// registerFileWatcher wires the library file watcher into the lifecycle
+// manager. On failure it closes the DB and exits.
+func registerFileWatcher(lc *app.LifecycleManager, paths []string, scanner *app.LibraryScanner, database *db.DB) {
+	fw, err := app.NewFileWatcher(paths, scanner)
+	if err != nil {
+		slog.Error("failed to create file watcher", "error", err)
+		_ = database.Close()
+		os.Exit(1)
+	}
+	if err := lc.Register(app.NewFileWatcherComponent(fw, "filewatcher")); err != nil {
+		slog.Error("failed to register file watcher", "error", err)
+		_ = database.Close()
+		os.Exit(1)
+	}
 }
 
 func usage() {

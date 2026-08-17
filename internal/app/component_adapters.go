@@ -70,3 +70,33 @@ func (p *P2PComponent) Start(ctx context.Context) error {
 func (p *P2PComponent) Stop(ctx context.Context) error {
 	return p.node.Stop(ctx)
 }
+
+// FileWatcherComponent wraps a FileWatcher to implement the Component interface.
+type FileWatcherComponent struct {
+	name string
+	fw   *FileWatcher
+}
+
+// NewFileWatcherComponent creates a Component wrapper for the library file watcher.
+func NewFileWatcherComponent(fw *FileWatcher, name string) Component {
+	if name == "" {
+		name = "filewatcher"
+	}
+	return &FileWatcherComponent{
+		name: name,
+		fw:   fw,
+	}
+}
+
+func (c *FileWatcherComponent) Name() string {
+	return c.name
+}
+
+func (c *FileWatcherComponent) Start(ctx context.Context) error {
+	c.fw.Start(ctx)
+	return nil
+}
+
+func (c *FileWatcherComponent) Stop(ctx context.Context) error {
+	return c.fw.Close()
+}

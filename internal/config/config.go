@@ -270,7 +270,7 @@ func RunSetup() error {
 			AnnounceLibrary:  true,
 			PerPeerRateLimit: 10,
 			UploadBandwidth:  0,
-			LANOnly:          false,
+			LANOnly:          true,
 			MaxKnownPeers:    100,
 			ChunkSize:        256 * 1024,
 			PeerDataTTL:      24 * time.Hour,

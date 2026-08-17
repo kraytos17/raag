@@ -28,6 +28,7 @@ import (
 const (
 	errP2PNotEnabled        = "P2P is not enabled"
 	errPlaylistsUnavailable = "playlists not available"
+	errQueueUnavailable     = "queue is not available"
 )
 
 type Server struct {
@@ -49,6 +50,7 @@ type Server struct {
 	queue        QueueHandler
 	playlistRepo app.PlaylistRepository
 	p2pNode      *p2p.P2PNode
+	eventBus     domain.EventBus
 
 	maxConns     *semaphore.Weighted
 	progressCb   func(jobID string, scanned int, total int, currentFile string, phase string)
@@ -66,6 +68,7 @@ type ServerConfig struct {
 	Queue        QueueHandler
 	PlaylistRepo app.PlaylistRepository
 	P2PNode      *p2p.P2PNode
+	EventBus     domain.EventBus
 }
 
 func (c *ServerConfig) Validate() error {
@@ -119,6 +122,7 @@ type LibraryRepoHandler interface {
 
 type PeerRepoHandler interface {
 	ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, error]
+	GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.PeerInfo, error)
 }
 
 type QueueHandler interface {
@@ -131,6 +135,10 @@ type QueueHandler interface {
 	Next() *domain.Track
 	Previous() *domain.Track
 	Tracks() []*domain.Track
+	ToggleShuffle()
+	SetRepeat(mode domain.RepeatMode)
+	GetShuffle() bool
+	GetRepeat() domain.RepeatMode
 }
 
 func NewServer(socketPath string, config ServerConfig) (*Server, error) {
@@ -148,6 +156,7 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 		queue:        config.Queue,
 		playlistRepo: config.PlaylistRepo,
 		p2pNode:      config.P2PNode,
+		eventBus:     config.EventBus,
 		maxConns:     semaphore.NewWeighted(64),
 		subMgr:       NewSubscriptionManager(),
 	}
@@ -157,7 +166,107 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 			server.publishPlaybackProgress(posMs, durMs)
 		})
 	}
+	if config.EventBus != nil {
+		server.wireEventBus(config.EventBus)
+	}
 	return server, nil
+}
+
+// wireEventBus subscribes the IPC server to the domain event bus so that
+// lifecycle events (peer, scan, queue, playback) are forwarded to IPC clients.
+func (s *Server) wireEventBus(bus domain.EventBus) {
+	for _, t := range []domain.EventType{
+		domain.EventTrackStarted,
+		domain.EventTrackFinished,
+		domain.EventTrackPaused,
+		domain.EventTrackResumed,
+		domain.EventTrackSeeked,
+		domain.EventPeerConnected,
+		domain.EventPeerDisconnected,
+		domain.EventPeerScoreUpdated,
+		domain.EventScanStarted,
+		domain.EventScanComplete,
+		domain.EventQueueUpdated,
+	} {
+		bus.Subscribe(t, func(e domain.Event) {
+			eventType, payload := translateEvent(s, e)
+			if eventType == pb.EventType_EVENT_TYPE_UNSPECIFIED {
+				return
+			}
+			s.PublishEvent(uint32(eventType), payload)
+		})
+	}
+}
+
+// translateEvent maps a domain event to an IPC event type and payload.
+func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
+	switch e.Type {
+	case domain.EventTrackStarted:
+		return pb.EventType_EVENT_TYPE_TRACK_CHANGED, mustMarshal(convert.TrackToProto(s.playback.GetCurrentTrack()))
+	case domain.EventTrackFinished:
+		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("stopped")
+	case domain.EventTrackPaused:
+		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("paused")
+	case domain.EventTrackResumed:
+		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("playing")
+	case domain.EventTrackSeeked:
+		return pb.EventType_EVENT_TYPE_TRACK_CHANGED, mustMarshal(convert.TrackToProto(s.playback.GetCurrentTrack()))
+	case domain.EventPeerConnected, domain.EventPeerScoreUpdated:
+		var pid domain.PeerID
+		switch p := e.Payload.(type) {
+		case domain.PeerConnectedPayload:
+			pid = p.PeerID
+		case domain.PeerScoreUpdatedPayload:
+			pid = p.PeerID
+		case domain.PeerID:
+			pid = p
+		default:
+			return pb.EventType_EVENT_TYPE_UNSPECIFIED, nil
+		}
+
+		info, err := s.peerRepo.GetPeerInfo(context.Background(), pid)
+		if err != nil {
+			return pb.EventType_EVENT_TYPE_PEER_CONNECTED, []byte(string(pid))
+		}
+		peer := convert.PeerInfoToProto(info)
+		return pb.EventType_EVENT_TYPE_PEER_CONNECTED, mustMarshal(peer)
+	case domain.EventPeerDisconnected:
+		var pid domain.PeerID
+		switch p := e.Payload.(type) {
+		case domain.PeerDisconnectedPayload:
+			pid = p.PeerID
+		case domain.PeerID:
+			pid = p
+		default:
+			return pb.EventType_EVENT_TYPE_UNSPECIFIED, nil
+		}
+		return pb.EventType_EVENT_TYPE_PEER_DISCONNECTED, []byte(string(pid))
+	case domain.EventScanStarted:
+		return pb.EventType_EVENT_TYPE_LIBRARY_UPDATED, []byte("started")
+	case domain.EventScanComplete:
+		return pb.EventType_EVENT_TYPE_LIBRARY_UPDATED, []byte("complete")
+	case domain.EventQueueUpdated:
+		tracks := s.queue.Tracks()
+		qt := make([]*pb.Track, len(tracks))
+		for i, t := range tracks {
+			qt[i] = convert.TrackToProto(t)
+		}
+		return pb.EventType_EVENT_TYPE_QUEUE_UPDATED, mustMarshal(&pb.QueueResponse{Tracks: qt})
+	default:
+		return pb.EventType_EVENT_TYPE_UNSPECIFIED, nil
+	}
+}
+
+func mustMarshal(msg proto.Message) []byte {
+	if msg == nil {
+		return nil
+	}
+
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 func (s *Server) SetProgressCallback(fn func(jobID string, scanned int, total int, currentFile string, phase string)) {
@@ -407,6 +516,14 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 		resp = s.handleListTracks(ctx, p.ListTracks)
 	case *pb.Request_QueueList:
 		resp = s.handleQueueList()
+	case *pb.Request_QueueShuffle:
+		resp = s.handleQueueShuffle(p.QueueShuffle)
+	case *pb.Request_QueueRepeat:
+		resp = s.handleQueueRepeat(p.QueueRepeat)
+	case *pb.Request_QueueMode:
+		resp = s.handleQueueMode()
+	case *pb.Request_Unsubscribe:
+		resp = &pb.Response{Success: true}
 	default:
 		resp = &pb.Response{Success: false, Error: "unknown request type"}
 	}
@@ -518,16 +635,19 @@ func (s *Server) handleQueueAdd(ctx context.Context, req *pb.QueueAddRequest) *p
 	} else {
 		s.queue.Add(track)
 	}
+	s.publishQueueUpdated()
 	return &pb.Response{Success: true}
 }
 
 func (s *Server) handleQueueRemove(req *pb.QueueRemoveRequest) *pb.Response {
 	s.queue.Remove(int(req.Position))
+	s.publishQueueUpdated()
 	return &pb.Response{Success: true}
 }
 
 func (s *Server) handleQueueClear() *pb.Response {
 	s.queue.Clear()
+	s.publishQueueUpdated()
 	return &pb.Response{Success: true}
 }
 
@@ -594,7 +714,13 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 		if err != nil {
 			continue
 		}
-		pbPeers = append(pbPeers, &pb.Peer{Id: string(p.ID), Addrs: p.Addrs})
+		if s.p2pNode != nil {
+			if enriched := s.p2pNode.PeerStatus(p); enriched != nil {
+				pbPeers = append(pbPeers, enriched)
+				continue
+			}
+		}
+		pbPeers = append(pbPeers, convert.PeerInfoToProto(p))
 	}
 	return &pb.Response{
 		Success: true,
@@ -642,7 +768,7 @@ func (s *Server) handleListTracks(ctx context.Context, req *pb.ListTracksRequest
 
 func (s *Server) handleQueueList() *pb.Response {
 	if s.queue == nil {
-		return &pb.Response{Success: false, Error: "queue is not available"}
+		return &pb.Response{Success: false, Error: errQueueUnavailable}
 	}
 
 	tracks := s.queue.Tracks()
@@ -654,6 +780,59 @@ func (s *Server) handleQueueList() *pb.Response {
 		Success: true,
 		Payload: &pb.Response_QueueList{QueueList: &pb.QueueListResponse{Tracks: pbTracks}},
 	}
+}
+
+func (s *Server) handleQueueShuffle(req *pb.QueueShuffleRequest) *pb.Response {
+	if s.queue == nil {
+		return &pb.Response{Success: false, Error: errQueueUnavailable}
+	}
+	if req.Shuffle {
+		s.queue.ToggleShuffle()
+	} else if s.queue.GetShuffle() {
+		s.queue.ToggleShuffle()
+	}
+	s.publishQueueUpdated()
+	return &pb.Response{Success: true}
+}
+
+func (s *Server) handleQueueRepeat(req *pb.QueueRepeatRequest) *pb.Response {
+	if s.queue == nil {
+		return &pb.Response{Success: false, Error: errQueueUnavailable}
+	}
+	mode := domain.RepeatMode(req.Mode)
+	switch mode {
+	case domain.RepeatModeNone, domain.RepeatModeAll, domain.RepeatModeOne:
+		s.queue.SetRepeat(mode)
+	default:
+		return &pb.Response{Success: false, Error: "invalid repeat mode (want \"\", \"all\", or \"one\")"}
+	}
+	s.publishQueueUpdated()
+	return &pb.Response{Success: true}
+}
+
+func (s *Server) handleQueueMode() *pb.Response {
+	if s.queue == nil {
+		return &pb.Response{Success: false, Error: errQueueUnavailable}
+	}
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_QueueMode{QueueMode: &pb.QueueModeResponse{
+			Shuffle: s.queue.GetShuffle(),
+			Repeat:  string(s.queue.GetRepeat()),
+		}},
+	}
+}
+
+func (s *Server) publishQueueUpdated() {
+	if s.queue == nil {
+		return
+	}
+	tracks := s.queue.Tracks()
+	qt := make([]*pb.Track, len(tracks))
+	for i, t := range tracks {
+		qt[i] = convert.TrackToProto(t)
+	}
+	s.PublishEvent(EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
 }
 
 func (s *Server) handleNetworkStatus() *pb.Response {

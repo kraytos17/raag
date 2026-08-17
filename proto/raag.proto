@@ -120,6 +120,9 @@ message Request {
     UnsubscribeRequest unsubscribe = 30;
     ListTracksRequest list_tracks = 31;
     QueueListRequest queue_list = 32;
+    QueueShuffleRequest queue_shuffle = 33;
+    QueueRepeatRequest queue_repeat = 34;
+    QueueModeRequest queue_mode = 35;
   }
 }
 
@@ -147,6 +150,7 @@ message Response {
     Event event = 20;
     ListTracksResponse list_tracks = 21;
     QueueListResponse queue_list = 22;
+    QueueModeResponse queue_mode = 23;
   }
 }
 
@@ -213,6 +217,21 @@ message QueueListRequest {}
 
 message QueueListResponse {
   repeated Track tracks = 1;
+}
+
+message QueueShuffleRequest {
+  bool shuffle = 1;
+}
+
+message QueueRepeatRequest {
+  string mode = 1; // "", "all", "one"
+}
+
+message QueueModeRequest {}
+
+message QueueModeResponse {
+  bool shuffle = 1;
+  string repeat = 2;
 }
 
 message SearchRequest {

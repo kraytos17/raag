@@ -414,6 +414,33 @@ func (c *Client) GetQueue() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// QueueSetShuffle toggles queue shuffle to the desired state.
+func (c *Client) QueueSetShuffle(shuffle bool) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_QueueShuffle{QueueShuffle: &pb.QueueShuffleRequest{Shuffle: shuffle}},
+	}
+	return c.send(req)
+}
+
+// QueueSetRepeat sets the queue repeat mode: "", "all", or "one".
+func (c *Client) QueueSetRepeat(mode string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_QueueRepeat{QueueRepeat: &pb.QueueRepeatRequest{Mode: mode}},
+	}
+	return c.send(req)
+}
+
+// QueueGetMode returns the current shuffle/repeat state.
+func (c *Client) QueueGetMode() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_QueueMode{QueueMode: &pb.QueueModeRequest{}},
+	}
+	return c.send(req)
+}
+
 // ListTracks returns a page of the full library.
 func (c *Client) ListTracks(offset, limit int32) (*pb.Response, error) {
 	req := &pb.Request{
@@ -702,7 +729,11 @@ func (ec *EventClient) Err() <-chan error {
 	return ec.errChan
 }
 
-// Close unsubscribes and closes the event client
+// Close unsubscribes and closes the event client.
+// The unsubscribe request is written without waiting for a response: the event
+// reader and request round-trips share one connection, so a synchronous send
+// would block until the read deadline while readEventsLoop consumes the reply.
+// The server removes the subscription when the connection closes regardless.
 func (ec *EventClient) Close() error {
 	ec.closeOnce.Do(func() {
 		close(ec.closed)
@@ -710,7 +741,12 @@ func (ec *EventClient) Close() error {
 			ProtocolVersion: domain.IPCProtocolVersion,
 			Payload:         &pb.Request_Unsubscribe{Unsubscribe: &pb.UnsubscribeRequest{}},
 		}
-		ec.client.send(req)
+
+		ec.client.mu.Lock()
+		if ec.client.conn != nil {
+			_ = wire.WriteMsg(ec.client.conn, req)
+		}
+		ec.client.mu.Unlock()
 	})
 	return nil
 }

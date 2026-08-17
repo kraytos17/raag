@@ -18,6 +18,8 @@ type KeyMap struct {
 	Enter     key.Binding
 	Delete    key.Binding
 	Refresh   key.Binding
+	Shuffle   key.Binding
+	Repeat    key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -37,5 +39,7 @@ func DefaultKeyMap() KeyMap {
 		Enter:     key.NewBinding(key.WithKeys("enter")),
 		Delete:    key.NewBinding(key.WithKeys("d")),
 		Refresh:   key.NewBinding(key.WithKeys("r")),
+		Shuffle:   key.NewBinding(key.WithKeys("s")),
+		Repeat:    key.NewBinding(key.WithKeys("R")),
 	}
 }

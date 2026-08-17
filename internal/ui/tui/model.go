@@ -35,6 +35,12 @@ const (
 
 const unknownTitle = "Unknown"
 
+const (
+	repeatNone = "none"
+	repeatAll  = "all"
+	repeatOne  = "one"
+)
+
 // Model is the root Bubble Tea model for the Raag TUI.
 type Model struct {
 	SocketPath string
@@ -77,6 +83,7 @@ type PlayerState struct {
 	QueueLen     int32
 	QueuePos     int32
 	Shuffle      bool
+	RepeatMode   string
 }
 
 type TrackItem struct {
@@ -281,6 +288,7 @@ func (m *Model) Init() tea.Cmd {
 		m.fetchInitialData(),
 		m.fetchLibrary(),
 		m.fetchQueue(),
+		m.fetchQueueMode(),
 		m.fetchPeers(),
 	)
 }
@@ -377,6 +385,12 @@ type QueueMsg struct {
 	Err    error
 	Tracks []*pb.Track
 }
+
+type QueueModeMsg struct {
+	Err     error
+	Shuffle bool
+	Repeat  string
+}
 type PeersMsg struct {
 	Err   error
 	Peers []*pb.Peer
@@ -441,6 +455,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case QueueMsg:
 		cmds = append(cmds, m.handleQueueMsg(msg)...)
 
+	case QueueModeMsg:
+		if msg.Err == nil {
+			m.Player.Shuffle = msg.Shuffle
+			m.Player.RepeatMode = msg.Repeat
+		}
+
 	case PeersMsg:
 		cmds = append(cmds, m.handlePeersMsg(msg)...)
 	}
@@ -480,6 +500,7 @@ func (m *Model) handleConnected() []tea.Cmd {
 		m.fetchInitialData(),
 		m.fetchLibrary(),
 		m.fetchQueue(),
+		m.fetchQueueMode(),
 		m.fetchPeers(),
 	}
 }
@@ -580,19 +601,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 	keys := DefaultKeyMap()
 
 	if m.InSearch {
-		switch msg.String() {
-		case "esc":
-			m.InSearch = false
-			m.SearchInput.Blur()
-		case "enter":
-			m.InSearch = false
-			m.SearchInput.Blur()
-			query := m.SearchInput.Value()
-			if query != "" {
-				cmds = append(cmds, m.cmdSearch(query))
-			}
-		}
-		return cmds
+		return m.handleSearchKey(msg)
 	}
 
 	if m.ShowHelp {
@@ -642,10 +651,31 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 			cmds = append(cmds, m.cmdQueueRemove())
 		}
 	case key.Matches(msg, keys.Refresh):
-		cmds = append(cmds, m.fetchLibrary(), m.fetchQueue(), m.fetchPeers())
+		cmds = append(cmds, m.fetchLibrary(), m.fetchQueue(), m.fetchQueueMode(), m.fetchPeers())
+	case key.Matches(msg, keys.Shuffle):
+		cmds = append(cmds, m.cmdQueueShuffle())
+	case key.Matches(msg, keys.Repeat):
+		cmds = append(cmds, m.cmdQueueRepeat())
 	}
 
 	return cmds
+}
+
+// handleSearchKey processes keys while the search input is focused.
+func (m *Model) handleSearchKey(msg tea.KeyPressMsg) []tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		m.InSearch = false
+		m.SearchInput.Blur()
+	case "enter":
+		m.InSearch = false
+		m.SearchInput.Blur()
+		query := m.SearchInput.Value()
+		if query != "" {
+			return []tea.Cmd{m.cmdSearch(query)}
+		}
+	}
+	return nil
 }
 
 func (m *Model) activeList() *list.Model {
@@ -699,6 +729,23 @@ func (m *Model) fetchQueue() tea.Cmd {
 			return QueueMsg{Err: fmt.Errorf("%s", resp.Error)}
 		}
 		return QueueMsg{Tracks: resp.GetQueueList().Tracks}
+	}
+}
+
+// fetchQueueMode pulls the current shuffle/repeat state from the daemon.
+func (m *Model) fetchQueueMode() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.IPCClient.QueueGetMode()
+		if err != nil {
+			return QueueModeMsg{Err: err}
+		}
+		if !resp.Success {
+			return QueueModeMsg{Err: fmt.Errorf("%s", resp.Error)}
+		}
+		if qm := resp.GetQueueMode(); qm != nil {
+			return QueueModeMsg{Shuffle: qm.Shuffle, Repeat: qm.Repeat}
+		}
+		return QueueModeMsg{}
 	}
 }
 
@@ -842,6 +889,37 @@ func (m *Model) cmdQueueRemove() tea.Cmd {
 				}
 			}
 		}
+		return nil
+	}
+}
+
+func (m *Model) cmdQueueShuffle() tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.IPCClient.QueueSetShuffle(!m.Player.Shuffle)
+		if err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		m.Player.Shuffle = !m.Player.Shuffle
+		return nil
+	}
+}
+
+func (m *Model) cmdQueueRepeat() tea.Cmd {
+	return func() tea.Msg {
+		next := repeatAll
+		switch m.Player.RepeatMode {
+		case "":
+			next = repeatAll
+		case repeatAll:
+			next = repeatOne
+		case repeatOne:
+			next = repeatNone
+		}
+		_, err := m.IPCClient.QueueSetRepeat(next)
+		if err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		m.Player.RepeatMode = next
 		return nil
 	}
 }
