@@ -482,6 +482,34 @@ func TestPeerScorer_Cooldown(t *testing.T) {
 	}
 }
 
+func TestPeerScorer_RecordFailure_NoGaterEscalation(t *testing.T) {
+	// Failure-based bans must stay cooldown-bounded and never escalate to a
+	// permanent gater ban, which RecordSuccess cannot undo.
+	scorer := NewPeerScorerWithConfig(3, 5*time.Minute)
+	gater := NewPeerGater()
+	pid := peer.ID("fail-peer")
+
+	scorer.RecordFailure(pid)
+	scorer.RecordFailure(pid)
+	if gater.IsBanned(pid) {
+		t.Fatal("gater banned peer before failLimit reached")
+	}
+
+	scorer.RecordFailure(pid) // reaches failLimit -> scorer ban only
+	if !scorer.IsBanned(pid) {
+		t.Error("IsBanned() = false, want true after failLimit failures")
+	}
+	if gater.IsBanned(pid) {
+		t.Error("gater.IsBanned() = true, want false (no permanent ban on failure)")
+	}
+
+	// A success must clear the scorer ban.
+	scorer.RecordSuccess(pid)
+	if scorer.IsBanned(pid) {
+		t.Error("IsBanned() = true, want false after RecordSuccess")
+	}
+}
+
 func TestPeerScorer_Score(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("test-peer")

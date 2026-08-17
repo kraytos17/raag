@@ -28,17 +28,18 @@ type recordingStream struct {
 	buf bytes.Buffer
 }
 
-func (s *recordingStream) Read(p []byte) (int, error)                        { return 0, io.EOF }
-func (s *recordingStream) Write(p []byte) (int, error)                       { return s.buf.Write(p) }
-func (s *recordingStream) Close() error                                      { return nil }
-func (s *recordingStream) Reset() error                                      { return nil }
-func (s *recordingStream) CloseRead() error                                  { return nil }
-func (s *recordingStream) CloseWrite() error                                 { return nil }
-func (s *recordingStream) SetDeadline(t time.Time) error                     { return nil }
-func (s *recordingStream) SetReadDeadline(t time.Time) error                 { return nil }
-func (s *recordingStream) SetWriteDeadline(t time.Time) error                { return nil }
-func (s *recordingStream) Conn() network.Conn                                { return nil }
-func (s *recordingStream) ID() string                                        { return "test-stream" }
+func (s *recordingStream) Read(p []byte) (int, error)         { return 0, io.EOF }
+func (s *recordingStream) Write(p []byte) (int, error)        { return s.buf.Write(p) }
+func (s *recordingStream) Close() error                       { return nil }
+func (s *recordingStream) Reset() error                       { return nil }
+func (s *recordingStream) CloseRead() error                   { return nil }
+func (s *recordingStream) CloseWrite() error                  { return nil }
+func (s *recordingStream) SetDeadline(t time.Time) error      { return nil }
+func (s *recordingStream) SetReadDeadline(t time.Time) error  { return nil }
+func (s *recordingStream) SetWriteDeadline(t time.Time) error { return nil }
+func (s *recordingStream) Conn() network.Conn                 { return nil }
+func (s *recordingStream) ID() string                         { return "test-stream" }
+
 func (s *recordingStream) Protocol() protocol.ID                             { return "/raag/stream/1.0.0" }
 func (s *recordingStream) SetProtocol(id protocol.ID) error                  { return nil }
 func (s *recordingStream) ResetWithError(code network.StreamErrorCode) error { return nil }
@@ -64,12 +65,15 @@ func (l *testLibrary) Save(ctx context.Context, track *domain.Track) error { ret
 func (l *testLibrary) FindByID(ctx context.Context, id domain.TrackID) (*domain.Track, error) {
 	return nil, domain.ErrTrackNotFound
 }
+
 func (l *testLibrary) FindByIDs(ctx context.Context, ids []domain.TrackID) ([]*domain.Track, error) {
 	return nil, nil
 }
+
 func (l *testLibrary) FindByPath(ctx context.Context, path string) (*domain.Track, error) {
 	return nil, domain.ErrTrackNotFound
 }
+
 func (l *testLibrary) GetCoverArt(ctx context.Context, id domain.TrackID) ([]byte, error) {
 	return nil, nil
 }
@@ -224,5 +228,7 @@ func TestServeTranscoded_CachedByteRangeSeek(t *testing.T) {
 	}
 }
 
-var _ app.LibraryRepository = (*testLibrary)(nil)
-var _ network.Stream = (*recordingStream)(nil)
+var (
+	_ app.LibraryRepository = (*testLibrary)(nil)
+	_ network.Stream        = (*recordingStream)(nil)
+)

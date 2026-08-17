@@ -100,9 +100,9 @@ func (m *Metrics) Start(ctx context.Context, addr, path string) error {
 	if path == "" {
 		path = "/metrics"
 	}
+
 	mux := http.NewServeMux()
 	mux.Handle(path, promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{}))
-
 	m.server = &http.Server{
 		Addr:    addr,
 		Handler: mux,
@@ -115,7 +115,6 @@ func (m *Metrics) Start(ctx context.Context, addr, path string) error {
 	// Update Addr so callers (and tests) can discover the bound port when
 	// addr uses port 0.
 	m.server.Addr = ln.Addr().String()
-
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
