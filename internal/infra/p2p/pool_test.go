@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -54,7 +55,7 @@ func (m *mockStream) Conn() network.Conn                                { return
 func (m *mockStream) ID() string                                        { return m.id }
 func (m *mockStream) Protocol() protocol.ID                             { return "/test/1.0.0" }
 func (m *mockStream) SetProtocol(id protocol.ID) error                  { return nil }
-func (m *mockStream) Read(b []byte) (int, error)                        { return 0, nil }
+func (m *mockStream) Read(b []byte) (int, error)                        { return 0, io.EOF }
 func (m *mockStream) Write(b []byte) (int, error)                       { return len(b), nil }
 func (m *mockStream) ResetWithError(code network.StreamErrorCode) error { return nil }
 func (m *mockStream) Scope() network.StreamScope                        { return nil }

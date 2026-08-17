@@ -130,6 +130,7 @@ func TestP2PResolver_ResolveLocal(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
@@ -151,6 +152,7 @@ func TestP2PResolver_ResolveLocal(t *testing.T) {
 	if reader == nil {
 		t.Fatal("Resolve() returned nil reader")
 	}
+
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("ReadAll() error = %v", err)
@@ -166,6 +168,7 @@ func TestP2PResolver_ResolveLocal_FileNotFound(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
@@ -187,6 +190,7 @@ func TestP2PResolver_ResolveRemote(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
@@ -202,7 +206,7 @@ func TestP2PResolver_ResolveRemote(t *testing.T) {
 		AvgBandwidth: 1000000,
 	}
 	peerMgr.caps[pid] = &domain.PeerCapabilities{
-		SupportedCodecs: []string{codecMP3, "flac"},
+		SupportedCodecs: []string{codecMP3, codecFlac},
 	}
 
 	reader, err := resolver.Resolve(context.Background(), trackID)
@@ -220,6 +224,7 @@ func TestP2PResolver_TrackNotFound(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
@@ -236,6 +241,7 @@ func TestP2PResolver_ResolveRemote_AllPeersBanned(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
@@ -257,6 +263,7 @@ func TestP2PResolver_ResolveRemote_NoPeersHaveTrack(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	peerMgr := newMockPeerManager()
 	scorer := NewPeerScorer()
 
@@ -275,6 +282,7 @@ func TestP2PResolver_LastPeerID_InitiallyEmpty(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	scorer := NewPeerScorer()
 	peerMgr := newMockPeerManager()
 
@@ -289,9 +297,9 @@ func TestP2PResolver_LastPeerID_ConcurrentAccess(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	scorer := NewPeerScorer()
 	peerMgr := newMockPeerManager()
-
 	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
 
 	// Simulate concurrent writes and reads to lastPeerID.
@@ -319,6 +327,7 @@ func TestP2PResolver_FindPeersWithTrack(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	scorer := NewPeerScorer()
 	peerMgr := newMockPeerManager()
 
@@ -343,6 +352,7 @@ func TestP2PResolver_FindPeersWithTrack_NoneFound(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	scorer := NewPeerScorer()
 	peerMgr := newMockPeerManager()
 
@@ -358,6 +368,7 @@ func TestP2PResolver_GetPeerLatency(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	scorer := NewPeerScorer()
 	peerMgr := newMockPeerManager()
 	pid := peer.ID("peer-1")
@@ -377,8 +388,8 @@ func TestP2PResolver_GetPeerLatency_NilScorer(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
-	peerMgr := newMockPeerManager()
 
+	peerMgr := newMockPeerManager()
 	resolver := NewP2PResolver(repo, pool, peerMgr, nil, host)
 	lat := resolver.GetPeerLatency(peer.ID("peer-1"))
 	if lat != 0 {
@@ -393,7 +404,6 @@ func TestStreamingReader_DoubleClose(t *testing.T) {
 		trackID: track1ID,
 		peerID:  peer.ID("peer-1"),
 	}
-
 	if err := sr.Close(); err != nil {
 		t.Fatalf("first Close() error = %v", err)
 	}
@@ -419,7 +429,6 @@ func TestStreamingReader_ReadThenClose(t *testing.T) {
 	if n != 5 || string(buf) != "hello" {
 		t.Fatalf("Read() = %d, %q; want 5, %q", n, buf, "hello")
 	}
-
 	if err := sr.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -438,7 +447,6 @@ func TestPeerScorer_RecordSuccess(t *testing.T) {
 	}
 
 	scorer.RecordSuccess(pid)
-
 	if scorer.IsBanned(pid) {
 		t.Error("IsBanned() = true, want false after success")
 	}
@@ -461,17 +469,14 @@ func TestPeerScorer_RecordFailure(t *testing.T) {
 
 func TestPeerScorer_Cooldown(t *testing.T) {
 	scorer := NewPeerScorerWithConfig(2, 100*time.Millisecond)
-
 	pid := peer.ID("test-peer")
 	scorer.RecordFailure(pid)
 	scorer.RecordFailure(pid)
-
 	if !scorer.IsBanned(pid) {
 		t.Error("IsBanned() = false, want true after 2 failures")
 	}
 
 	time.Sleep(150 * time.Millisecond)
-
 	if scorer.IsBanned(pid) {
 		t.Error("IsBanned() = true, want false after cooldown")
 	}
@@ -480,7 +485,6 @@ func TestPeerScorer_Cooldown(t *testing.T) {
 func TestPeerScorer_Score(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("test-peer")
-
 	score := scorer.Score(pid, 100*time.Millisecond, 1000000, 0.9)
 	if score <= 0 {
 		t.Errorf("Score() = %f, want > 0", score)
@@ -490,7 +494,6 @@ func TestPeerScorer_Score(t *testing.T) {
 func TestPeerScorer_ScoreComponents(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("p")
-
 	// Zero latency, zero bandwidth, zero success
 	s1 := scorer.Score(pid, 0, 0, 0)
 	// High latency should reduce score
@@ -510,14 +513,12 @@ func TestPeerScorer_ScoreComponents(t *testing.T) {
 func TestPeerScorer_RecordLatency(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("test-peer")
-
 	if lat := scorer.AvgLatency(pid); lat != 0 {
 		t.Fatalf("AvgLatency() = %v, want 0 for unknown peer", lat)
 	}
 
 	scorer.RecordLatency(pid, 100*time.Millisecond)
 	scorer.RecordLatency(pid, 200*time.Millisecond)
-
 	avg := scorer.AvgLatency(pid)
 	if avg != 150*time.Millisecond {
 		t.Fatalf("AvgLatency() = %v, want 150ms", avg)
@@ -527,7 +528,6 @@ func TestPeerScorer_RecordLatency(t *testing.T) {
 func TestPeerScorer_RecordLatency_SlidingWindow(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("p")
-
 	// Record 7 latencies, window is 5
 	for i := range 7 {
 		scorer.RecordLatency(pid, time.Duration(i+1)*time.Millisecond)
@@ -553,7 +553,6 @@ func TestPeerScorer_ClearLatency(t *testing.T) {
 
 	scorer.RecordLatency(pid, 100*time.Millisecond)
 	scorer.ClearLatency(pid)
-
 	if lat := scorer.AvgLatency(pid); lat != 0 {
 		t.Fatalf("AvgLatency() = %v after clear, want 0", lat)
 	}
@@ -562,14 +561,12 @@ func TestPeerScorer_ClearLatency(t *testing.T) {
 func TestPeerScorer_RecordBandwidth(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("p")
-
 	if bw := scorer.AvgBandwidth(pid); bw != 0 {
 		t.Fatalf("AvgBandwidth() = %d, want 0 for unknown peer", bw)
 	}
 
 	scorer.RecordBandwidth(pid, 1000)
 	scorer.RecordBandwidth(pid, 2000)
-
 	if bw := scorer.AvgBandwidth(pid); bw != 1500 {
 		t.Fatalf("AvgBandwidth() = %d, want 1500", bw)
 	}
@@ -581,7 +578,6 @@ func TestPeerScorer_RecordBandwidth_IgnoresNonPositive(t *testing.T) {
 
 	scorer.RecordBandwidth(pid, 0)
 	scorer.RecordBandwidth(pid, -100)
-
 	if bw := scorer.AvgBandwidth(pid); bw != 0 {
 		t.Fatalf("AvgBandwidth() = %d, want 0 after non-positive recordings", bw)
 	}
@@ -590,7 +586,6 @@ func TestPeerScorer_RecordBandwidth_IgnoresNonPositive(t *testing.T) {
 func TestPeerScorer_RecordBandwidth_SlidingWindow(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("p")
-
 	for i := range 7 {
 		scorer.RecordBandwidth(pid, int64((i+1)*1000))
 	}
@@ -614,7 +609,6 @@ func TestPeerScorer_Snapshot(t *testing.T) {
 	scorer.RecordFailure(pid)
 
 	avgLat, avgBw, successes, failures, banned := scorer.Snapshot(pid)
-
 	if avgLat != 100*time.Millisecond {
 		t.Errorf("Snapshot avgLat = %v, want 100ms", avgLat)
 	}
@@ -635,7 +629,6 @@ func TestPeerScorer_Snapshot(t *testing.T) {
 func TestPeerScorer_Snapshot_BannedExpires(t *testing.T) {
 	scorer := NewPeerScorerWithConfig(1, 50*time.Millisecond)
 	pid := peer.ID("p")
-
 	scorer.RecordFailure(pid)
 	snap := func() bool {
 		_, _, _, _, b := scorer.Snapshot(pid)
@@ -660,7 +653,6 @@ func TestPeerScorer_Reset(t *testing.T) {
 	scorer.RecordBandwidth(pid, 5000)
 	scorer.RecordSuccess(pid)
 	scorer.RecordFailure(pid)
-
 	scorer.Reset(pid)
 
 	if lat := scorer.AvgLatency(pid); lat != 0 {
@@ -705,7 +697,6 @@ func TestPeerScorer_ConcurrentAccess(t *testing.T) {
 func TestNewPeerScorerWithConfig(t *testing.T) {
 	scorer := NewPeerScorerWithConfig(10, 2*time.Minute)
 	pid := peer.ID("p")
-
 	// Need 10 failures to ban
 	for range 9 {
 		scorer.RecordFailure(pid)
@@ -713,6 +704,7 @@ func TestNewPeerScorerWithConfig(t *testing.T) {
 	if scorer.IsBanned(pid) {
 		t.Error("should not be banned after 9 failures with limit 10")
 	}
+
 	scorer.RecordFailure(pid)
 	if !scorer.IsBanned(pid) {
 		t.Error("should be banned after 10 failures with limit 10")
@@ -724,6 +716,7 @@ func TestP2PResolverAdapter_LastPeerID(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/raag/stream/1.0.0")
 	defer pool.Close()
+
 	scorer := NewPeerScorer()
 	peerMgr := newMockPeerManager()
 
@@ -784,4 +777,198 @@ func TestP2PResolverAdapter_Resolve_Local(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 	reader.Close()
+}
+
+func TestRequestedCodecFor(t *testing.T) {
+	tests := []struct {
+		name        string
+		nativeCodec string
+		sp          scoredPeer
+		want        string
+	}{
+		{
+			name:        "locally decodable native codec streams raw",
+			nativeCodec: codecMP3,
+			sp:          scoredPeer{pid: peer.ID("p1"), canTranscode: true},
+			want:        "",
+		},
+		{
+			name:        "flac native codec streams raw",
+			nativeCodec: codecFlac,
+			sp:          scoredPeer{pid: peer.ID("p1"), canTranscode: true},
+			want:        "",
+		},
+		{
+			name:        "vorbis native codec streams raw",
+			nativeCodec: codecVorbis,
+			sp:          scoredPeer{pid: peer.ID("p1")},
+			want:        "",
+		},
+		{
+			name:        "undecodable native codec requests mp3 transcode",
+			nativeCodec: codecAAC,
+			sp:          scoredPeer{pid: peer.ID("p1"), canTranscode: true},
+			want:        codecMP3,
+		},
+		{
+			name:        "opus native codec requests mp3 transcode",
+			nativeCodec: codecOpus,
+			sp:          scoredPeer{pid: peer.ID("p1"), canTranscode: true},
+			want:        codecMP3,
+		},
+		{
+			name:        "unknown native codec with transcoding peer requests mp3",
+			nativeCodec: "",
+			sp:          scoredPeer{pid: peer.ID("p1"), canTranscode: true},
+			want:        codecMP3,
+		},
+		{
+			name:        "undecodable native codec without transcoding peer streams raw",
+			nativeCodec: codecAAC,
+			sp:          scoredPeer{pid: peer.ID("p1"), canTranscode: false},
+			want:        "",
+		},
+		{
+			name:        "unknown native codec without transcoding peer streams raw",
+			nativeCodec: "",
+			sp:          scoredPeer{pid: peer.ID("p1")},
+			want:        "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := requestedCodecFor(tt.nativeCodec, tt.sp); got != tt.want {
+				t.Errorf("requestedCodecFor(%q, %+v) = %q, want %q", tt.nativeCodec, tt.sp, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsLocallyDecodable(t *testing.T) {
+	tests := []struct {
+		codec string
+		want  bool
+	}{
+		{codecMP3, true},
+		{codecFlac, true},
+		{codecVorbis, true},
+		{codecPCM, true},
+		{codecAAC, false},
+		{codecOpus, false},
+		{codecWMA, false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.codec, func(t *testing.T) {
+			if got := isLocallyDecodable(tt.codec); got != tt.want {
+				t.Errorf("isLocallyDecodable(%q) = %v, want %v", tt.codec, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLocalCapabilities_CanTranscode(t *testing.T) {
+	tests := []struct {
+		name         string
+		canTranscode bool
+		want         bool
+	}{
+		{name: "with transcoder", canTranscode: true, want: true},
+		{name: "without transcoder", canTranscode: false, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := &localCapabilities{
+				libraryRepo:  newMockLibraryRepo(),
+				peerID:       peer.ID("local"),
+				canTranscode: tt.canTranscode,
+			}
+			if got := lc.GetLocalCapabilities().CanTranscode; got != tt.want {
+				t.Errorf("GetLocalCapabilities().CanTranscode = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestP2PResolver_TryPeers_RequestsTranscodeCodec(t *testing.T) {
+	repo := newMockLibraryRepo()
+	host := newMockHost()
+	pool := NewStreamPool(host, "/raag/stream/1.0.0")
+	defer pool.Close()
+
+	scorer := NewPeerScorer()
+	peerMgr := newMockPeerManager()
+
+	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
+	trackID := domain.GenerateTrackID("/music/remote.m4a")
+
+	pid := peer.ID("transcoding-peer")
+	peerMgr.caps[pid] = &domain.PeerCapabilities{
+		SupportedCodecs: []string{codecMP3, codecFlac},
+		CanTranscode:    true,
+	}
+
+	reader, err := resolver.tryPeers(context.Background(), trackID, []scoredPeer{
+		{pid: pid, score: 1, canTranscode: true},
+	}, codecAAC)
+	if err != nil {
+		t.Fatalf("tryPeers() error = %v", err)
+	}
+	defer reader.Close()
+
+	sr, ok := reader.(*streamingReader)
+	if !ok {
+		t.Fatalf("reader type = %T, want *streamingReader", reader)
+	}
+
+	cr, ok := sr.reader.(*chunkedReader)
+	if !ok {
+		t.Fatalf("reader type = %T, want *chunkedReader", sr.reader)
+	}
+	if cr.codec != codecMP3 {
+		t.Errorf("requested codec = %q, want %q", cr.codec, codecMP3)
+	}
+	if got := resolver.LastPeerID(); got != pid {
+		t.Errorf("LastPeerID() = %v, want %v", got, pid)
+	}
+}
+
+func TestP2PResolver_TryPeers_StreamsRawForDecodableNative(t *testing.T) {
+	repo := newMockLibraryRepo()
+	host := newMockHost()
+	pool := NewStreamPool(host, "/raag/stream/1.0.0")
+	defer pool.Close()
+
+	scorer := NewPeerScorer()
+	peerMgr := newMockPeerManager()
+
+	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
+	trackID := domain.GenerateTrackID("/music/remote.flac")
+
+	pid := peer.ID("flac-peer")
+	peerMgr.caps[pid] = &domain.PeerCapabilities{
+		SupportedCodecs: []string{codecMP3, codecFlac},
+		CanTranscode:    true,
+	}
+
+	reader, err := resolver.tryPeers(context.Background(), trackID, []scoredPeer{
+		{pid: pid, score: 1, canTranscode: true},
+	}, codecFlac)
+	if err != nil {
+		t.Fatalf("tryPeers() error = %v", err)
+	}
+	defer reader.Close()
+
+	sr, ok := reader.(*streamingReader)
+	if !ok {
+		t.Fatalf("reader type = %T, want *streamingReader", reader)
+	}
+
+	cr, ok := sr.reader.(*chunkedReader)
+	if !ok {
+		t.Fatalf("reader type = %T, want *chunkedReader", sr.reader)
+	}
+	if cr.codec != "" {
+		t.Errorf("requested codec = %q, want empty (raw stream)", cr.codec)
+	}
 }
