@@ -20,6 +20,7 @@ import (
 	"github.com/p-society/raag/internal/infra/observability"
 	"github.com/p-society/raag/internal/infra/p2p"
 	db "github.com/p-society/raag/internal/infra/storage"
+	"github.com/p-society/raag/internal/infra/transcoder"
 	"golang.org/x/term"
 )
 
@@ -63,6 +64,7 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		MaxKnownPeers:   cfg.P2P.MaxKnownPeers,
 		ChunkSize:       cfg.P2P.ChunkSize,
 		PeerDataTTL:     cfg.P2P.PeerDataTTL,
+		Transcoder:      transcoder.New(transcoder.Config{FFmpegPath: cfg.Transcoder.FFmpegPath, StreamCodec: cfg.Transcoder.StreamCodec, StreamBitrate: cfg.Transcoder.StreamBitrate}),
 	}, libraryRepo)
 	if err != nil {
 		slog.Error("failed to create P2P node", "error", err)
@@ -164,14 +166,15 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolver, bus)
 	playback.SetQueue(queue)
 	ipcServer, err := ipc.NewServer(cfg.Daemon.SocketPath, ipc.ServerConfig{
-		Playback:    playback,
-		Scanner:     scanner,
-		Search:      searchService,
-		LibraryRepo: libraryRepo,
-		PeerRepo:    peerRepo,
-		Queue:       queue,
-		P2PNode:     p2pNode,
-		EventBus:    bus,
+		Playback:     playback,
+		Scanner:      scanner,
+		Search:       searchService,
+		LibraryRepo:  libraryRepo,
+		PeerRepo:     peerRepo,
+		Queue:        queue,
+		PlaylistRepo: db.NewPlaylistRepo(database),
+		P2PNode:      p2pNode,
+		EventBus:     bus,
 	})
 	if err != nil {
 		slog.Error("failed to create IPC server", "error", err)
@@ -215,6 +218,9 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	if cfg.Metrics.Enabled {
+		startMetricsServer(sigCtx, cfg.Metrics)
+	}
 	if cfg.Library.ScanOnStart && !skipScan {
 		slog.Info("starting library scan", "paths", cfg.Library.Paths)
 		go func() {
@@ -234,14 +240,16 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		}()
 	}
 
-	slog.Info("raag daemon started",
+	slog.Info(
+		"raag daemon started",
 		"socket", cfg.Daemon.SocketPath,
 		"data_dir", cfg.Daemon.DataDir,
 		"volume", cfg.Playback.Volume,
 	)
 
 	if cfg.P2P.Enabled {
-		slog.Info("P2P networking enabled",
+		slog.Info(
+			"P2P networking enabled",
 			"ports", "7844/TCP+UDP, 7845/UDP",
 			"note", "ensure firewall allows inbound connections on these ports for LAN discovery",
 		)
@@ -280,6 +288,15 @@ func registerFileWatcher(lc *app.LifecycleManager, paths []string, scanner *app.
 		slog.Error("failed to register file watcher", "error", err)
 		_ = database.Close()
 		os.Exit(1)
+	}
+}
+
+// startMetricsServer exposes the Prometheus metrics endpoint.
+func startMetricsServer(ctx context.Context, cfg config.MetricsConfig) {
+	metrics := observability.NewMetrics()
+	addr := fmt.Sprintf(":%d", cfg.Port)
+	if err := metrics.Start(ctx, addr, cfg.Path); err != nil {
+		slog.Error("failed to start metrics server", "error", err)
 	}
 }
 

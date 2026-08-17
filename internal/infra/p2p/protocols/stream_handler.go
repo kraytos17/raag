@@ -3,6 +3,7 @@ package protocols
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/transcoder"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
@@ -19,9 +21,10 @@ import (
 const MaxChunkSize = 256 * 1024
 
 type StreamHandler struct {
-	mu        sync.RWMutex
-	library   app.LibraryRepository
-	admission *AdmissionRegistry
+	mu         sync.RWMutex
+	library    app.LibraryRepository
+	admission  *AdmissionRegistry
+	transcoder *transcoder.Transcoder
 }
 
 func NewStreamHandler(library app.LibraryRepository) *StreamHandler {
@@ -34,6 +37,14 @@ func (h *StreamHandler) SetAdmissionRegistry(admission *AdmissionRegistry) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.admission = admission
+}
+
+// SetTranscoder enables on-demand transcoding when a request specifies a
+// codec different from the track's native format.
+func (h *StreamHandler) SetTranscoder(t *transcoder.Transcoder) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.transcoder = t
 }
 
 func (h *StreamHandler) Handle(stream network.Stream) {
@@ -86,6 +97,76 @@ func (h *StreamHandler) serveChunk(ctx context.Context, stream network.Stream, r
 		return
 	}
 
+	h.mu.RLock()
+	tr := h.transcoder
+	h.mu.RUnlock()
+
+	// If a codec is requested and it differs from the track's native codec,
+	// transcode to a temp file and serve byte ranges from it.
+	if tr != nil && req.Codec != "" && req.Codec != track.Codec {
+		h.serveTranscoded(ctx, stream, tr, track, req)
+		return
+	}
+
+	h.serveRaw(ctx, stream, track, req)
+}
+
+func (h *StreamHandler) serveTranscoded(ctx context.Context, stream network.Stream, tr *transcoder.Transcoder, track *domain.Track, req *pb.ChunkRequest) {
+	bitrate := ""
+	if req.Bitrate > 0 {
+		bitrate = fmt.Sprintf("%dk", req.Bitrate)
+	} else {
+		bitrate = "128k"
+	}
+
+	tmpPath, err := tr.TranscodeToFile(ctx, track.Path, req.Codec, bitrate)
+	if err != nil {
+		slog.Error("transcode failed", "track_id", req.TrackId, "codec", req.Codec, "err", err)
+		h.sendError(stream, req.TrackId, "transcode error", pb.ErrorCode_ERROR_CODE_TRANSCODE_FAILED)
+		return
+	}
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		h.sendError(stream, req.TrackId, "transcode output error", pb.ErrorCode_ERROR_CODE_TRANSCODE_FAILED)
+		return
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Debug("failed to close transcode output", "err", err)
+		}
+	}()
+
+	if req.Offset > 0 {
+		if _, err := f.Seek(req.Offset, io.SeekStart); err != nil {
+			h.sendError(stream, req.TrackId, "seek error", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
+			return
+		}
+	}
+
+	length := min(int(req.Length), MaxChunkSize)
+	data := make([]byte, length)
+	n, err := io.ReadFull(f, data)
+	if err != nil && err != io.EOF {
+		h.sendError(stream, req.TrackId, "read error", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
+		return
+	}
+
+	lastChunk := n < int(req.Length) || err == io.EOF
+	resp := &pb.ChunkResponse{
+		TrackId:   req.TrackId,
+		Offset:    req.Offset,
+		Data:      data[:n],
+		LastChunk: lastChunk,
+		MimeType:  "audio/" + req.Codec,
+	}
+	if err := wire.WriteMsg(stream, resp); err != nil {
+		slog.Error("write response failed", "err", err)
+		return
+	}
+}
+
+func (h *StreamHandler) serveRaw(ctx context.Context, stream network.Stream, track *domain.Track, req *pb.ChunkRequest) {
 	f, err := os.Open(track.Path)
 	if err != nil {
 		slog.Error("failed to open track", "path", track.Path)

@@ -450,6 +450,42 @@ func (c *Client) ListTracks(offset, limit int32) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// CreatePlaylist creates a new playlist.
+func (c *Client) CreatePlaylist(name string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_CreatePlaylist{CreatePlaylist: &pb.CreatePlaylistRequest{Name: name}},
+	}
+	return c.send(req)
+}
+
+// GetPlaylist returns a playlist by ID with its tracks resolved.
+func (c *Client) GetPlaylist(id string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_GetPlaylist{GetPlaylist: &pb.GetPlaylistRequest{PlaylistId: id}},
+	}
+	return c.send(req)
+}
+
+// ListPlaylists returns all playlists.
+func (c *Client) ListPlaylists() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_ListPlaylists{ListPlaylists: &pb.ListPlaylistsRequest{}},
+	}
+	return c.send(req)
+}
+
+// AddToPlaylist adds a track to a playlist.
+func (c *Client) AddToPlaylist(playlistID, trackID string) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_AddToPlaylist{AddToPlaylist: &pb.AddToPlaylistRequest{PlaylistId: playlistID, TrackId: trackID}},
+	}
+	return c.send(req)
+}
+
 // Search searches for tracks matching the query.
 func (c *Client) Search(query string, limit int32) (*pb.Response, error) {
 	req := &pb.Request{
