@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -69,6 +70,7 @@ type testPlayer struct {
 	done              chan struct{}
 	playStreamingHook func()
 	state             domain.PlayerState
+	fillLevel         float64
 }
 
 func (p *testPlayer) Play(ctx context.Context, reader io.Reader, mimeType string) error {
@@ -106,6 +108,7 @@ func (p *testPlayer) Seek(ctx context.Context, position time.Duration) error {
 func (p *testPlayer) SetVolume(ctx context.Context, volume int) error { return nil }
 func (p *testPlayer) GetState() domain.PlayerState                    { return p.state }
 func (p *testPlayer) GetPosition() time.Duration                      { return p.pos }
+func (p *testPlayer) GetBufferFillLevel() float64                     { return p.fillLevel }
 func (p *testPlayer) Done() <-chan struct{} {
 	if p.done == nil {
 		p.done = make(chan struct{})
@@ -248,7 +251,7 @@ func TestPlaybackController_Play_P2PSource_UsesPlayStreaming(t *testing.T) {
 	resolver := &testResolver{
 		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
 			return &ResolvedTrack{
-				Reader: io.NopCloser(strings.NewReader("")),
+				Reader: io.NopCloser(bytes.NewReader(make([]byte, audio.PreRollBytes))),
 				Source: SourceP2P,
 				Track:  track,
 			}, nil
@@ -275,7 +278,7 @@ func TestPlaybackController_Play_ResolvesTrackFromResolved(t *testing.T) {
 	resolver := &testResolver{
 		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
 			return &ResolvedTrack{
-				Reader: io.NopCloser(strings.NewReader("")),
+				Reader: io.NopCloser(bytes.NewReader(make([]byte, audio.PreRollBytes))),
 				Source: SourceP2P,
 				Track:  resolvedTrack,
 			}, nil
@@ -314,5 +317,95 @@ func TestPlaybackController_SetQueue_GetQueue(t *testing.T) {
 
 	if got != q {
 		t.Fatal("queue not set correctly")
+	}
+}
+
+func TestPlaybackController_Underrun_BufferingTransitions(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	player := &testPlayer{state: domain.PlayerStatePlaying}
+	c := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, player, &testResolver{}, bus)
+	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
+
+	// In Playing with fill below LowWatermark → underrun → Buffering.
+	player.fillLevel = audio.LowWatermark - 0.05
+	c.checkBufferLevel(ctx)
+	if got := c.GetState(); got != domain.PlayerStateBuffering {
+		t.Fatalf("state after underrun = %v, want buffering", got)
+	}
+
+	// Still below threshold while Buffering → no change.
+	c.checkBufferLevel(ctx)
+	if got := c.GetState(); got != domain.PlayerStateBuffering {
+		t.Fatalf("state after second low-fill check = %v, want buffering", got)
+	}
+
+	// Refilled above HighWatermark → ready → Playing.
+	player.fillLevel = audio.HighWatermark + 0.05
+	c.checkBufferLevel(ctx)
+	if got := c.GetState(); got != domain.PlayerStatePlaying {
+		t.Fatalf("state after refill = %v, want playing", got)
+	}
+
+	// Above watermark while Playing → no spurious transition.
+	c.checkBufferLevel(ctx)
+	if got := c.GetState(); got != domain.PlayerStatePlaying {
+		t.Fatalf("state after high-fill check = %v, want playing", got)
+	}
+}
+
+func TestPlaybackController_Underrun_PublishesEvents(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	player := &testPlayer{state: domain.PlayerStatePlaying}
+	c := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, player, &testResolver{}, bus)
+	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
+
+	eventsCh := make(chan domain.EventType, 4)
+	unsub := bus.Subscribe(domain.EventPlaybackBuffering, func(e domain.Event) {
+		eventsCh <- e.Type
+	})
+	unsub2 := bus.Subscribe(domain.EventPlaybackReady, func(e domain.Event) {
+		eventsCh <- e.Type
+	})
+	defer unsub()
+	defer unsub2()
+
+	player.fillLevel = audio.LowWatermark - 0.05
+	c.checkBufferLevel(ctx)
+
+	player.fillLevel = audio.HighWatermark + 0.05
+	c.checkBufferLevel(ctx)
+
+	got := map[domain.EventType]bool{}
+	for range 2 {
+		select {
+		case et := <-eventsCh:
+			got[et] = true
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for buffering/ready events")
+		}
+	}
+	if !got[domain.EventPlaybackBuffering] || !got[domain.EventPlaybackReady] {
+		t.Fatalf("events = %v, want both buffering and ready", got)
+	}
+}
+
+func TestPlaybackController_InitialVolume(t *testing.T) {
+	bus := events.New()
+	defer bus.Close()
+
+	c := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, &testPlayer{}, &testResolver{}, bus, 35)
+	if got := c.GetVolume(); got != 35 {
+		t.Fatalf("GetVolume() with configured initial = %d, want 35", got)
+	}
+
+	c2 := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, &testPlayer{}, &testResolver{}, bus)
+	if got := c2.GetVolume(); got != 80 {
+		t.Fatalf("GetVolume() default = %d, want 80", got)
 	}
 }

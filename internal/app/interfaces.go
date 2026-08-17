@@ -107,6 +107,7 @@ type Player interface {
 	SetVolume(ctx context.Context, volume int) error
 	GetState() domain.PlayerState
 	GetPosition() time.Duration
+	GetBufferFillLevel() float64
 	Done() <-chan struct{}
 }
 

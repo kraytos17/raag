@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -81,17 +82,18 @@ func AllOK(results []HealthResult) bool {
 
 // FormatResults renders the check results as a pass/fail table.
 func FormatResults(results []HealthResult) string {
-	var s string
+	var s strings.Builder
 	for _, r := range results {
 		status := "FAIL"
 		if r.OK {
 			status = "ok"
 		}
-		s += fmt.Sprintf("%-12s %s", r.Name, status)
+
+		fmt.Fprintf(&s, "%-12s %s", r.Name, status)
 		if r.Detail != "" && !r.OK {
-			s += "  " + r.Detail
+			fmt.Fprintf(&s, "  %s", r.Detail)
 		}
-		s += "\n"
+		s.WriteString("\n")
 	}
-	return s
+	return s.String()
 }

@@ -104,7 +104,7 @@ func (h *SyncHandler) Handle(stream network.Stream) {
 	}
 }
 
-func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.Stream, peerID peer.ID) {
+func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.Stream, _ peer.ID) {
 	h.mu.RLock()
 	announce := h.announceLibrary
 	h.mu.RUnlock()
@@ -180,7 +180,7 @@ func (h *SyncHandler) handleCapabilitiesRequest(_ context.Context, stream networ
 	}
 	if caps == nil {
 		caps = &pb.PeerCapabilities{
-			SupportedCodecs:   domain.AudioExtensions,
+			SupportedCodecs:   domain.PlayableCodecs,
 			SupportedBitrates: domain.SupportedBitrates,
 			ProtocolVersion:   "1.0.0",
 		}

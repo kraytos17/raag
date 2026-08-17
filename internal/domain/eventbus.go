@@ -8,19 +8,21 @@ import (
 type EventType string
 
 const (
-	EventTrackStarted     EventType = "track.started"
-	EventTrackFinished    EventType = "track.finished"
-	EventTrackPaused      EventType = "track.paused"
-	EventTrackResumed     EventType = "track.resumed"
-	EventTrackSeeked      EventType = "track.seeked"
-	EventPeerConnected    EventType = "peer.connected"
-	EventPeerDisconnected EventType = "peer.disconnected"
-	EventPeerScoreUpdated EventType = "peer.score_updated"
-	EventScanStarted      EventType = "scan.started"
-	EventScanProgress     EventType = "scan.progress"
-	EventScanComplete     EventType = "scan.complete"
-	EventVolumeChanged    EventType = "volume.changed"
-	EventQueueUpdated     EventType = "queue.updated"
+	EventTrackStarted      EventType = "track.started"
+	EventTrackFinished     EventType = "track.finished"
+	EventTrackPaused       EventType = "track.paused"
+	EventTrackResumed      EventType = "track.resumed"
+	EventTrackSeeked       EventType = "track.seeked"
+	EventPeerConnected     EventType = "peer.connected"
+	EventPeerDisconnected  EventType = "peer.disconnected"
+	EventPeerScoreUpdated  EventType = "peer.score_updated"
+	EventScanStarted       EventType = "scan.started"
+	EventScanProgress      EventType = "scan.progress"
+	EventScanComplete      EventType = "scan.complete"
+	EventVolumeChanged     EventType = "volume.changed"
+	EventQueueUpdated      EventType = "queue.updated"
+	EventPlaybackBuffering EventType = "playback.buffering"
+	EventPlaybackReady     EventType = "playback.buffer_ready"
 )
 
 type EventHandler func(Event)
@@ -124,6 +126,16 @@ type QueueUpdatedPayload struct {
 	Action   QueueAction
 	TrackID  TrackID
 	Position int
+}
+
+// PlaybackBufferingPayload carries the buffer fill level at underrun time.
+type PlaybackBufferingPayload struct {
+	FillLevel float64
+}
+
+// PlaybackReadyPayload carries the buffer fill level when playback resumes.
+type PlaybackReadyPayload struct {
+	FillLevel float64
 }
 
 type QueueAction string

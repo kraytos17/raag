@@ -90,21 +90,16 @@ func TestFileWatcher_AddRemove(t *testing.T) {
 	}
 	defer func() { _ = fw.Close() }()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	fw.Start(ctx)
-
 	// Create a new audio file inside the watched dir.
 	path := filepath.Join(dir, "new-track.mp3")
 	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-
 	if !waitFor(t, 3*time.Second, func() bool { return len(handler.Added()) >= 1 }) {
 		t.Fatalf("expected AddFile to be called, added=%v", handler.Added())
 	}
-
-	// Remove it and expect RemoveFile.
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove file: %v", err)
 	}
@@ -123,10 +118,8 @@ func TestFileWatcher_IgnoresNonAudio(t *testing.T) {
 	}
 	defer func() { _ = fw.Close() }()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	fw.Start(ctx)
-
 	path := filepath.Join(dir, "notes.txt")
 	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
