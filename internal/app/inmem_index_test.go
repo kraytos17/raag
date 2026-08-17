@@ -49,9 +49,8 @@ func TestIndex_Index_Single(t *testing.T) {
 func TestIndex_Index_Batch(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)
 	ctx := context.Background()
-
 	tracks := []*domain.Track{
-		{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: "Song One", Artist: "Artist A", Album: "Album 1"},
+		{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: "Song One", Artist: artistA, Album: "Album 1"},
 		{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: "Song Two", Artist: "Artist B", Album: "Album 2"},
 		{ID: domain.GenerateTrackID("/music/song3.mp3"), Title: "Song Three", Artist: "Artist C", Album: "Album 3"},
 	}

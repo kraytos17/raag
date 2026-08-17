@@ -644,9 +644,18 @@ func (c *Client) AddToPlaylist(playlistID, trackID string) (*pb.Response, error)
 
 // Search searches for tracks matching the query.
 func (c *Client) Search(query string, limit int32) (*pb.Response, error) {
+	return c.search(query, limit, false)
+}
+
+// SearchRemote searches local + all connected peers' libraries.
+func (c *Client) SearchRemote(query string, limit int32) (*pb.Response, error) {
+	return c.search(query, limit, true)
+}
+
+func (c *Client) search(query string, limit int32, includePeers bool) (*pb.Response, error) {
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
-		Payload:         &pb.Request_Search{Search: &pb.SearchRequest{Query: query, Limit: limit}},
+		Payload:         &pb.Request_Search{Search: &pb.SearchRequest{Query: query, Limit: limit, IncludePeers: includePeers}},
 	}
 	return c.send(req)
 }

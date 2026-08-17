@@ -26,11 +26,11 @@ import (
 
 func main() {
 	cfg, skipScan := loadConfig()
-	database, libraryRepo, p2pNode, p2pEnabled := initializeServices(cfg)
-	runDaemon(cfg, database, libraryRepo, p2pNode, p2pEnabled, skipScan)
+	database, libraryRepo, p2pNode, p2pEnabled, searchService := initializeServices(cfg)
+	runDaemon(cfg, database, libraryRepo, p2pNode, p2pEnabled, searchService, skipScan)
 }
 
-func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool) {
+func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool, *app.SearchService) {
 	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
 	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
 	if err != nil {
@@ -45,9 +45,11 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		os.Exit(1)
 	}
 
+	searchIndex := app.NewSearchIndex(libraryRepo)
+	searchService := app.NewSearchService(searchIndex, libraryRepo)
 	enabled := cfg.P2P.Enabled
 	if !enabled {
-		return database, libraryRepo, nil, false
+		return database, libraryRepo, nil, false, searchService
 	}
 
 	peerRepo := db.NewPeerRepo(database)
@@ -67,12 +69,13 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		PeerDataTTL:     cfg.P2P.PeerDataTTL,
 		Transcoder:      transcoder.New(transcoder.Config{FFmpegPath: cfg.Transcoder.FFmpegPath, StreamCodec: cfg.Transcoder.StreamCodec, StreamBitrate: cfg.Transcoder.StreamBitrate}),
 		PeerRepo:        peerRepo,
+		Search:          searchService,
 	}, libraryRepo)
 	if err != nil {
 		slog.Error("failed to create P2P node", "error", err)
-		return database, libraryRepo, nil, false
+		return database, libraryRepo, nil, false, searchService
 	}
-	return database, libraryRepo, p2pNode, true
+	return database, libraryRepo, p2pNode, true, searchService
 }
 
 func loadConfig() (*config.Config, bool) {
@@ -138,9 +141,8 @@ func loadConfig() (*config.Config, bool) {
 	return cfg, *noScan
 }
 
-func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, p2pNode *p2p.P2PNode, p2pEnabled bool, skipScan bool) {
+func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, p2pNode *p2p.P2PNode, p2pEnabled bool, searchService *app.SearchService, skipScan bool) {
 	bus := events.New()
-	searchIndex := app.NewSearchIndex(libraryRepo)
 	peerRepo := db.NewPeerRepo(database)
 	duplicateDetector := duplicate.NewDetector(database, duplicate.ConfigToHandler(cfg.Library.DuplicateHandling))
 	database.StartHealthCheck(10*time.Second, func() {
@@ -152,19 +154,19 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo, 
 		os.Exit(1)
 	})
 
-	scanner := app.NewLibraryScanner(libraryRepo, libraryRepo, searchIndex, bus, cfg.Library.Paths)
+	scanner := app.NewLibraryScanner(libraryRepo, libraryRepo, searchService.Index(), bus, cfg.Library.Paths)
 	scanner.SetDuplicateCheck(func(ctx context.Context, hash string, trackID domain.TrackID, path string) (domain.TrackID, bool, bool, error) {
 		return duplicateDetector.CheckDuplicate(ctx, hash, trackID, path)
 	})
-
 	scanner.EnableHashing(2)
-	searchService := app.NewSearchService(searchIndex, libraryRepo)
 
 	var resolver app.Resolver
 	var p2pNodeStarted bool
 	if p2pEnabled && p2pNode != nil {
 		p2pResolver := p2p.NewP2PResolverAdapter(p2pNode.Resolver())
+		p2pResolver.SetPeersProvider(p2pNode.Peers)
 		resolver = app.NewMultiSourceResolver(libraryRepo, p2pResolver)
+		searchService.SetRemote(resolver.(app.RemoteSearcher))
 		p2pNodeStarted = true
 	} else {
 		resolver = app.NewLocalResolver(libraryRepo)

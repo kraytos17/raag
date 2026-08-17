@@ -664,7 +664,20 @@ func (s *Server) handleSearch(ctx context.Context, req *pb.SearchRequest) *pb.Re
 		limit = 20
 	}
 
-	tracks, err := s.search.Search(ctx, req.Query, limit)
+	var tracks []*domain.Track
+	var err error
+	if req.IncludePeers {
+		if rs, ok := s.search.(interface {
+			SearchWithRemote(ctx context.Context, query string, limit int) ([]*domain.Track, error)
+		}); ok {
+			tracks, err = rs.SearchWithRemote(ctx, req.Query, limit)
+		} else {
+			tracks, err = s.search.Search(ctx, req.Query, limit)
+		}
+	} else {
+		tracks, err = s.search.Search(ctx, req.Query, limit)
+	}
+
 	if err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}

@@ -21,4 +21,6 @@ const (
 	emptyToken      = "empty"
 	abcToken        = "abc"
 	tmpT1Path       = "/tmp/t1.mp3"
+	artistA         = "Artist A"
+	remoteSong      = "Remote Song"
 )

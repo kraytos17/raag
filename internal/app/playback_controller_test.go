@@ -272,7 +272,7 @@ func TestPlaybackController_Play_ResolvesTrackFromResolved(t *testing.T) {
 	bus := events.New()
 	defer bus.Close()
 
-	resolvedTrack := &domain.Track{ID: domain.TrackID("remote1"), Title: "Remote Song", MimeType: mimeTypeMPEG}
+	resolvedTrack := &domain.Track{ID: domain.TrackID("remote1"), Title: remoteSong, MimeType: mimeTypeMPEG}
 	repo := &testLibraryRepo{}
 	player := &testPlayer{}
 	resolver := &testResolver{
@@ -289,7 +289,7 @@ func TestPlaybackController_Play_ResolvesTrackFromResolved(t *testing.T) {
 	if err := c.Play(ctx, domain.TrackID("remote1")); err != nil {
 		t.Fatalf("Play() error = %v", err)
 	}
-	if c.GetCurrentTrack() == nil || c.GetCurrentTrack().Title != "Remote Song" {
+	if c.GetCurrentTrack() == nil || c.GetCurrentTrack().Title != remoteSong {
 		t.Fatalf("currentTrack title = %v, want 'Remote Song'", c.GetCurrentTrack().Title)
 	}
 }

@@ -69,6 +69,7 @@ type P2PNodeConfig struct {
 	PeerDataTTL     time.Duration
 	Transcoder      *transcoder.Transcoder
 	PeerRepo        app.PeerRepository
+	Search          app.SearchHandler
 }
 
 func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode, error) {
@@ -107,7 +108,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 			"note", "bootstrap peers disabled, discovery limited to local network")
 	}
 
-	syncHandler := protocols.NewSyncHandler(libraryRepo, p2pHost.ID())
+	syncHandler := protocols.NewSyncHandler(libraryRepo, cfg.Search, p2pHost.ID())
 	syncHandler.SetAnnounceLibrary(cfg.ShareManifest)
 	syncHandler.SetCapabilitiesProvider(&localCapabilities{
 		libraryRepo: libraryRepo,
@@ -279,12 +280,26 @@ func (n *P2PNode) PeerCache() *discovery.PeerCache {
 	return n.peerCache
 }
 
+// Peers returns the IDs of currently connected peers (excluding self).
+func (n *P2PNode) Peers() []peer.ID {
+	connected := n.host.Network().Peers()
+	self := n.host.ID()
+	out := make([]peer.ID, 0, len(connected))
+	for _, p := range connected {
+		if p != self {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // PeerStatus enriches a peer with live connection state and capabilities.
 // The peer's score (if any) is preserved from the supplied info.
 func (n *P2PNode) PeerStatus(info *domain.PeerInfo) *pb.Peer {
 	if info == nil {
 		return nil
 	}
+
 	pid := info.ID
 	peer := convert.PeerInfoToProto(info)
 	peer.Connected = n.host.Network().Connectedness(pid) == network.Connected

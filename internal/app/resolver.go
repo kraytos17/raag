@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/p-society/raag/internal/domain"
 )
@@ -65,6 +66,19 @@ type P2PResolverAdapter interface {
 	FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []string
 	LastPeerID() string
 	FetchTrackMetadata(ctx context.Context, trackID domain.TrackID, peerID string) (*domain.Track, error)
+	Peers() []domain.PeerID
+	SearchPeer(ctx context.Context, peerID domain.PeerID, query string, limit int) ([]*domain.Track, error)
+}
+
+// RemoteSearchHit is a peer's search results tagged with the peer it came from.
+type RemoteSearchHit struct {
+	PeerID string
+	Tracks []*domain.Track
+}
+
+// RemoteSearcher searches remote peers' libraries in parallel.
+type RemoteSearcher interface {
+	SearchRemote(ctx context.Context, query string, limit int) []RemoteSearchHit
 }
 
 type MultiSourceResolver struct {
@@ -108,4 +122,37 @@ func (r *MultiSourceResolver) FindPeersWithTrack(ctx context.Context, trackID do
 		return nil
 	}
 	return r.p2p.FindPeersWithTrack(ctx, trackID)
+}
+
+// SearchRemote queries every connected peer's library in parallel with a
+// per-peer timeout. Failing peers are skipped best-effort.
+func (r *MultiSourceResolver) SearchRemote(ctx context.Context, query string, limit int) []RemoteSearchHit {
+	if r.p2p == nil {
+		return nil
+	}
+
+	peers := r.p2p.Peers()
+	if len(peers) == 0 {
+		return nil
+	}
+
+	hits := make([]RemoteSearchHit, 0, len(peers))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, pid := range peers {
+		wg.Add(1)
+		go func(pid domain.PeerID) {
+			defer wg.Done()
+			tracks, err := r.p2p.SearchPeer(ctx, pid, query, limit)
+			if err != nil || len(tracks) == 0 {
+				return
+			}
+
+			mu.Lock()
+			hits = append(hits, RemoteSearchHit{PeerID: string(pid), Tracks: tracks})
+			mu.Unlock()
+		}(pid)
+	}
+	wg.Wait()
+	return hits
 }

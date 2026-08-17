@@ -35,6 +35,7 @@ message Track {
   string content_hash = 26;
   bool is_duplicate = 30;
   string duplicate_of = 31;
+  string peer_id = 32;
 }
 
 message Playlist {
@@ -238,6 +239,7 @@ message SearchRequest {
   string query = 1;
   int32 limit = 2;
   int32 offset = 3;
+  bool include_peers = 4;
 }
 
 message SearchResponse {
@@ -369,6 +371,7 @@ message SyncRequest {
     ManifestRequest manifest_request = 1;
     TrackDetailRequest track_detail_request = 2;
     CapabilitiesRequest capabilities_request = 3;
+    RemoteSearchRequest remote_search_request = 4;
   }
 }
 
@@ -380,13 +383,23 @@ message TrackDetailRequest {
 
 message CapabilitiesRequest {}
 
+message RemoteSearchRequest {
+  string query = 1;
+  int32 limit = 2;
+}
+
 message SyncResponse {
   oneof payload {
     LibraryManifest manifest = 1;
     Track track = 2;
     PeerCapabilities capabilities = 3;
     ErrorResponse error = 4;
+    SearchResult search = 5;
   }
+}
+
+message SearchResult {
+  repeated Track tracks = 1;
 }
 
 message ErrorResponse {
