@@ -14,6 +14,7 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/p-society/raag/internal/app"
+	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	protocols "github.com/p-society/raag/internal/infra/p2p/protocols"
@@ -268,6 +269,26 @@ func (n *P2PNode) UnbanPeer(pid peer.ID) {
 
 func (n *P2PNode) PeerCache() *discovery.PeerCache {
 	return n.peerCache
+}
+
+// PeerStatus enriches a peer with live connection state and capabilities.
+// The peer's score (if any) is preserved from the supplied info.
+func (n *P2PNode) PeerStatus(info *domain.PeerInfo) *pb.Peer {
+	if info == nil {
+		return nil
+	}
+	pid := info.ID
+	peer := convert.PeerInfoToProto(info)
+	peer.Connected = n.host.Network().Connectedness(pid) == network.Connected
+	if caps := n.peerMgr.GetPeerCapabilities(pid); caps != nil {
+		peer.Capabilities = &pb.PeerCapabilities{
+			SupportedCodecs:   caps.SupportedCodecs,
+			SupportedBitrates: caps.SupportedBitrates,
+			CanTranscode:      caps.CanTranscode,
+			ProtocolVersion:   caps.ProtocolVersion,
+		}
+	}
+	return peer
 }
 
 func (n *P2PNode) SyncHandler() *protocols.SyncHandler {

@@ -130,9 +130,24 @@ func (m *Model) renderFooter() string {
 	controls := subtleStyle.Render(
 		"[space] play/pause  [n] next  [p] prev  [f] +10s  [b] -10s  [?] help  [q] quit")
 
+	modeTags := ""
+	if m.Player.Shuffle {
+		modeTags += dimStyle.Render(" [s:on]")
+	} else {
+		modeTags += subtleStyle.Render(" [s:off]")
+	}
+	switch m.Player.RepeatMode {
+	case repeatAll:
+		modeTags += statePlayingStyle.Render(" [r:all]")
+	case repeatOne:
+		modeTags += statePausedStyle.Render(" [r:one]")
+	default:
+		modeTags += subtleStyle.Render(" [r:none]")
+	}
+
 	row1 := lipgloss.NewStyle().Foreground(textColor).Render(trackInfo)
 	row2 := seekBar + "  " + subtleStyle.Render(posStr+" / "+durStr)
-	row3 := subtleStyle.Render("vol ") + volumeBar + subtleStyle.Render(fmt.Sprintf(" %d%%  ", m.Volume)) + controls
+	row3 := subtleStyle.Render("vol ") + volumeBar + subtleStyle.Render(fmt.Sprintf(" %d%%  ", m.Volume)) + modeTags + controls
 
 	borderLine := dimStyle.Render(strings.Repeat("─", m.Width))
 
@@ -184,6 +199,8 @@ func (m *Model) renderHelpOverlay() string {
   [Tab]    Switch panel
   [Enter]  Play selected
   [d]      Remove from queue
+  [s]      Toggle shuffle
+  [R]      Cycle repeat
   [r]      Refresh
   [?]      Toggle help
   [q]      Quit
