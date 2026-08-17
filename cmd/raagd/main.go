@@ -50,6 +50,7 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		return database, libraryRepo, nil, false
 	}
 
+	peerRepo := db.NewPeerRepo(database)
 	p2pNode, err := p2p.NewP2PNode(p2p.P2PNodeConfig{
 		DataDir:         cfg.Daemon.DataDir,
 		ListenAddrs:     cfg.P2P.ListenAddrs,
@@ -65,6 +66,7 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		ChunkSize:       cfg.P2P.ChunkSize,
 		PeerDataTTL:     cfg.P2P.PeerDataTTL,
 		Transcoder:      transcoder.New(transcoder.Config{FFmpegPath: cfg.Transcoder.FFmpegPath, StreamCodec: cfg.Transcoder.StreamCodec, StreamBitrate: cfg.Transcoder.StreamBitrate}),
+		PeerRepo:        peerRepo,
 	}, libraryRepo)
 	if err != nil {
 		slog.Error("failed to create P2P node", "error", err)
@@ -118,7 +120,14 @@ func loadConfig() (*config.Config, bool) {
 	if *dataDir != "" {
 		cfg.Daemon.DataDir = config.ExpandHome(*dataDir)
 	}
-	if flag.Lookup("p2p") != nil && flag.Parsed() {
+
+	p2pSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "p2p" {
+			p2pSet = true
+		}
+	})
+	if p2pSet {
 		cfg.P2P.Enabled = *p2pFlag
 	}
 

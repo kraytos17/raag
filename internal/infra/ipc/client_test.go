@@ -2,9 +2,11 @@ package ipc
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,8 +17,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const queueTrackTitle = "Queue Track"
-const testSongTitle = "Test Song"
+const (
+	queueTrackTitle = "Queue Track"
+	testSongTitle   = "Test Song"
+)
 
 // mockPlaybackHandler implements PlaybackHandler for testing.
 type mockPlaybackHandler struct {
@@ -275,6 +279,10 @@ func (m *mockQueueHandler) Tracks() []*domain.Track {
 
 func (m *mockQueueHandler) ToggleShuffle() {
 	m.shuffle = !m.shuffle
+}
+
+func (m *mockQueueHandler) SetShuffle(shuffle bool) {
+	m.shuffle = shuffle
 }
 
 func (m *mockQueueHandler) SetRepeat(mode domain.RepeatMode) {
@@ -853,5 +861,100 @@ func TestPersistentClient_Playlists(t *testing.T) {
 	ap := resp.GetAddToPlaylist()
 	if ap == nil || ap.TrackCount != 2 {
 		t.Fatalf("track count = %+v, want 2", ap)
+	}
+}
+
+// TestPersistentClient_ConcurrentRequestsWithEvents exercises the single-reader
+// demultiplexer: requests and event broadcasts interleave on one connection.
+// Under -race this would previously corrupt frames (§12.5.1).
+func TestPersistentClient_ConcurrentRequestsWithEvents(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	ec, err := c.Subscribe(EventQueueUpdated | EventTrackChanged)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer func() { _ = ec.Close() }()
+
+	const workers = 8
+	const reqsPerWorker = 25
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+
+	// Concurrent request workers: a mix of Status and QueueGetMode so both
+	// response payload shapes traverse the demultiplexer.
+	for range workers {
+		wg.Go(func() {
+			for range reqsPerWorker {
+				resp, err := c.Status()
+				if err != nil {
+					errCh <- fmt.Errorf("status: %w", err)
+					return
+				}
+				if !resp.Success {
+					errCh <- fmt.Errorf("status returned success=false: %+v", resp)
+					return
+				}
+
+				resp, err = c.QueueGetMode()
+				if err != nil {
+					errCh <- fmt.Errorf("queue mode: %w", err)
+					return
+				}
+				if !resp.Success {
+					errCh <- fmt.Errorf("queue mode returned success=false: %+v", resp)
+					return
+				}
+			}
+		})
+	}
+
+	// Concurrent event publisher: broadcast queue/track events while requests
+	// are in flight on the same connection.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 50 {
+			srv.eventBus.Publish(context.Background(), domain.NewEvent(domain.EventQueueUpdated, nil))
+			srv.eventBus.Publish(context.Background(), domain.NewEvent(domain.EventTrackStarted, nil))
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+	close(errCh)
+	<-done
+
+	for err := range errCh {
+		t.Errorf("worker error: %v", err)
+	}
+
+	// The subscription must have observed events. Count queue-updated events
+	// (translateEvent maps EventQueueUpdated -> EVENT_TYPE_QUEUE_UPDATED).
+	var queueEvents int
+	deadline := time.After(3 * time.Second)
+collect:
+	for queueEvents < 5 {
+		select {
+		case ev := <-ec.Events():
+			switch ev.EventType {
+			case pb.EventType_EVENT_TYPE_QUEUE_UPDATED:
+				queueEvents++
+			case pb.EventType_EVENT_TYPE_TRACK_CHANGED:
+				// expected; ignored for the count
+			default:
+				t.Errorf("unexpected event type %v", ev.EventType)
+			}
+		case <-deadline:
+			break collect
+		}
+	}
+	if queueEvents < 5 {
+		t.Errorf("received %d queue-updated events, want >= 5", queueEvents)
 	}
 }
