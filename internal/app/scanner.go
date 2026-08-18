@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -66,7 +67,8 @@ type LibraryScanner struct {
 	index          SearchIndex
 	bus            domain.EventBus
 	paths          []string
-	onProgress     func(ScanProgress)
+	onProgressMu   sync.RWMutex
+	onProgress     []func(ScanProgress)
 	hashWorker     *hashing.HashWorker
 	duplicateCheck func(ctx context.Context, hash string, trackID domain.TrackID, path string) (domain.TrackID, bool, bool, error)
 }
@@ -124,8 +126,37 @@ func (s *LibraryScanner) Stop(_ context.Context) error {
 	return s.Close()
 }
 
+// OnProgress registers a progress handler. Multiple handlers may be registered
+// concurrently (e.g. one per scan job); each is invoked with every progress
+// update. RemoveProgressHandler unregisters one.
 func (s *LibraryScanner) OnProgress(fn func(ScanProgress)) {
-	s.onProgress = fn
+	s.onProgressMu.Lock()
+	defer s.onProgressMu.Unlock()
+	s.onProgress = append(s.onProgress, fn)
+}
+
+// RemoveProgressHandler unregisters a previously registered progress handler.
+func (s *LibraryScanner) RemoveProgressHandler(fn func(ScanProgress)) {
+	s.onProgressMu.Lock()
+	defer s.onProgressMu.Unlock()
+
+	fp := reflect.ValueOf(fn).Pointer()
+	out := s.onProgress[:0]
+	for _, h := range s.onProgress {
+		if reflect.ValueOf(h).Pointer() != fp {
+			out = append(out, h)
+		}
+	}
+	s.onProgress = out
+}
+
+// notifyProgress invokes all registered progress handlers.
+func (s *LibraryScanner) notifyProgress(p ScanProgress) {
+	s.onProgressMu.RLock()
+	defer s.onProgressMu.RUnlock()
+	for _, fn := range s.onProgress {
+		fn(p)
+	}
 }
 
 func (s *LibraryScanner) LibraryRepo() LibraryRepository {
@@ -334,14 +365,12 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 			default:
 			}
 
-			if s.onProgress != nil {
-				s.onProgress(ScanProgress{
-					Scanned:     fileIdx + 1,
-					Total:       len(newFiles),
-					CurrentFile: filePath,
-					Phase:       domain.ScanPhaseParsing,
-				})
-			}
+			s.notifyProgress(ScanProgress{
+				Scanned:     fileIdx + 1,
+				Total:       len(newFiles),
+				CurrentFile: filePath,
+				Phase:       domain.ScanPhaseParsing,
+			})
 
 			track, err := s.parseFile(filePath)
 			if err != nil {

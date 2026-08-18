@@ -38,6 +38,9 @@ type Server struct {
 
 	mu    sync.Mutex
 	conns []net.Conn
+	// connWriteMu serializes writes to each conn so broadcast (scan progress)
+	// and handleConn response writes can't interleave frames.
+	connWriteMu map[net.Conn]*sync.Mutex
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -112,6 +115,7 @@ type ScannerHandler interface {
 	Scan(ctx context.Context) (int, error)
 	ScanIncremental(ctx context.Context) (added, modified, removed int, err error)
 	OnProgress(fn func(app.ScanProgress))
+	RemoveProgressHandler(fn func(app.ScanProgress))
 }
 
 type SearchHandler interface {
@@ -154,6 +158,7 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 	server := &Server{
 		socketPath:   socketPath,
 		done:         make(chan struct{}),
+		connWriteMu:  make(map[net.Conn]*sync.Mutex),
 		playback:     config.Playback,
 		scanner:      config.Scanner,
 		search:       config.Search,
@@ -340,10 +345,25 @@ func (s *Server) broadcast(resp *pb.Response) {
 	s.mu.Unlock()
 
 	for _, conn := range conns {
-		if err := wire.WriteMsg(conn, resp); err != nil {
+		if err := s.writeToConn(conn, resp); err != nil {
 			slog.Debug("failed to broadcast to conn", "error", err)
 		}
 	}
+}
+
+// writeToConn serializes a response write to a conn with its per-conn mutex so
+// concurrent writes (broadcast vs handleConn response) can't interleave frames.
+func (s *Server) writeToConn(conn net.Conn, msg *pb.Response) error {
+	s.mu.Lock()
+	mu := s.connWriteMu[conn]
+	s.mu.Unlock()
+
+	if mu == nil {
+		mu = &sync.Mutex{}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return wire.WriteMsg(conn, msg)
 }
 
 // publishPlaybackState broadcasts playback state change
@@ -423,6 +443,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 
 		s.mu.Lock()
 		s.conns = append(s.conns, conn)
+		s.connWriteMu[conn] = &sync.Mutex{}
 		s.mu.Unlock()
 
 		s.wg.Add(1)
@@ -480,7 +501,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			slog.Warn("failed to set write deadline", "error", err)
 			return
 		}
-		if err := wire.WriteMsg(conn, resp); err != nil {
+		if err := s.writeToConn(conn, resp); err != nil {
 			slog.Warn("write response failed", "error", err)
 			return
 		}
@@ -739,11 +760,15 @@ func (s *Server) handleSearch(ctx context.Context, req *pb.SearchRequest) *pb.Re
 
 func (s *Server) handleLibScanAsync(req *pb.LibScanRequest) *pb.Response {
 	jobID := uuid.New().String()
-	s.scanner.OnProgress(func(p app.ScanProgress) {
+	progressFn := func(p app.ScanProgress) {
 		s.publishProgress(jobID, p.Scanned, p.Total, p.CurrentFile, string(p.Phase))
-	})
+	}
+	// Register this scan's own progress handler so concurrent scans don't
+	// clobber each other's jobID closure (12.5.5).
+	s.scanner.OnProgress(progressFn)
 
 	go func() {
+		defer s.scanner.RemoveProgressHandler(progressFn)
 		scanCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -1139,6 +1164,7 @@ func (s *Server) removeConn(conn net.Conn) {
 	if i := slices.Index(s.conns, conn); i != -1 {
 		s.conns = slices.Delete(s.conns, i, i+1)
 	}
+	delete(s.connWriteMu, conn)
 }
 
 func (s *Server) Stop(ctx context.Context) error {
@@ -1156,6 +1182,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	}
 
 	s.conns = nil
+	s.connWriteMu = nil
 	s.mu.Unlock()
 	s.wg.Wait()
 	if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
