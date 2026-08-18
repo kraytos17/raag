@@ -73,6 +73,7 @@ type testPlayer struct {
 	fillLevel         float64
 	prepared          string
 	committed         bool
+	preloadDisabled   bool
 }
 
 func (p *testPlayer) Play(ctx context.Context, reader io.Reader, mimeType string) error {
@@ -113,16 +114,30 @@ func (p *testPlayer) SetEqualizer(settings domain.EqualizerSettings)  {}
 func (p *testPlayer) GetEqualizer() domain.EqualizerSettings          { return domain.EqualizerSettings{} }
 
 func (p *testPlayer) Prepare(reader io.Reader, mimeType string) error {
+	if p.preloadDisabled {
+		return nil
+	}
 	p.prepared = mimeType
 	return nil
 }
 
 func (p *testPlayer) PrepareStreaming(source audio.AudioSource, mimeType string) error {
+	if p.preloadDisabled {
+		return nil
+	}
 	p.prepared = mimeType
 	return nil
 }
-func (p *testPlayer) HasNext() bool                { return p.prepared != "" }
-func (p *testPlayer) CommitNext() error            { p.committed = true; return nil }
+func (p *testPlayer) HasNext() bool { return p.prepared != "" }
+func (p *testPlayer) CommitNext() error {
+	p.committed = true
+	// Model the engine: after committing, no next track is prepared and the
+	// done channel only fires again when the new track ends (a fresh channel,
+	// not the already-closed one, so the re-armed advance watcher blocks).
+	p.prepared = ""
+	p.done = make(chan struct{})
+	return nil
+}
 func (p *testPlayer) GetState() domain.PlayerState { return p.state }
 func (p *testPlayer) GetPosition() time.Duration   { return p.pos }
 func (p *testPlayer) GetBufferFillLevel() float64  { return p.fillLevel }
@@ -255,7 +270,7 @@ func TestPlaybackController_Play_LocalSource_UsesPlay(t *testing.T) {
 
 // TestPlaybackController_Play_WhilePlaying_IsLegal verifies a mid-playback
 // Play is now a valid FSM transition (Playing → Buffering), so user Next/Prev
-// no longer fail with ErrInvalidTransition (12.2.1 crossfade prerequisite).
+// no longer fail with ErrInvalidTransition.
 func TestPlaybackController_Play_WhilePlaying_IsLegal(t *testing.T) {
 	ctx := context.Background()
 	bus := events.New()
@@ -694,7 +709,7 @@ func TestPlaybackController_NaturalEnd_NoPrepared_FallsBack(t *testing.T) {
 
 	t1 := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
 	repo := &testLibraryRepo{track: t1}
-	player := &testPlayer{done: make(chan struct{})}
+	player := &testPlayer{done: make(chan struct{}), preloadDisabled: true}
 	queue := &testQueue{tracks: []*domain.Track{t1}}
 	resolver := &testResolver{
 		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
@@ -708,16 +723,11 @@ func TestPlaybackController_NaturalEnd_NoPrepared_FallsBack(t *testing.T) {
 		t.Fatalf("Play() error = %v", err)
 	}
 
-	// Disable preload so nothing is prepared.
-	c.mu.Lock()
-	c.preparedTrack = nil
-	c.mu.Unlock()
-	player.prepared = ""
-
-	close(player.done)
+	done := player.done
+	close(done)
 
 	select {
-	case <-player.done:
+	case <-done:
 	case <-time.After(time.Second):
 	}
 	// The fallback path re-Plays the next queue item (t1 again). Give the

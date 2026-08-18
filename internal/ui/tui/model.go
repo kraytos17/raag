@@ -165,19 +165,33 @@ func (p PeerItem) Title() string {
 	if len(id) > 8 {
 		id = id[:8]
 	}
-	return fmt.Sprintf("Peer %s", id)
+	dot := "○"
+	if p.Peer.Connected {
+		dot = "●"
+	}
+	return fmt.Sprintf("%s Peer %s", dot, id)
 }
 
 func (p PeerItem) Description() string {
 	if p.Peer == nil {
 		return ""
 	}
+
 	status := "disconnected"
 	if p.Peer.Connected {
 		status = "connected"
 	}
-	if p.Peer.Score != nil {
-		return fmt.Sprintf("%s | Score: %.1f | BW: %s/s", status, p.Peer.Score.Score, formatBandwidth(p.Peer.Score.AvgBandwidth))
+	if sc := p.Peer.Score; sc != nil {
+		latency := "-"
+		if sc.AvgLatencyMs > 0 {
+			latency = fmt.Sprintf("%.0fms", sc.AvgLatencyMs)
+		}
+
+		bandwidth := "-"
+		if sc.AvgBandwidth > 0 {
+			bandwidth = formatBandwidth(sc.AvgBandwidth) + "/s"
+		}
+		return fmt.Sprintf("%s | %s | %s | Score: %.1f", status, latency, bandwidth, sc.Score)
 	}
 	return status
 }
