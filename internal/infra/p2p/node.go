@@ -46,7 +46,7 @@ type P2PNode struct {
 	resolver        *P2PResolver
 	scorer          *PeerScorer
 	peerCache       *discovery.PeerCache
-	mdnsDiscovered  *discovery.PeerCache
+	mdnsDiscovered  *discovery.TTLPeerCache
 	mdns            *discovery.MdnsDiscovery
 	peerMgr         *peerManager
 	mdnsServiceName string
@@ -150,7 +150,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 	scorer := NewPeerScorer()
 
 	peerCache := discovery.NewPeerCache(cfg.MaxKnownPeers)
-	mdnsDiscovered := discovery.NewPeerCache(cfg.MaxKnownPeers)
+	mdnsDiscovered := discovery.NewTTLPeerCache(cfg.MaxKnownPeers, discovery.MdnsDiscoveryTTL)
 	peerMgr := newPeerManager(p2pHost, peerCache, libraryRepo, scorer, cfg.PeerDataTTL, cfg.PeerRepo)
 	resolver := NewP2PResolver(libraryRepo, streamPool, peerMgr, scorer, p2pHost)
 
@@ -241,6 +241,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 	}
 
 	go n.measureLatencyLoop()
+	go n.refreshManifestsLoop()
 	if !n.lanOnly {
 		if err := BootstrapPeers(ctx, n.host, n.bootstrapPeers); err != nil {
 			slog.Warn("bootstrap failed", "err", err)
@@ -323,6 +324,17 @@ func (n *P2PNode) Peers() []peer.ID {
 		}
 	}
 	return out
+}
+
+// DiscoveredPeers returns peers discovered via mDNS that are not yet connected.
+func (n *P2PNode) DiscoveredPeers() []peer.AddrInfo {
+	return n.mdnsDiscovered.All()
+}
+
+// AddDiscovered records a discovered peer (e.g. from mDNS) so it is visible via
+// DiscoveredPeers/ListPeers.
+func (n *P2PNode) AddDiscovered(pi peer.AddrInfo) {
+	n.mdnsDiscovered.Add(pi)
 }
 
 // connectedPeerCount returns the number of distinct connected peers, excluding
@@ -502,6 +514,35 @@ func (n *P2PNode) measureLatencyLoop() {
 		case <-ticker.C:
 			n.measureAllPeersLatency()
 		}
+	}
+}
+
+// manifestRefreshInterval is how often peer library manifests are re-fetched so
+// library changes propagate well under the 24h PeerDataTTL.
+const manifestRefreshInterval = 5 * time.Minute
+
+// refreshManifestsLoop periodically re-fetches manifests from connected peers
+// so their libraries stay fresh. FetchPeerData is idempotent and cancels any
+// prior in-flight fetch per peer, so overlapping ticks are safe.
+func (n *P2PNode) refreshManifestsLoop() {
+	ticker := time.NewTicker(manifestRefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-n.done:
+			return
+		case <-ticker.C:
+			n.refreshAllManifests()
+		}
+	}
+}
+
+// refreshAllManifests re-fetches manifests from all currently connected peers.
+// Exposed as a method so the loop's work is unit-testable.
+func (n *P2PNode) refreshAllManifests() {
+	for _, pid := range n.Peers() {
+		n.peerMgr.FetchPeerData(context.Background(), pid)
 	}
 }
 

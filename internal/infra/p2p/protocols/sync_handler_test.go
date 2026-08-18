@@ -142,8 +142,11 @@ func newTestSyncHandler(lib app.LibraryRepository, local peer.ID) *SyncHandler {
 	return h
 }
 
+// testTrackPath is the path used by sync handler tests.
+const testTrackPath = "/tmp/a.mp3"
+
 func TestSyncHandler_TrackDetail_UnauthorizedBeforeManifest(t *testing.T) {
-	track := &domain.Track{ID: domain.TrackID("track-1"), Path: "/tmp/a.mp3"}
+	track := &domain.Track{ID: domain.TrackID("track-1"), Path: testTrackPath}
 	h := newTestSyncHandler(&syncTestLibrary{track: track}, peer.ID("local"))
 	req := &pb.SyncRequest{
 		Payload: &pb.SyncRequest_TrackDetailRequest{
@@ -168,9 +171,9 @@ func TestSyncHandler_TrackDetail_UnauthorizedBeforeManifest(t *testing.T) {
 }
 
 func TestSyncHandler_ManifestExchange_Admits(t *testing.T) {
-	track := &domain.Track{ID: domain.TrackID("track-1"), Path: "/tmp/a.mp3"}
+	track := &domain.Track{ID: domain.TrackID("track-1"), Path: testTrackPath}
 	h := newTestSyncHandler(&syncTestLibrary{track: track}, peer.ID("local"))
-
+	h.SetAnnounceLibrary(true)
 	// First, a manifest request grants admission.
 	mreq := &pb.SyncRequest{
 		Payload: &pb.SyncRequest_ManifestRequest{},
@@ -178,8 +181,12 @@ func TestSyncHandler_ManifestExchange_Admits(t *testing.T) {
 
 	manifestStream := newSyncTestStream(mreq, peer.ID("remote"))
 	h.Handle(manifestStream)
-	if _, err := manifestStream.readResponse(); err != nil {
+	resp, err := manifestStream.readResponse()
+	if err != nil {
 		t.Fatalf("read manifest response: %v", err)
+	}
+	if _, ok := resp.GetPayload().(*pb.SyncResponse_Manifest); !ok {
+		t.Fatalf("expected manifest response, got %T", resp.GetPayload())
 	}
 
 	// Now the same peer may request track details.
@@ -191,12 +198,42 @@ func TestSyncHandler_ManifestExchange_Admits(t *testing.T) {
 
 	detailStream := newSyncTestStream(dreq, peer.ID("remote"))
 	h.Handle(detailStream)
-	resp, err := detailStream.readResponse()
+	resp, err = detailStream.readResponse()
 	if err != nil {
 		t.Fatalf("read track response: %v", err)
 	}
 	if _, ok := resp.GetPayload().(*pb.SyncResponse_Track); !ok {
 		t.Errorf("expected track response, got %T", resp.GetPayload())
+	}
+}
+
+func TestSyncHandler_Manifest_Disabled_ReturnsError(t *testing.T) {
+	track := &domain.Track{ID: domain.TrackID("track-1"), Path: testTrackPath}
+	h := newTestSyncHandler(&syncTestLibrary{track: track}, peer.ID("local"))
+	// announceLibrary defaults to false: sharing disabled.
+	mreq := &pb.SyncRequest{
+		Payload: &pb.SyncRequest_ManifestRequest{},
+	}
+
+	stream := newSyncTestStream(mreq, peer.ID("remote"))
+	h.Handle(stream)
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+
+	er, ok := resp.GetPayload().(*pb.SyncResponse_Error)
+	if !ok {
+		t.Fatalf("expected error response, got %T", resp.GetPayload())
+	}
+	if er.Error.Code != pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
+		t.Errorf("error code = %v, want PERMISSION_DENIED", er.Error.Code)
+	}
+	if er.Error.Message != "library sharing disabled" {
+		t.Errorf("error message = %q, want %q", er.Error.Message, "library sharing disabled")
+	}
+	if !h.admission.IsAdmitted(peer.ID("remote")) {
+		t.Error("peer should be admitted after manifest request even when sharing is disabled")
 	}
 }
 

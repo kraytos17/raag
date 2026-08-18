@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/events"
+	p2p "github.com/p-society/raag/internal/infra/p2p"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 	"google.golang.org/protobuf/proto"
@@ -725,7 +727,7 @@ func TestPersistentClient_Play_PopulatesQueue(t *testing.T) {
 }
 
 // TestPersistentClient_Status_PopulatesPositionMs verifies handleStatus reports
-// the current playback position (§12.5.4).
+// the current playback position
 func TestPersistentClient_Status_PopulatesPositionMs(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -754,7 +756,7 @@ func TestPersistentClient_Status_PopulatesPositionMs(t *testing.T) {
 }
 
 // TestTranslateEvent_PeerScoreUpdated verifies score updates map to their own
-// event type, not PEER_CONNECTED (§12.4.6).
+// event type, not PEER_CONNECTED.
 func TestTranslateEvent_PeerScoreUpdated(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -912,6 +914,64 @@ func TestPersistentClient_ListPeers_Enriched(t *testing.T) {
 	}
 	if p.Score.Score <= 0 {
 		t.Fatalf("expected positive score, got %f", p.Score.Score)
+	}
+}
+
+// TestPersistentClient_ListPeers_IncludesDiscovered verifies ListPeers surfaces
+// mDNS-discovered, not-yet-connected peers
+func TestPersistentClient_ListPeers_IncludesDiscovered(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	mock := newMockPeerRepoHandler()
+	srv.peerRepo = mock
+
+	// Build a real (listener-free) p2p node so handleListPeers can report
+	// discovered peers. The node is never started, so a nil library repo is fine.
+	node, err := p2p.NewP2PNode(p2p.P2PNodeConfig{
+		DataDir:            t.TempDir(),
+		LANOnly:            true,
+		MaxKnownPeers:      100,
+		PerPeerRateLimit:   0,
+		UploadBandwidth:    0,
+		CBFailureThreshold: 5,
+		CBCooldown:         30 * time.Second,
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewP2PNode: %v", err)
+	}
+	srv.p2pNode = node
+
+	discovered := peer.AddrInfo{ID: peer.ID("discovered-peer")}
+	node.AddDiscovered(discovered)
+	wantID := discovered.ID.String()
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.ListPeers()
+	if err != nil {
+		t.Fatalf("list peers: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("list peers failed: %s", resp.Error)
+	}
+	lp := resp.GetListPeers()
+	if lp == nil {
+		t.Fatal("expected ListPeers response payload")
+	}
+
+	var found bool
+	for _, p := range lp.Peers {
+		if p.Id == wantID {
+			found = true
+			if p.Connected {
+				t.Error("discovered peer should be marked Connected=false")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("discovered peer %q not in ListPeers; got %+v", wantID, lp.Peers)
 	}
 }
 
