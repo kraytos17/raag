@@ -5,65 +5,41 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/p-society/raag/internal/domain"
 )
 
-type ringBuffer struct {
-	buf    []domain.Event
-	size   int
-	head   int
-	count  int
-	mu     sync.Mutex
-	notify chan struct{}
-}
-
-func newRingBuffer(size int) *ringBuffer {
-	return &ringBuffer{
-		buf:    make([]domain.Event, size),
-		size:   size,
-		notify: make(chan struct{}, 1),
-	}
-}
-
-func (rb *ringBuffer) Push(event domain.Event) {
-	rb.mu.Lock()
-	rb.buf[rb.head] = event
-	rb.head = (rb.head + 1) % rb.size
-	if rb.count < rb.size {
-		rb.count++
-	}
-
-	select {
-	case rb.notify <- struct{}{}:
-	default:
-	}
-	rb.mu.Unlock()
-}
-
-func (rb *ringBuffer) Pop() (domain.Event, bool) {
-	rb.mu.Lock()
-	if rb.count == 0 {
-		rb.mu.Unlock()
-		return domain.Event{}, false
-	}
-
-	idx := (rb.head - rb.count + rb.size) % rb.size
-	event := rb.buf[idx]
-	rb.count--
-	rb.mu.Unlock()
-	return event, true
-}
-
 type subscription struct {
 	id        uint64
 	eventType domain.EventType
-	rb        *ringBuffer
+	ch        chan domain.Event
 	handler   domain.EventHandler
 	stop      chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
+}
+
+// push delivers an event to the subscription's channel. A slow handler never
+// blocks the publisher: when the buffer is full the oldest queued event is
+// dropped in favor of the newest, mirroring the IPC EventClient's backpressure
+// handling.
+func (s *subscription) push(event domain.Event) {
+	select {
+	case s.ch <- event:
+		return
+	default:
+	}
+
+	select {
+	case <-s.ch:
+	default:
+	}
+
+	select {
+	case s.ch <- event:
+	default:
+		slog.Warn("dropping event due to backpressure", "eventType", event.Type, "subscription", s.id)
+	}
 }
 
 type EventBus struct {
@@ -90,7 +66,7 @@ func (eb *EventBus) Publish(ctx context.Context, event domain.Event) {
 		if sub.eventType != event.Type {
 			continue
 		}
-		sub.rb.Push(event)
+		sub.push(event)
 	}
 }
 
@@ -102,21 +78,20 @@ func (eb *EventBus) Subscribe(eventType domain.EventType, handler domain.EventHa
 	}
 
 	id := eb.nextSubID.Add(1)
-	stop := make(chan struct{})
 	sub := &subscription{
 		id:        id,
 		eventType: eventType,
-		rb:        newRingBuffer(domain.EventChannelSize),
+		ch:        make(chan domain.Event, domain.EventChannelSize),
 		handler:   handler,
-		stop:      stop,
+		stop:      make(chan struct{}),
 	}
 
 	eb.subs[id] = sub
 	sub.wg.Go(func() {
-		eb.dispatch(sub, stop)
+		eb.dispatch(sub)
 	})
 	return func() {
-		sub.closeOnce.Do(func() { close(stop) })
+		sub.closeOnce.Do(func() { close(sub.stop) })
 		eb.mu.Lock()
 		delete(eb.subs, id)
 		eb.mu.Unlock()
@@ -124,32 +99,21 @@ func (eb *EventBus) Subscribe(eventType domain.EventType, handler domain.EventHa
 	}
 }
 
-func (eb *EventBus) dispatch(sub *subscription, stop chan struct{}) {
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
-
+func (eb *EventBus) dispatch(sub *subscription) {
 	for {
-		event, ok := sub.rb.Pop()
-		if !ok {
-			timer.Reset(5 * time.Second)
-			select {
-			case <-sub.rb.notify:
-			case <-timer.C:
-			case <-stop:
-				return
-			}
-			continue
-		}
-
-		timer.Reset(5 * time.Second)
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("event handler panic", "event", event.Type, "subscription", sub.id, "error", r)
-				}
+		select {
+		case event := <-sub.ch:
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("event handler panic", "event", event.Type, "subscription", sub.id, "error", r)
+					}
+				}()
+				sub.handler(event)
 			}()
-			sub.handler(event)
-		}()
+		case <-sub.stop:
+			return
+		}
 	}
 }
 

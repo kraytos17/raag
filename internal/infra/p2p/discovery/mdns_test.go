@@ -170,6 +170,7 @@ func TestPeerCache_NoTTL(t *testing.T) {
 
 func TestTTLPeerCache_Expires(t *testing.T) {
 	c := NewTTLPeerCache(10, 100*time.Millisecond)
+	defer c.Close()
 	pid := peer.ID("peer-1")
 	c.Add(peer.AddrInfo{ID: pid})
 	if len(c.All()) != 1 {

@@ -273,6 +273,7 @@ func (n *P2PNode) Stop(ctx context.Context) error {
 			slog.Warn("failed to close mDNS", "error", err)
 		}
 	}
+	n.mdnsDiscovered.Close()
 
 	n.streamPool.Close()
 	if err := n.host.Close(); err != nil {
