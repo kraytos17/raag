@@ -57,6 +57,14 @@ type PeerRepository interface {
 	ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, error]
 }
 
+// SettingsRepository persists runtime user settings (e.g. playback volume) in
+// the database. Config.toml remains the source of defaults; this is the
+// mutable, restart-surviving layer on top of it.
+type SettingsRepository interface {
+	GetVolume(ctx context.Context) (int, bool, error)
+	SetVolume(ctx context.Context, volume int) error
+}
+
 type SearchIndex interface {
 	Index(ctx context.Context, track *domain.Track) error
 	IndexBatch(ctx context.Context, tracks []*domain.Track) error

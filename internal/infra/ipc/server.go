@@ -202,6 +202,7 @@ func (s *Server) wireEventBus(bus domain.EventBus) {
 		domain.EventQueueUpdated,
 		domain.EventPlaybackBuffering,
 		domain.EventPlaybackReady,
+		domain.EventVolumeChanged,
 	} {
 		bus.Subscribe(t, func(e domain.Event) {
 			eventType, payload := translateEvent(s, e)
@@ -286,6 +287,13 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("buffering")
 	case domain.EventPlaybackReady:
 		return pb.EventType_EVENT_TYPE_PLAYBACK_STATE, []byte("playing")
+	case domain.EventVolumeChanged:
+		payload, ok := e.Payload.(domain.VolumeChangedPayload)
+		if !ok {
+			return pb.EventType_EVENT_TYPE_UNSPECIFIED, nil
+		}
+		return pb.EventType_EVENT_TYPE_VOLUME_CHANGED,
+			mustMarshal(&pb.SetVolumeRequest{Volume: int32(payload.Volume)})
 	default:
 		return pb.EventType_EVENT_TYPE_UNSPECIFIED, nil
 	}
@@ -387,12 +395,6 @@ func (s *Server) publishPlaybackProgress(posMs, durMs int64) {
 	}
 	data, _ := proto.Marshal(progress)
 	s.PublishEvent(EventProgress, data)
-}
-
-// publishVolumeChange broadcasts volume change
-func (s *Server) publishVolumeChange(volume int32) {
-	data, _ := proto.Marshal(&pb.SetVolumeRequest{Volume: volume})
-	s.PublishEvent(EventVolumeChanged, data)
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -590,8 +592,6 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 		// handleConn before dispatch; just acknowledge so the client doesn't
 		// get a bogus "unknown request type" error.
 		resp = &pb.Response{Success: true}
-	case *pb.Request_Empty:
-		resp = &pb.Response{Success: true}
 	case *pb.Request_Unsubscribe:
 		resp = &pb.Response{Success: true}
 	default:
@@ -701,8 +701,8 @@ func (s *Server) handleSetVolume(ctx context.Context, req *pb.SetVolumeRequest) 
 	if err := s.playback.SetVolume(ctx, int(req.Volume)); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
-
-	s.publishVolumeChange(req.Volume)
+	// The volume event is delivered via the bus (SetVolume publishes
+	// EventVolumeChanged, wired in wireEventBus) — no direct publish here.
 	return &pb.Response{Success: true}
 }
 

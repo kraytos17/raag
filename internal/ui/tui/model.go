@@ -64,6 +64,7 @@ type Model struct {
 
 	HelpViewport viewport.Model
 	ShowHelp     bool
+	ShowLyrics   bool
 
 	Player PlayerState
 
@@ -715,6 +716,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 		return m.handleQuit()
 	case key.Matches(msg, keys.Help):
 		m.ShowHelp = !m.ShowHelp
+	case key.Matches(msg, keys.Lyrics):
+		m.ShowLyrics = !m.ShowLyrics
 	case key.Matches(msg, keys.Tab):
 		m.ActivePanel = (m.ActivePanel + 1) % 4
 	case key.Matches(msg, keys.Search):
@@ -1124,6 +1127,15 @@ func (m *Model) renderContent() string {
 			lists,
 			help,
 		)
+	}
+	if m.ShowLyrics {
+		if lyrics := m.renderLyrics(); lyrics != "" {
+			lists = lipgloss.JoinVertical(
+				lipgloss.Left,
+				lists,
+				lyrics,
+			)
+		}
 	}
 	if m.Reconnecting {
 		overlay := reconnectStyle.Render(" ⟳ Reconnecting... ")

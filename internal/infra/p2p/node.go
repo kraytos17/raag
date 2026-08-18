@@ -236,6 +236,13 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 
 	n.mdns = mdns
 	if err := mdns.Start(); err != nil {
+		// A failed start must not leak the pool's reaper goroutine or leave the
+		// node half-started: stop the pool and clear the started flag so a later
+		// Start retry is possible.
+		n.streamPool.Close()
+		n.mu.Lock()
+		n.started = false
+		n.mu.Unlock()
 		return err
 	}
 

@@ -51,6 +51,10 @@ func PeerScoreKey(id domain.PeerID) []byte {
 	return []byte(domain.PrefixPeerScore + string(id))
 }
 
+func SettingsKey(name string) []byte {
+	return []byte(domain.PrefixSettings + name)
+}
+
 func CoverArtKey(id domain.TrackID) []byte {
 	return []byte(domain.PrefixTrackCover + string(id))
 }

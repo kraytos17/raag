@@ -33,11 +33,14 @@ var (
 )
 
 // initSpeaker initializes the global speaker at the requested sample rate.
-// speaker.Init can only be called once per process, so the first call wins;
-// subsequent calls with a different rate are ignored.
-func initSpeaker(rate beep.SampleRate) error {
+// bufferSize is the speaker buffer in samples; a non-positive value falls back
+// to a 100ms buffer. speaker.Init can only be called once per process, so the
+// first call wins; subsequent calls with a different rate are ignored.
+func initSpeaker(rate beep.SampleRate, bufferSize int) error {
 	initSpeakerOnce.Do(func() {
-		bufferSize := rate.N(time.Millisecond * 100)
+		if bufferSize <= 0 {
+			bufferSize = rate.N(time.Millisecond * 100)
+		}
 		initSpeakerErr = speaker.Init(rate, bufferSize)
 	})
 	return initSpeakerErr
@@ -46,6 +49,7 @@ func initSpeaker(rate beep.SampleRate) error {
 type Engine struct {
 	mu            sync.RWMutex
 	sampleRate    beep.SampleRate
+	speakerBuffer int
 	ctrl          *beep.Ctrl
 	vol           *effects.Volume
 	streamer      beep.StreamSeekCloser
@@ -57,14 +61,18 @@ type Engine struct {
 	audioSource   AudioSource
 }
 
-func NewEngine(sampleRate int) *Engine {
+// NewEngine creates an audio engine. bufferSize is the speaker buffer in
+// samples (config playback.buffer_size); a non-positive value uses a 100ms
+// default buffer.
+func NewEngine(sampleRate int, bufferSize int) *Engine {
 	if sampleRate <= 0 {
 		sampleRate = 44100
 	}
 	return &Engine{
-		sampleRate: beep.SampleRate(sampleRate),
-		state:      domain.PlayerStateIdle,
-		done:       make(chan struct{}, 1),
+		sampleRate:    beep.SampleRate(sampleRate),
+		speakerBuffer: bufferSize,
+		state:         domain.PlayerStateIdle,
+		done:          make(chan struct{}, 1),
 	}
 }
 
@@ -331,7 +339,7 @@ func (e *Engine) Done() <-chan struct{} {
 }
 
 func (e *Engine) initSpeaker() error {
-	return initSpeaker(e.sampleRate)
+	return initSpeaker(e.sampleRate, e.speakerBuffer)
 }
 
 func decode(rc io.ReadCloser, mimeType string) (beep.StreamSeekCloser, beep.Format, error) {

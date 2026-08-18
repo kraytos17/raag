@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,13 +23,9 @@ import (
 // syncTestStream serves a pre-baked request via Read and captures the written
 // response via Write, so the SyncHandler can be driven without a real host.
 type syncTestStream struct {
-	req     bytes.Buffer
-	resp    bytes.Buffer
-	conn    network.Conn
-	closed  bool
-	closeMu sync.Mutex
-	readMu  sync.Mutex
-	writeMu sync.Mutex
+	req  bytes.Buffer
+	resp bytes.Buffer
+	conn network.Conn
 }
 
 func newSyncTestStream(req *pb.SyncRequest, remote peer.ID) *syncTestStream {

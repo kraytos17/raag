@@ -100,6 +100,7 @@ const (
 	PrefixTrackCover   = "trk:cover:"
 	PrefixContentHash  = "hash:content:"
 	KeyIdentity        = "cfg:identity"
+	PrefixSettings     = "cfg:settings:"
 )
 
 const (
