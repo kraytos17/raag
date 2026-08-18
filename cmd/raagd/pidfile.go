@@ -13,10 +13,10 @@ func writePidFile(path string) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600)
 }
 
 // removePidFile deletes the pid file, ignoring a missing file.
