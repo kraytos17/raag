@@ -167,6 +167,7 @@ message StatusResponse {
   int32 volume = 4;
   int32 queue_length = 5;
   int32 queue_position = 6;
+  float buffer_fill = 7;
 }
 
 message StatusRequest {}

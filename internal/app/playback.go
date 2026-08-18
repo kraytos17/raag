@@ -106,6 +106,12 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 		c.mu.Unlock()
 		return playErr
 	}
+	// EventBufferReady leaves the Buffering state entered on EventPlay above.
+	// For P2P this transition is real: WaitReady blocked until PreRollBytes of
+	// pre-roll data buffered. For local sources there is no buffering
+	// phase, so the hop is instant. All later underrun/refill transitions are
+	// driven by the buffer monitor (startBufferMonitor/checkBufferLevel), which
+	// is the source of truth once playback is underway.
 	if err := c.fsm.Send(ctx, domain.EventBufferReady); err != nil {
 		slog.Error("FSM transition to playing failed", "error", err)
 	}
@@ -289,6 +295,12 @@ func (c *PlaybackController) GetCurrentTrack() *domain.Track {
 // GetPosition returns the current playback position from the engine.
 func (c *PlaybackController) GetPosition() time.Duration {
 	return c.player.GetPosition()
+}
+
+// GetBufferFillLevel returns the audio buffer fill ratio (0-1) from the
+// engine, surfaced to the daemon so the UI can show streaming health.
+func (c *PlaybackController) GetBufferFillLevel() float64 {
+	return c.player.GetBufferFillLevel()
 }
 
 func (c *PlaybackController) SetQueue(q Queue) {

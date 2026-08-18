@@ -26,6 +26,7 @@ import (
 const (
 	queueTrackTitle = "Queue Track"
 	testSongTitle   = "Test Song"
+	testArtist      = "Test Artist"
 )
 
 // mockPlaybackHandler implements PlaybackHandler for testing.
@@ -34,6 +35,7 @@ type mockPlaybackHandler struct {
 	volume       int
 	currentTrack *domain.Track
 	position     time.Duration
+	bufferFill   float64
 }
 
 func newMockPlaybackHandler() *mockPlaybackHandler {
@@ -91,6 +93,10 @@ func (m *mockPlaybackHandler) GetCurrentTrack() *domain.Track {
 
 func (m *mockPlaybackHandler) GetPosition() time.Duration {
 	return m.position
+}
+
+func (m *mockPlaybackHandler) GetBufferFillLevel() float64 {
+	return m.bufferFill
 }
 
 func (m *mockPlaybackHandler) OnProgress(callback func(positionMs, durationMs int64)) {
@@ -169,7 +175,12 @@ func (m *mockLibraryRepoHandler) FindByID(_ context.Context, id domain.TrackID) 
 	return nil, domain.ErrTrackNotFound
 }
 
-func (m *mockLibraryRepoHandler) FindByPath(_ context.Context, _ string) (*domain.Track, error) {
+func (m *mockLibraryRepoHandler) FindByPath(_ context.Context, path string) (*domain.Track, error) {
+	for _, t := range m.tracks {
+		if t.Path == path {
+			return t, nil
+		}
+	}
 	return nil, domain.ErrTrackNotFound
 }
 
@@ -465,6 +476,103 @@ func TestPersistentClient_ReconnectsAfterRestart(t *testing.T) {
 	}
 }
 
+// TestEventClient_StateTransitions verifies the subscription reports
+// ConnReconnecting when its connection drops and ConnConnected after a
+// successful resubscribe
+func TestEventClient_StateTransitions(t *testing.T) {
+	srv := startTestServer(t)
+	socketPath := srv.socketPath
+
+	c := NewClient(socketPath)
+	defer func() { _ = c.Close() }()
+
+	// First request establishes connection, then subscribe.
+	if _, err := c.Status(); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	ec := c.SubscribeWithRetry(EventPlaybackState)
+	defer ec.Close()
+
+	// The initial successful subscribe should report ConnConnected.
+	select {
+	case state := <-ec.State():
+		if state != ConnConnected {
+			t.Fatalf("initial state = %v, want ConnConnected", state)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for initial ConnConnected state")
+	}
+
+	// Drop the server; the subscription must enter ConnReconnecting.
+	srv.Stop()
+
+	select {
+	case state := <-ec.State():
+		if state != ConnReconnecting {
+			t.Fatalf("state after server stop = %v, want ConnReconnecting", state)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for ConnReconnecting state")
+	}
+
+	// Restart the server at the same socket; the retry loop should reconnect.
+	srv2 := startTestServerAt(t, socketPath)
+	defer srv2.Stop()
+
+	select {
+	case state := <-ec.State():
+		if state != ConnConnected {
+			t.Fatalf("state after restart = %v, want ConnConnected", state)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for ConnConnected after restart")
+	}
+}
+
+// TestServer_SubscribeDispatch_Success verifies Request_Subscribe and
+// Request_Empty get a Success reply from dispatch instead of falling through
+// to "unknown request type"
+func TestServer_SubscribeDispatch_Success(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	conn, err := net.Dial("unix", srv.socketPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: EventPlaybackState}},
+	}
+	if err := wire.WriteMsg(conn, req); err != nil {
+		t.Fatalf("write subscribe: %v", err)
+	}
+
+	var resp pb.Response
+	if err := wire.ReadMsg(conn, &resp); err != nil {
+		t.Fatalf("read subscribe response: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("subscribe response Success = false, error = %q; want success", resp.Error)
+	}
+
+	emptyReq := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_Empty{Empty: &pb.Empty{}},
+	}
+	if err := wire.WriteMsg(conn, emptyReq); err != nil {
+		t.Fatalf("write empty: %v", err)
+	}
+	if err := wire.ReadMsg(conn, &resp); err != nil {
+		t.Fatalf("read empty response: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("empty response Success = false, error = %q; want success", resp.Error)
+	}
+}
+
 // TestPersistentClient_CloseIdempotent verifies that Close can be
 // called multiple times without panicking.
 func TestPersistentClient_CloseIdempotent(t *testing.T) {
@@ -618,7 +726,7 @@ func TestPersistentClient_ListTracks(t *testing.T) {
 	track := &domain.Track{
 		ID:     domain.TrackID("track-1"),
 		Title:  testSongTitle,
-		Artist: "Test Artist",
+		Artist: testArtist,
 		Album:  "Test Album",
 	}
 	mock := newMockLibraryRepoHandler()
@@ -644,6 +752,75 @@ func TestPersistentClient_ListTracks(t *testing.T) {
 	}
 	if lt.Tracks[0].Title != testSongTitle {
 		t.Fatalf("unexpected track title: %s", lt.Tracks[0].Title)
+	}
+}
+
+func TestPersistentClient_GetTrack(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	track := &domain.Track{
+		ID:     domain.TrackID("track-1"),
+		Title:  testSongTitle,
+		Artist: testArtist,
+		Album:  "Test Album",
+	}
+
+	mock := newMockLibraryRepoHandler()
+	mock.tracks = append(mock.tracks, track)
+	srv.libraryRepo = mock
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.GetTrack("track-1")
+	if err != nil {
+		t.Fatalf("get track: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("get track failed: %s", resp.Error)
+	}
+
+	gt := resp.GetGetTrack()
+	if gt == nil || gt.Track == nil {
+		t.Fatal("expected GetTrack response payload")
+	}
+	if gt.Track.Title != testSongTitle {
+		t.Fatalf("unexpected track title: %s", gt.Track.Title)
+	}
+}
+
+func TestPersistentClient_GetTrackByPath(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	track := &domain.Track{
+		ID:    domain.TrackID("track-1"),
+		Title: testSongTitle,
+		Path:  "/music/song.mp3",
+	}
+
+	mock := newMockLibraryRepoHandler()
+	mock.tracks = append(mock.tracks, track)
+	srv.libraryRepo = mock
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.GetTrackByPath("/music/song.mp3")
+	if err != nil {
+		t.Fatalf("get track by path: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("get track by path failed: %s", resp.Error)
+	}
+
+	gt := resp.GetGetTrack()
+	if gt == nil || gt.Track == nil {
+		t.Fatal("expected GetTrack response payload")
+	}
+	if gt.Track.Title != testSongTitle {
+		t.Fatalf("unexpected track title: %s", gt.Track.Title)
 	}
 }
 
@@ -734,6 +911,7 @@ func TestPersistentClient_Status_PopulatesPositionMs(t *testing.T) {
 
 	mockPlayback, _ := srv.playback.(*mockPlaybackHandler)
 	mockPlayback.position = 90 * time.Second
+	mockPlayback.bufferFill = 0.75
 
 	c := NewClient(srv.socketPath)
 	defer func() { _ = c.Close() }()
@@ -752,6 +930,9 @@ func TestPersistentClient_Status_PopulatesPositionMs(t *testing.T) {
 	}
 	if st.PositionMs != 90000 {
 		t.Errorf("PositionMs = %d, want 90000", st.PositionMs)
+	}
+	if st.BufferFill != 0.75 {
+		t.Errorf("BufferFill = %v, want 0.75", st.BufferFill)
 	}
 }
 
@@ -1042,7 +1223,7 @@ func TestPersistentClient_Playlists(t *testing.T) {
 
 	// Seed the library repo so GetPlaylist can resolve the track.
 	mock := newMockLibraryRepoHandler()
-	mock.tracks = append(mock.tracks, &domain.Track{ID: domain.TrackID("track-1"), Title: testSongTitle, Artist: "Test Artist"})
+	mock.tracks = append(mock.tracks, &domain.Track{ID: domain.TrackID("track-1"), Title: testSongTitle, Artist: testArtist})
 	srv.libraryRepo = mock
 
 	c := NewClient(srv.socketPath)

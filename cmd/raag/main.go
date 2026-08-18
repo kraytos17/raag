@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"strconv"
 
@@ -50,6 +49,8 @@ func run() int {
 		newSearchCmd(),
 		newQueueCmd(),
 		newLibCmd(),
+		newTrackCmd(),
+		newHealthCmd(),
 		newPeersCmd(),
 		newNetworkCmd(),
 		newPlaylistCmd(),
@@ -229,7 +230,7 @@ func newVolumeCmd() *cobra.Command {
 					return errors.New(resp.Error)
 				}
 				if status := resp.GetStatus(); status != nil {
-					slog.Info("volume", "level", status.Volume)
+					fmt.Fprintf(os.Stdout, "volume: %d\n", status.Volume)
 				}
 				return nil
 			}
@@ -267,9 +268,10 @@ func newStatusCmd() *cobra.Command {
 				return errors.New(resp.Error)
 			}
 			if status := resp.GetStatus(); status != nil {
-				slog.Info("status", "state", status.State, "volume", status.Volume, "queue", status.QueueLength)
+				fmt.Fprintf(os.Stdout, "state: %s\nvolume: %d\nqueue: %d/%d\n",
+					status.State, status.Volume, status.QueuePosition, status.QueueLength)
 				if status.CurrentTrack != nil {
-					slog.Info("current track", "title", status.CurrentTrack.Title, "artist", status.CurrentTrack.Artist)
+					fmt.Fprintf(os.Stdout, "track: %s — %s\n", status.CurrentTrack.Title, status.CurrentTrack.Artist)
 				}
 			}
 			return nil
@@ -304,15 +306,15 @@ func newSearchCmd() *cobra.Command {
 			}
 			if searchResp := resp.GetSearch(); searchResp != nil {
 				if len(searchResp.Tracks) == 0 {
-					slog.Info("no tracks found")
+					fmt.Fprintln(os.Stdout, "no tracks found")
 					return nil
 				}
 				for i, track := range searchResp.Tracks {
-					fields := []any{"index", i + 1, "title", track.Title, "artist", track.Artist, "album", track.Album}
+					line := fmt.Sprintf("%d. %s — %s (%s)", i+1, track.Title, track.Artist, track.Album)
 					if track.PeerId != "" {
-						fields = append(fields, "peer", track.PeerId)
+						line += fmt.Sprintf(" [peer %s]", track.PeerId)
 					}
-					slog.Info("track", fields...)
+					fmt.Fprintln(os.Stdout, line)
 				}
 			}
 			return nil
@@ -346,6 +348,21 @@ func newQueueCmd() *cobra.Command {
 			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
 				return c.QueueClear()
 			}), "queue cleared")
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "remove [position]",
+		Short: "Remove track at position from queue",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			position, err := strconv.Atoi(args[0])
+			if err != nil {
+				return fmt.Errorf("invalid position: %s", args[0])
+			}
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.QueueRemove(int32(position))
+			}), fmt.Sprintf("removed position %d from queue", position))
 		},
 	})
 
@@ -416,7 +433,8 @@ func newLibCmd() *cobra.Command {
 		Short: "Library management",
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	var scanIncremental bool
+	scanCmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Scan library for new tracks",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -425,7 +443,7 @@ func newLibCmd() *cobra.Command {
 				return err
 			}
 
-			_, err = client.LibScanAsync(false, func(progress ipc.ScanProgress) {
+			_, err = client.LibScanAsync(scanIncremental, func(progress ipc.ScanProgress) {
 				if progress.Total > 0 {
 					fmt.Printf("\rScanning: %d/%d files (%s)", progress.Scanned, progress.Total, progress.CurrentFile)
 				}
@@ -437,8 +455,118 @@ func newLibCmd() *cobra.Command {
 			fmt.Println("\nLibrary scan complete")
 			return nil
 		},
-	})
+	}
+	scanCmd.Flags().BoolVar(&scanIncremental, "incremental", false, "only scan new or modified files")
+	cmd.AddCommand(scanCmd)
+
+	var libListLimit int32
+	listCmd := &cobra.Command{
+		Use:   "list", //nolint:goconst // cobra command names are string literals
+		Short: "List tracks in the library",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+
+			resp, err := client.ListTracks(0, libListLimit)
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
+				return errors.New(resp.Error)
+			}
+
+			lt := resp.GetListTracks()
+			if lt == nil {
+				return nil
+			}
+			for _, t := range lt.Tracks {
+				fmt.Fprintf(os.Stdout, "%s\t%s - %s\n", t.Id, t.Title, t.Artist)
+			}
+			return nil
+		},
+	}
+
+	listCmd.Flags().Int32Var(&libListLimit, "limit", 0, "maximum number of tracks to list (0 = all)")
+	cmd.AddCommand(listCmd)
 	return cmd
+}
+
+func newTrackCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "track",
+		Short: "Inspect a library track",
+	}
+
+	var byPath string
+	getCmd := &cobra.Command{
+		Use:   "get [track-id]",
+		Short: "Show a track's details",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+
+			var resp *pb.Response
+			switch {
+			case byPath != "":
+				resp, err = client.GetTrackByPath(byPath)
+			case len(args) == 1:
+				resp, err = client.GetTrack(args[0])
+			default:
+				return fmt.Errorf("provide a track-id or --path")
+			}
+
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
+				return errors.New(resp.Error)
+			}
+
+			gt := resp.GetGetTrack()
+			if gt == nil || gt.Track == nil {
+				return errors.New("no track returned")
+			}
+
+			t := gt.Track
+			fmt.Fprintf(os.Stdout, "ID:       %s\nTitle:    %s\nArtist:   %s\nAlbum:    %s\nDuration: %dms\n",
+				t.Id, t.Title, t.Artist, t.Album, t.DurationMs)
+			return nil
+		},
+	}
+
+	getCmd.Flags().StringVar(&byPath, "path", "", "look up a track by file path")
+	cmd.AddCommand(getCmd)
+	return cmd
+}
+
+func newHealthCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "health",
+		Short: "Check the daemon's health",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+
+			resp, err := client.HealthCheck()
+			if err != nil {
+				return err
+			}
+			if !resp.Success {
+				return errors.New(resp.Error)
+			}
+
+			hc := resp.GetHealthCheck()
+			healthy := hc != nil && hc.Healthy
+			fmt.Fprintf(os.Stdout, "healthy: %v\n", healthy)
+			return nil
+		},
+	}
 }
 
 func newPeersCmd() *cobra.Command {

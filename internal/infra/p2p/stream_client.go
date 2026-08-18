@@ -3,6 +3,7 @@ package p2p
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -363,6 +364,9 @@ func (r *chunkedReader) Read(p []byte) (int, error) {
 		r.pos = 0
 		if resp.LastChunk {
 			r.totalSize = r.offset + int64(len(resp.Data))
+		}
+		if len(resp.Data) == 0 && !resp.LastChunk {
+			return 0, fmt.Errorf("p2p: empty chunk from peer %s at offset %d", r.client.peerID, r.offset)
 		}
 
 		r.offset += int64(len(resp.Data))

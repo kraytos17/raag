@@ -108,6 +108,7 @@ type PlaybackHandler interface {
 	GetVolume() int
 	GetCurrentTrack() *domain.Track
 	GetPosition() time.Duration
+	GetBufferFillLevel() float64
 	OnProgress(callback func(positionMs, durationMs int64))
 }
 
@@ -584,6 +585,13 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 		resp = s.handleQueueRepeat(p.QueueRepeat)
 	case *pb.Request_QueueMode:
 		resp = s.handleQueueMode()
+	case *pb.Request_Subscribe:
+		// The conn was already registered with the SubscriptionManager in
+		// handleConn before dispatch; just acknowledge so the client doesn't
+		// get a bogus "unknown request type" error.
+		resp = &pb.Response{Success: true}
+	case *pb.Request_Empty:
+		resp = &pb.Response{Success: true}
 	case *pb.Request_Unsubscribe:
 		resp = &pb.Response{Success: true}
 	default:
@@ -1054,6 +1062,7 @@ func (s *Server) handleStatus() *pb.Response {
 			Volume:        int32(volume),
 			QueueLength:   int32(queueSize),
 			QueuePosition: int32(queuePos),
+			BufferFill:    float32(s.playback.GetBufferFillLevel()),
 		}},
 	}
 }

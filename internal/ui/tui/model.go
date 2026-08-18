@@ -73,8 +73,6 @@ type Model struct {
 	Reconnecting bool
 	PeerCount    int
 	Volume       int32
-
-	Scanning bool
 }
 
 type PlayerState struct {
@@ -86,6 +84,7 @@ type PlayerState struct {
 	QueuePos     int32
 	Shuffle      bool
 	RepeatMode   string
+	BufferFill   float64
 }
 
 type TrackItem struct {
@@ -331,15 +330,33 @@ func (m *Model) Init() tea.Cmd {
 }
 
 // eventLoop reads events from the subscription and forwards them to the
-// Bubble Tea event loop via the stored program reference.
+// Bubble Tea event loop via the stored program reference. It also watches the
+// subscription's connection state so the "⟳ Reconnecting…" overlay can fire.
 func (m *Model) eventLoop() {
-	for event := range m.EventCh.Events() {
-		msg := m.parseEvent(event)
-		if msg == nil {
-			continue
-		}
-		if m.Program != nil {
+	stateCh := m.EventCh.State()
+	for {
+		select {
+		case event, ok := <-m.EventCh.Events():
+			if !ok {
+				return
+			}
+
+			msg := m.parseEvent(event)
+			if msg == nil || m.Program == nil {
+				continue
+			}
 			m.Program.Send(msg)
+		case state := <-stateCh:
+			if m.Program == nil {
+				continue
+			}
+
+			switch state {
+			case ipc.ConnReconnecting:
+				m.Program.Send(ReconnectingMsg{})
+			case ipc.ConnConnected:
+				m.Program.Send(ConnectedMsg{})
+			}
 		}
 	}
 }
@@ -567,8 +584,10 @@ func (m *Model) handleStatusMsg(msg StatusMsg) []tea.Cmd {
 		if msg.Status.CurrentTrack != nil {
 			m.Player.DurationMs = int64(msg.Status.CurrentTrack.DurationMs)
 		}
+
 		m.Player.QueueLen = msg.Status.QueueLength
 		m.Player.QueuePos = msg.Status.QueuePosition
+		m.Player.BufferFill = float64(msg.Status.BufferFill)
 		m.Volume = msg.Status.Volume
 	}
 
@@ -693,10 +712,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 
 	switch {
 	case key.Matches(msg, keys.Quit):
-		if m.EventCh != nil {
-			_ = m.EventCh.Close()
-		}
-		return []tea.Cmd{tea.Quit}
+		return m.handleQuit()
 	case key.Matches(msg, keys.Help):
 		m.ShowHelp = !m.ShowHelp
 	case key.Matches(msg, keys.Tab):
@@ -742,6 +758,18 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 		cmds = append(cmds, m.cmdQueueRepeat())
 	}
 	return cmds
+}
+
+// handleQuit tears down the IPC subscription and client before quitting so the
+// connection and keepalive goroutine don't leak until process exit
+func (m *Model) handleQuit() []tea.Cmd {
+	if m.EventCh != nil {
+		_ = m.EventCh.Close()
+	}
+	if m.IPCClient != nil {
+		_ = m.IPCClient.Close()
+	}
+	return []tea.Cmd{tea.Quit}
 }
 
 // handleSearchKey processes keys while the search input is focused.

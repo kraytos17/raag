@@ -1054,3 +1054,32 @@ func TestP2PResolver_TryPeers_StreamsRawForDecodableNative(t *testing.T) {
 		t.Errorf("requested codec = %q, want empty (raw stream)", cr.codec)
 	}
 }
+
+func TestP2PResolver_TryPeers_AllBanned_ReturnsError(t *testing.T) {
+	repo := newMockLibraryRepo()
+	host := newMockHost()
+	pool := NewStreamPool(host, "/raag/stream/1.0.0")
+	defer pool.Close()
+
+	scorer := NewPeerScorer()
+	peerMgr := newMockPeerManager()
+
+	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
+	trackID := domain.GenerateTrackID("/music/remote.m4a")
+
+	pid1 := peer.ID("banned-1")
+	pid2 := peer.ID("banned-2")
+	peerMgr.banned[pid1] = true
+	peerMgr.banned[pid2] = true
+
+	reader, err := resolver.tryPeers(context.Background(), trackID, []scoredPeer{
+		{pid: pid1, score: 1},
+		{pid: pid2, score: 1},
+	}, codecAAC)
+	if err == nil {
+		t.Fatal("tryPeers() error = nil, want non-nil when all peers are banned")
+	}
+	if reader != nil {
+		t.Fatalf("tryPeers() reader = %v, want nil", reader)
+	}
+}

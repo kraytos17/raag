@@ -229,6 +229,12 @@ func (r *P2PResolver) tryPeers(ctx context.Context, trackID domain.TrackID, scor
 			peerID:  sp.pid,
 		}, nil
 	}
+	if lastErr == nil {
+		// Every scored peer was banned between scoring and this loop (or there
+		// were none left), so no peer was actually tried — return a real error
+		// instead of a (nil, nil) that would panic/confuse callers.
+		lastErr = errors.New("p2p: no usable peer for track " + string(trackID))
+	}
 	return nil, lastErr
 }
 
