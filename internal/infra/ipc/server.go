@@ -399,14 +399,11 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	slog.Info("IPC server listening", "path", s.socketPath)
-	s.wg.Add(1)
-	go s.acceptLoop(ctx)
+	s.wg.Go(func() { s.acceptLoop(ctx) })
 	return nil
 }
 
 func (s *Server) acceptLoop(ctx context.Context) {
-	defer s.wg.Done()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -430,17 +427,14 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		}
 
 		s.subMgr.Register(conn)
-
-		s.wg.Add(1)
-		go func() {
+		s.wg.Go(func() {
 			defer s.maxConns.Release(1)
 			s.handleConn(ctx, conn)
-		}()
+		})
 	}
 }
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
-	defer s.wg.Done()
 	defer func() {
 		_ = conn.Close()
 		s.subMgr.Unsubscribe(conn)
@@ -463,8 +457,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 		var req pb.Request
 		if err := wire.ReadMsg(conn, &req); err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
+			if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 				slog.Debug("ipc: connection idle timeout", "remote", conn.RemoteAddr())
 				return
 			}

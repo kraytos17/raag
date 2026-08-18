@@ -169,15 +169,13 @@ func BootstrapPeers(ctx context.Context, h host.Host, peers []string) error {
 
 	var wg sync.WaitGroup
 	for _, pi := range addrInfos {
-		wg.Add(1)
-		go func(addr peer.AddrInfo) {
-			defer wg.Done()
+		wg.Go(func() {
 			connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			if err := h.Connect(connectCtx, addr); err != nil {
-				slog.Debug("bootstrap: failed to connect", "peer", addr.ID, "err", err)
+			if err := h.Connect(connectCtx, pi); err != nil {
+				slog.Debug("bootstrap: failed to connect", "peer", pi.ID, "err", err)
 			}
-		}(pi)
+		})
 	}
 	wg.Wait()
 	return nil

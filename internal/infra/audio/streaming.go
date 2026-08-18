@@ -66,8 +66,7 @@ func NewStreamingSource(source io.ReadCloser, bufferSize int) *StreamingSource {
 		seekCh: make(chan seekRequest, 1),
 	}
 
-	ss.wg.Add(1)
-	go ss.fillBuffer()
+	ss.wg.Go(ss.fillBuffer)
 	return ss
 }
 
@@ -83,7 +82,6 @@ func (ss *StreamingSource) signal() {
 }
 
 func (ss *StreamingSource) fillBuffer() {
-	defer ss.wg.Done()
 	buf := make([]byte, 32*1024)
 	shortDeadline := 100 * time.Millisecond
 	for {
@@ -121,13 +119,11 @@ func (ss *StreamingSource) fillBuffer() {
 			}
 		}
 		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
+			if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 				continue
 			}
 			ss.setTerminal(err)
-			// Do not return: a seek may revive a seekable source. The loop's
-			// isTerminal branch parks on seekCh until then.
+			// Do not return: a seek may revive a seekable source.
 		}
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/dhowden/tag"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/audio"
+	"github.com/p-society/raag/internal/infra/fsroot"
 	"github.com/p-society/raag/internal/infra/hashing"
 	"golang.org/x/sync/errgroup"
 )
@@ -74,6 +75,7 @@ type LibraryScanner struct {
 	index          SearchIndex
 	bus            domain.EventBus
 	paths          []string
+	roots          *fsroot.Roots
 	onProgressMu   sync.RWMutex
 	onProgress     []func(ScanProgress)
 	hashWorker     *hashing.HashWorker
@@ -93,6 +95,7 @@ func NewLibraryScanner(
 		index:       index,
 		bus:         bus,
 		paths:       paths,
+		roots:       fsroot.Open(paths),
 	}
 }
 
@@ -110,7 +113,13 @@ func (s *LibraryScanner) HashContent(path string) string {
 		return ""
 	}
 
-	resultCh := s.hashWorker.Submit(path)
+	file, err := s.roots.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+
+	resultCh := s.hashWorker.Submit(file)
 	return <-resultCh
 }
 
@@ -344,7 +353,7 @@ func (s *LibraryScanner) scanDirectory(ctx context.Context, dirPath string, exis
 	for _, file := range files {
 		foundPaths[file] = true
 		if existingPaths[file] {
-			stat, err := os.Stat(file)
+			stat, err := s.roots.Stat(file)
 			if err == nil {
 				existing, err := s.libraryRepo.FindByPath(ctx, file)
 				if err == nil && existing.ModifiedAt == stat.ModTime().Unix() && int64(existing.SizeBytes) == stat.Size() {
@@ -489,7 +498,7 @@ func filenameAsTitle(path string) string {
 }
 
 func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
-	file, err := os.Open(path)
+	file, err := s.roots.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -534,8 +543,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 	track.MimeType = mimeType(filepath.Ext(path))
 	track.Codec = codecFromExtension(filepath.Ext(path))
 	track.ModifiedAt = stat.ModTime().Unix()
-
-	if lf, err := os.Open(path); err == nil {
+	if lf, err := s.roots.Open(path); err == nil {
 		// Best-effort loudness measurement; a failure leaves LoudnessDB at 0
 		// (unknown), which disables loudness normalization for this track.
 		track.LoudnessDB, _ = audio.EstimateLoudnessDB(lf, track.MimeType)
@@ -550,7 +558,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 		hashTimer := time.NewTimer(5 * time.Second)
 		defer hashTimer.Stop()
 
-		resultCh := s.hashWorker.Submit(path)
+		resultCh := s.hashWorker.Submit(file)
 		select {
 		case hash := <-resultCh:
 			if !hashTimer.Stop() {
@@ -559,8 +567,13 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 			track.ContentHash = hash
 		case <-hashTimer.C:
 			slog.Warn("hash worker timed out, using sync fallback", "path", path)
-			if _, err := file.Seek(0, io.SeekStart); err == nil {
-				track.ContentHash = computeSampleHash(file, stat.Size())
+			// The worker may still be reading `file`; hash a fresh scoped open
+			// instead of sharing the in-flight fd.
+			if fb, err := s.roots.Open(path); err == nil {
+				if _, seekErr := fb.Seek(0, io.SeekStart); seekErr == nil {
+					track.ContentHash = computeSampleHash(fb, stat.Size())
+				}
+				_ = fb.Close()
 			}
 		}
 	} else {
@@ -655,7 +668,7 @@ func codecFromExtension(ext string) string {
 }
 
 func (s *LibraryScanner) getFileStat(path string) (*domain.FileStat, error) {
-	stat, err := os.Stat(path)
+	stat, err := s.roots.Stat(path)
 	if err != nil {
 		return nil, err
 	}

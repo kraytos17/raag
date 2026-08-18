@@ -173,9 +173,7 @@ func (r *MultiSourceResolver) SearchRemote(ctx context.Context, query string, li
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, pid := range peers {
-		wg.Add(1)
-		go func(pid domain.PeerID) {
-			defer wg.Done()
+		wg.Go(func() {
 			tracks, err := r.p2p.SearchPeer(ctx, pid, query, limit)
 			if err != nil || len(tracks) == 0 {
 				return
@@ -184,7 +182,7 @@ func (r *MultiSourceResolver) SearchRemote(ctx context.Context, query string, li
 			mu.Lock()
 			hits = append(hits, RemoteSearchHit{PeerID: string(pid), Tracks: tracks})
 			mu.Unlock()
-		}(pid)
+		})
 	}
 	wg.Wait()
 	return hits

@@ -15,6 +15,7 @@ import (
 	protocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/fsroot"
 	"github.com/p-society/raag/internal/infra/transcoder"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
@@ -99,9 +100,11 @@ func genTestWav(t *testing.T) string {
 	return path
 }
 
-func newTestStreamHandler(t *testing.T) *StreamHandler {
+// newTestStreamHandler builds a handler whose roots cover dir (the temp dir
+// holding a generated test track), so serveRaw/serveTranscoded can resolve it.
+func newTestStreamHandler(t *testing.T, dir string) *StreamHandler {
 	t.Helper()
-	h := NewStreamHandler(&testLibrary{})
+	h := NewStreamHandler(&testLibrary{}, fsroot.Open([]string{dir}))
 	h.SetTranscoder(transcoder.New(transcoder.Config{
 		FFmpegPath:    "ffmpeg",
 		StreamCodec:   testCodec,
@@ -112,7 +115,7 @@ func newTestStreamHandler(t *testing.T) *StreamHandler {
 
 func TestServeTranscoded_SetsTotalSize(t *testing.T) {
 	src := genTestWav(t)
-	h := newTestStreamHandler(t)
+	h := newTestStreamHandler(t, filepath.Dir(src))
 	tr := h.Transcoder()
 	track := &domain.Track{
 		ID:    domain.GenerateTrackID(src),
@@ -165,7 +168,7 @@ func TestServeTranscoded_SetsTotalSize(t *testing.T) {
 
 func TestServeTranscoded_CachedByteRangeSeek(t *testing.T) {
 	src := genTestWav(t)
-	h := newTestStreamHandler(t)
+	h := newTestStreamHandler(t, filepath.Dir(src))
 	tr := h.Transcoder()
 	track := &domain.Track{
 		ID:    domain.GenerateTrackID(src),
@@ -235,7 +238,7 @@ var (
 )
 
 func TestStreamHandler_NoRateLimit_WhenZero(t *testing.T) {
-	h := NewStreamHandler(&testLibrary{})
+	h := NewStreamHandler(&testLibrary{}, nil)
 	h.SetRateLimiters(0, 0)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -254,7 +257,7 @@ func TestStreamHandler_NoRateLimit_WhenZero(t *testing.T) {
 }
 
 func TestStreamHandler_RateLimit_RequestsPerPeer(t *testing.T) {
-	h := NewStreamHandler(&testLibrary{})
+	h := NewStreamHandler(&testLibrary{}, nil)
 	// 2 requests/sec per peer with burst = 2.
 	h.SetRateLimiters(2, 0)
 
@@ -291,7 +294,7 @@ func TestStreamHandler_RateLimit_RequestsPerPeer(t *testing.T) {
 }
 
 func TestStreamHandler_RateLimit_UploadBandwidth_Global(t *testing.T) {
-	h := NewStreamHandler(&testLibrary{})
+	h := NewStreamHandler(&testLibrary{}, nil)
 	// 1000 bytes/sec, burst = 1000 (below MaxChunkSize).
 	h.SetRateLimiters(0, 1000)
 
@@ -314,7 +317,7 @@ func TestStreamHandler_RateLimit_UploadBandwidth_Global(t *testing.T) {
 }
 
 func TestStreamHandler_RateLimit_UploadBandwidth_SharedAcrossPeers(t *testing.T) {
-	h := NewStreamHandler(&testLibrary{})
+	h := NewStreamHandler(&testLibrary{}, nil)
 	h.SetRateLimiters(0, 500) // 500 bytes/sec global
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -335,7 +338,7 @@ func TestStreamHandler_RateLimit_UploadBandwidth_SharedAcrossPeers(t *testing.T)
 }
 
 func TestStreamHandler_RateLimit_Upload_Timeout(t *testing.T) {
-	h := NewStreamHandler(&testLibrary{})
+	h := NewStreamHandler(&testLibrary{}, nil)
 	h.SetRateLimiters(0, 100) // 100 bytes/sec
 
 	// Exhaust the budget, then request far more than can refill in time.
@@ -345,5 +348,65 @@ func TestStreamHandler_RateLimit_Upload_Timeout(t *testing.T) {
 	_ = h.waitUpload(context.Background(), 100)
 	if err := h.waitUpload(ctx, 100000); err == nil {
 		t.Fatal("waitUpload() with tiny budget and deadline: expected error, got nil")
+	}
+}
+
+// TestServeRaw_SymlinkEscape verifies serveRaw refuses a track whose path
+// escapes the library root via a symlink (os.Root hardening).
+func TestServeRaw_SymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.mp3")
+	if err := os.WriteFile(secret, []byte("not audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(root, "escape.mp3")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	lib := &testLibrary{}
+	h := NewStreamHandler(lib, fsroot.Open([]string{root}))
+	track := &domain.Track{ID: domain.GenerateTrackID(link), Path: link}
+	stream := &recordingStream{}
+	h.serveRaw(context.Background(), stream, track, &pb.ChunkRequest{
+		TrackId: string(track.ID),
+		Length:  16,
+	})
+
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatal("serveRaw(symlink escape) returned no error, want an error response")
+	}
+}
+
+// TestServeRaw_OutsideRoot verifies serveRaw rejects a path outside every
+// configured library root, even without a symlink.
+func TestServeRaw_OutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	evil := filepath.Join(outside, "evil.mp3")
+	if err := os.WriteFile(evil, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewStreamHandler(&testLibrary{}, fsroot.Open([]string{root}))
+	track := &domain.Track{ID: domain.GenerateTrackID(evil), Path: evil}
+	stream := &recordingStream{}
+	h.serveRaw(context.Background(), stream, track, &pb.ChunkRequest{
+		TrackId: string(track.ID),
+		Length:  16,
+	})
+
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatal("serveRaw(outside root) returned no error, want an error response")
 	}
 }

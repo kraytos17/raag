@@ -10,7 +10,7 @@ import (
 )
 
 type hashJob struct {
-	path   string
+	file   *os.File
 	result chan<- string
 }
 
@@ -33,10 +33,14 @@ func NewHashWorker(workers int) *HashWorker {
 	}
 }
 
-func (w *HashWorker) Submit(path string) <-chan string {
+// Submit queues an already-open file to be hashed. The worker hashes the file
+// from the start; the caller retains ownership and must close the file. The
+// returned channel yields the SHA-256 hex digest ("" on failure) and is closed
+// after delivery.
+func (w *HashWorker) Submit(file *os.File) <-chan string {
 	result := make(chan string, 1)
 	select {
-	case w.queue <- hashJob{path: path, result: result}:
+	case w.queue <- hashJob{file: file, result: result}:
 	case <-w.done:
 		close(result)
 	}
@@ -45,19 +49,17 @@ func (w *HashWorker) Submit(path string) <-chan string {
 
 func (w *HashWorker) Start() {
 	for range w.workers {
-		w.wg.Add(1)
-		go w.worker()
+		w.wg.Go(w.worker)
 	}
 }
 
 func (w *HashWorker) worker() {
-	defer w.wg.Done()
 	for {
 		select {
 		case <-w.done:
 			return
 		case job := <-w.queue:
-			job.result <- computeFileHash(job.path)
+			job.result <- computeFileHash(job.file)
 			close(job.result)
 		}
 	}
@@ -68,21 +70,17 @@ func (w *HashWorker) Close() {
 	w.wg.Wait()
 }
 
-func computeFileHash(path string) string {
-	file, err := os.Open(path)
-	if err != nil {
-		slog.Debug("failed to open file for hashing", "path", path, "error", err)
+// computeFileHash hashes the file from its start, resetting the file position
+// first. The caller owns and closes the file.
+func computeFileHash(file *os.File) string {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		slog.Debug("failed to seek file for hashing", "error", err)
 		return ""
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			slog.Debug("failed to close file after hashing", "path", path, "error", err)
-		}
-	}()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
-		slog.Debug("failed to hash file", "path", path, "error", err)
+		slog.Debug("failed to hash file", "error", err)
 		return ""
 	}
 	return hex.EncodeToString(hash.Sum(nil))
