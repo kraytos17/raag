@@ -47,6 +47,9 @@ func newQueueCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid position: %s", args[0])
 			}
+			if position < 0 {
+				return fmt.Errorf("position must be non-negative")
+			}
 			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
 				return c.QueueRemove(int32(position))
 			}), fmt.Sprintf("removed position %d from queue", position))

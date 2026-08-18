@@ -104,8 +104,9 @@ func (m *Metrics) Start(ctx context.Context, addr, path string) error {
 	mux := http.NewServeMux()
 	mux.Handle(path, promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{}))
 	m.server = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	ln, err := net.Listen("tcp", addr)

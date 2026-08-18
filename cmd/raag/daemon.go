@@ -105,7 +105,7 @@ func runDaemonStart(cmd *cobra.Command, _ []string) error {
 		logPath = filepath.Join(filepath.Dir(cfg.Daemon.PidFile), "raagd.log")
 	}
 
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to open daemon log: %w", err)
 	}

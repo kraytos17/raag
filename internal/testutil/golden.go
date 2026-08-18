@@ -38,10 +38,10 @@ func (g *GoldenFile) ReadString(t *testing.T) string {
 
 func (g *GoldenFile) Update(t *testing.T, data []byte) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(g.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(g.path), 0o700); err != nil {
 		t.Fatalf("failed to create golden directory: %v", err)
 	}
-	if err := os.WriteFile(g.path, data, 0o644); err != nil {
+	if err := os.WriteFile(g.path, data, 0o600); err != nil {
 		t.Fatalf("failed to write golden file: %v", err)
 	}
 }
