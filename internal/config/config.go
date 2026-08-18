@@ -292,6 +292,8 @@ func RunSetup() error {
 			MaxKnownPeers:    100,
 			ChunkSize:        256 * 1024,
 			PeerDataTTL:      24 * time.Hour,
+			BroadcastEnabled: true,
+			BroadcastPort:    DefaultBroadcastPort,
 		},
 		Transcoder: TranscoderConfig{
 			FFmpegPath:    "ffmpeg",
@@ -388,6 +390,8 @@ type P2PConfig struct {
 	MaxKnownPeers      int           `mapstructure:"max_known_peers"`
 	ChunkSize          int           `mapstructure:"chunk_size"`
 	PeerDataTTL        time.Duration `mapstructure:"peer_data_ttl"`
+	BroadcastEnabled   bool          `mapstructure:"broadcast_enabled"`
+	BroadcastPort      int           `mapstructure:"broadcast_port"`
 }
 
 type TranscoderConfig struct {

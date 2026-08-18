@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 const (
@@ -262,5 +264,17 @@ func TestErrNoMusicPath(t *testing.T) {
 	}
 	if ErrNoMusicPath.Error() == "" {
 		t.Error("ErrNoMusicPath should have message")
+	}
+}
+
+func TestP2PDefaults_Broadcast(t *testing.T) {
+	v := viper.New()
+	setDefaults(v)
+
+	if got := v.GetBool("p2p.broadcast_enabled"); !got {
+		t.Errorf("p2p.broadcast_enabled default = %v, want true", got)
+	}
+	if got := v.GetInt("p2p.broadcast_port"); got != DefaultBroadcastPort {
+		t.Errorf("p2p.broadcast_port default = %d, want %d", got, DefaultBroadcastPort)
 	}
 }
