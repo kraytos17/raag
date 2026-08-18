@@ -253,14 +253,10 @@ func requestedCodecFor(nativeCodec string, sp scoredPeer) string {
 }
 
 // isLocallyDecodable reports whether the local engine's decode() can handle the
-// given codec, mirroring codecFromExtension's outputs and the engine's decode switch.
+// given codec, mirroring codecFromExtension's outputs and the engine's decode
+// switch. Delegates to the domain-level helper so the set stays in one place.
 func isLocallyDecodable(codec string) bool {
-	switch codec {
-	case codecMP3, codecFlac, codecVorbis, codecPCM:
-		return true
-	default:
-		return false
-	}
+	return domain.CodecDecodable(codec)
 }
 
 type streamingReader struct {

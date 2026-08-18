@@ -36,6 +36,12 @@ type ScanProgress struct {
 
 const mimeTypeMPEG = "audio/mpeg"
 
+const (
+	mimeTypeAAC = "audio/aac"
+	codecMP3    = "mp3"
+	codecAAC    = "aac"
+)
+
 func WalkAudioFiles(ctx context.Context, dirPath string) iter.Seq2[string, error] {
 	return func(yield func(string, error) bool) {
 		_ = filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
@@ -617,7 +623,7 @@ func mimeType(ext string) string {
 	case ".m4a":
 		return "audio/mp4"
 	case ".aac":
-		return "audio/aac"
+		return mimeTypeAAC
 	case ".opus":
 		return "audio/opus"
 	case ".wma":
@@ -630,7 +636,7 @@ func mimeType(ext string) string {
 func codecFromExtension(ext string) string {
 	switch strings.ToLower(ext) {
 	case ".mp3":
-		return "mp3"
+		return codecMP3
 	case ".flac":
 		return "flac"
 	case ".ogg":
@@ -638,7 +644,7 @@ func codecFromExtension(ext string) string {
 	case ".wav":
 		return "pcm"
 	case ".m4a", ".aac":
-		return "aac"
+		return codecAAC
 	case ".opus":
 		return "opus"
 	case ".wma":

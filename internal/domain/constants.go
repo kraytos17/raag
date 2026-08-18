@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"slices"
 	"time"
 )
 
@@ -19,6 +20,17 @@ var AudioExtensions = []string{
 // Note: .m4a/.aac/.opus/.wma remain scannable/indexable (AudioExtensions) but
 // are NOT advertised as playable here.
 var PlayableCodecs = []string{"mp3", "flac", "ogg", "wav"}
+
+// decodableCodecs are the codec names the local engine's decode() handles, as
+// produced by codecFromExtension (internal/app/scanner.go). They differ from
+// PlayableCodecs: .ogg→"vorbis", .wav→"pcm".
+var decodableCodecs = []string{"mp3", "flac", "vorbis", "pcm"}
+
+// CodecDecodable reports whether the local engine can decode the given codec
+// natively (mirrors engine.go decode's switch).
+func CodecDecodable(codec string) bool {
+	return slices.Contains(decodableCodecs, codec)
+}
 
 type PlaybackEvent string
 

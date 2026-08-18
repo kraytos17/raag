@@ -52,6 +52,8 @@ func run() int {
 		newLibCmd(),
 		newTrackCmd(),
 		newHealthCmd(),
+		newDaemonCmd(),
+		newDebugCmd(),
 		newPeersCmd(),
 		newNetworkCmd(),
 		newPlaylistCmd(),

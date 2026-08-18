@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
 
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/transcoder"
 )
 
 type TrackSource int
@@ -31,10 +33,15 @@ type Resolver interface {
 
 type LocalResolver struct {
 	libraryRepo LibraryRepository
+	transcoder  *transcoder.Transcoder
 }
 
-func NewLocalResolver(libraryRepo LibraryRepository) *LocalResolver {
-	return &LocalResolver{libraryRepo: libraryRepo}
+// defaultLocalTranscodeBitrate is used when transcoding a non-decodable local
+// file (e.g. .m4a) to mp3 for playback. Matches the P2P transcode path.
+const defaultLocalTranscodeBitrate = "128k"
+
+func NewLocalResolver(libraryRepo LibraryRepository, tr *transcoder.Transcoder) *LocalResolver {
+	return &LocalResolver{libraryRepo: libraryRepo, transcoder: tr}
 }
 
 func (r *LocalResolver) Resolve(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
@@ -50,6 +57,32 @@ func (r *LocalResolver) Resolve(ctx context.Context, trackID domain.TrackID) (*R
 		}
 		return nil, err
 	}
+
+	// Local files whose codec the engine can't decode (e.g. .m4a/.aac/.opus/.wma)
+	// are transcoded to mp3 via ffmpeg so they play locally, mirroring the P2P
+	// transcode path. Without a transcoder, the raw file is returned (the
+	// engine will fail to decode it).
+	if r.transcoder != nil && !domain.CodecDecodable(track.Codec) {
+		tmpPath, err := r.transcoder.TranscodeToFile(ctx, track.Path, codecMP3, defaultLocalTranscodeBitrate)
+		if err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("local transcode failed: %w", err)
+		}
+		_ = file.Close()
+
+		tmp, err := os.Open(tmpPath)
+		if err != nil {
+			return nil, fmt.Errorf("open transcoded file: %w", err)
+		}
+		track.MimeType = mimeTypeMPEG
+		track.Codec = codecMP3
+		return &ResolvedTrack{
+			Reader: tmp,
+			Source: SourceLocal,
+			Track:  track,
+		}, nil
+	}
+
 	return &ResolvedTrack{
 		Reader: file,
 		Source: SourceLocal,
@@ -86,9 +119,9 @@ type MultiSourceResolver struct {
 	p2p   P2PResolverAdapter
 }
 
-func NewMultiSourceResolver(libraryRepo LibraryRepository, p2pResolver P2PResolverAdapter) Resolver {
+func NewMultiSourceResolver(libraryRepo LibraryRepository, p2pResolver P2PResolverAdapter, tr *transcoder.Transcoder) Resolver {
 	return &MultiSourceResolver{
-		local: NewLocalResolver(libraryRepo),
+		local: NewLocalResolver(libraryRepo, tr),
 		p2p:   p2pResolver,
 	}
 }
