@@ -130,6 +130,15 @@ type EqualizerSettings struct {
 	Treble  float64 // dB, [-12, 12]
 }
 
+// EQPresets are the tunable EQ presets cycled by the TUI (and reusable by the
+// CLI). All bands are within the ±12 dB validation range.
+var EQPresets = []EqualizerSettings{
+	{Enabled: true, Bass: 0, Mid: 0, Treble: 0}, // flat
+	{Enabled: true, Bass: 4, Mid: 0, Treble: 0}, // bass
+	{Enabled: true, Bass: 2, Mid: 1, Treble: 3}, // rock
+	{Enabled: true, Bass: 0, Mid: 0, Treble: 4}, // treble
+}
+
 type QueueUpdatedPayload struct {
 	Action   QueueAction
 	TrackID  TrackID

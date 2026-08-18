@@ -116,6 +116,10 @@ type Player interface {
 	SetLoudness(db float64)
 	SetEqualizer(settings domain.EqualizerSettings)
 	GetEqualizer() domain.EqualizerSettings
+	Prepare(reader io.Reader, mimeType string) error
+	PrepareStreaming(source audio.AudioSource, mimeType string) error
+	HasNext() bool
+	CommitNext() error
 	GetState() domain.PlayerState
 	GetPosition() time.Duration
 	GetBufferFillLevel() float64

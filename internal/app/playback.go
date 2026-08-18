@@ -21,6 +21,7 @@ type PlaybackController struct {
 	bus           domain.EventBus
 	fsm           *PlaybackFSM
 	currentTrack  *domain.Track
+	preparedTrack *domain.Track
 	volume        int
 	queue         Queue
 	advanceCancel context.CancelFunc
@@ -107,6 +108,11 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 		c.currentTrack = nil
 		c.mu.Unlock()
 		return playErr
+	}
+
+	// Best-effort gapless preload of the next local queue item.
+	if resolved.Source == SourceLocal {
+		c.preloadNext(ctx)
 	}
 	// EventBufferReady leaves the Buffering state entered on EventPlay above.
 	// For P2P this transition is real: WaitReady blocked until PreRollBytes of
@@ -321,6 +327,41 @@ func (c *PlaybackController) SetQueue(q Queue) {
 	c.queue = q
 }
 
+// preloadNext resolves the next queue item and prepares it for gapless commit.
+// Local sources only (v1); P2P sources are skipped because their buffering
+// semantics conflict with pre-decode. Best-effort: failures leave the fallback
+// `Play(next)` path intact.
+func (c *PlaybackController) preloadNext(ctx context.Context) {
+	c.mu.RLock()
+	queue := c.queue
+	c.mu.RUnlock()
+	if queue == nil {
+		return
+	}
+
+	next := queue.Peek()
+	if next == nil {
+		return
+	}
+
+	resolved, err := c.resolver.Resolve(ctx, next.ID)
+	if err != nil {
+		return
+	}
+	defer func() { _ = resolved.Reader.Close() }()
+
+	if resolved.Source != SourceLocal {
+		return
+	}
+	if err := c.player.Prepare(resolved.Reader, next.MimeType); err != nil {
+		return
+	}
+
+	c.mu.Lock()
+	c.preparedTrack = next
+	c.mu.Unlock()
+}
+
 func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 	if c.advanceCancel != nil {
 		c.advanceCancel()
@@ -355,6 +396,33 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 				Completed: true,
 			}))
 		}
+
+		// Gapless path: a next track was preloaded. Commit it in place (state
+		// stays Playing, no Idle hop / EventEOF), then re-arm the watcher for
+		// the new track's end.
+		if c.player.HasNext() {
+			if err := c.player.CommitNext(); err == nil {
+				c.mu.Lock()
+				next := c.preparedTrack
+				c.preparedTrack = nil
+				c.currentTrack = next
+				c.mu.Unlock()
+				if next != nil {
+					c.bus.Publish(watchCtx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
+						TrackID:  next.ID,
+						Duration: next.Duration(),
+					}))
+				}
+				c.startAdvanceWatcher(watchCtx)
+				return
+			}
+		}
+		// Fallback: nothing was prepared (or commit failed). Hard-stop and
+		// play the next queue item as before.
+		_ = c.player.CommitNext() // clear any partially prepared state
+		c.mu.Lock()
+		c.preparedTrack = nil
+		c.mu.Unlock()
 
 		_ = c.fsm.Send(watchCtx, domain.EventEOF)
 		c.mu.Lock()
@@ -453,12 +521,13 @@ func (c *PlaybackController) startProgressTicker(ctx context.Context) {
 		c.progressTicker.Stop()
 	}
 
-	c.progressTicker = time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	c.progressTicker = ticker
 	c.mu.Unlock()
 	go func() {
 		for {
 			select {
-			case <-c.progressTicker.C:
+			case <-ticker.C:
 				state := c.fsm.State()
 				if state != domain.PlayerStatePlaying {
 					continue

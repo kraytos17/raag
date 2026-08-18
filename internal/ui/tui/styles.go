@@ -84,6 +84,13 @@ var (
 			Margin(1).
 			MaxWidth(100)
 
+	eqStyle = lipgloss.NewStyle().
+		Foreground(accentColor).
+		Background(surfaceColor).
+		Padding(1, 2).
+		Margin(1).
+		MaxWidth(100)
+
 	searchStyle = lipgloss.NewStyle().
 			Foreground(textColor).
 			Background(surfaceColor).

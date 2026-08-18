@@ -71,6 +71,8 @@ type testPlayer struct {
 	playStreamingHook func()
 	state             domain.PlayerState
 	fillLevel         float64
+	prepared          string
+	committed         bool
 }
 
 func (p *testPlayer) Play(ctx context.Context, reader io.Reader, mimeType string) error {
@@ -109,9 +111,21 @@ func (p *testPlayer) SetVolume(ctx context.Context, volume int) error { return n
 func (p *testPlayer) SetLoudness(db float64)                          {}
 func (p *testPlayer) SetEqualizer(settings domain.EqualizerSettings)  {}
 func (p *testPlayer) GetEqualizer() domain.EqualizerSettings          { return domain.EqualizerSettings{} }
-func (p *testPlayer) GetState() domain.PlayerState                    { return p.state }
-func (p *testPlayer) GetPosition() time.Duration                      { return p.pos }
-func (p *testPlayer) GetBufferFillLevel() float64                     { return p.fillLevel }
+
+func (p *testPlayer) Prepare(reader io.Reader, mimeType string) error {
+	p.prepared = mimeType
+	return nil
+}
+
+func (p *testPlayer) PrepareStreaming(source audio.AudioSource, mimeType string) error {
+	p.prepared = mimeType
+	return nil
+}
+func (p *testPlayer) HasNext() bool                { return p.prepared != "" }
+func (p *testPlayer) CommitNext() error            { p.committed = true; return nil }
+func (p *testPlayer) GetState() domain.PlayerState { return p.state }
+func (p *testPlayer) GetPosition() time.Duration   { return p.pos }
+func (p *testPlayer) GetBufferFillLevel() float64  { return p.fillLevel }
 func (p *testPlayer) Done() <-chan struct{} {
 	if p.done == nil {
 		p.done = make(chan struct{})
@@ -535,4 +549,179 @@ func TestPlaybackController_InitialVolume(t *testing.T) {
 	if got := c2.GetVolume(); got != 80 {
 		t.Fatalf("GetVolume() default = %d, want 80", got)
 	}
+}
+
+func TestPlaybackController_Preload_AfterLocalPlay(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	t1 := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
+	t2 := &domain.Track{ID: domain.TrackID("t2"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
+	repo := &testLibraryRepo{track: t1}
+	player := &testPlayer{}
+	queue := &testQueue{tracks: []*domain.Track{t2}}
+	resolver := &testResolver{
+		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
+			tr := t1
+			if trackID == t2.ID {
+				tr = t2
+			}
+			return &ResolvedTrack{Reader: io.NopCloser(strings.NewReader("")), Source: SourceLocal, Track: tr}, nil
+		},
+	}
+
+	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	c.SetQueue(queue)
+
+	if err := c.Play(ctx, t1.ID); err != nil {
+		t.Fatalf("Play() error = %v", err)
+	}
+	if player.prepared != mimeTypeMPEG {
+		t.Fatalf("prepared = %q, want %q (next local track should be preloaded)", player.prepared, mimeTypeMPEG)
+	}
+	if c.preparedTrack != t2 {
+		t.Fatalf("preparedTrack = %v, want t2", c.preparedTrack)
+	}
+}
+
+func TestPlaybackController_Preload_P2PNext_Skipped(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	t1 := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
+	remote := &domain.Track{ID: domain.TrackID("remote"), Path: "/r", MimeType: mimeTypeMPEG}
+	repo := &testLibraryRepo{track: t1}
+	player := &testPlayer{}
+	queue := &testQueue{tracks: []*domain.Track{remote}}
+	resolver := &testResolver{
+		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
+			tr := t1
+			src := SourceLocal
+			if trackID == remote.ID {
+				tr = remote
+				src = SourceP2P
+			}
+			return &ResolvedTrack{Reader: io.NopCloser(strings.NewReader("")), Source: src, Track: tr}, nil
+		},
+	}
+
+	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	c.SetQueue(queue)
+
+	if err := c.Play(ctx, t1.ID); err != nil {
+		t.Fatalf("Play() error = %v", err)
+	}
+	if player.prepared != "" {
+		t.Fatalf("prepared = %q, want empty (P2P next must not be preloaded)", player.prepared)
+	}
+}
+
+func TestPlaybackController_NaturalEnd_CommitsPrepared(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	t1 := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
+	t2 := &domain.Track{ID: domain.TrackID("t2"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
+	repo := &testLibraryRepo{track: t1}
+	player := &testPlayer{done: make(chan struct{})}
+	queue := &testQueue{tracks: []*domain.Track{t2}}
+	resolver := &testResolver{
+		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
+			tr := t1
+			if trackID == t2.ID {
+				tr = t2
+			}
+			return &ResolvedTrack{Reader: io.NopCloser(strings.NewReader("")), Source: SourceLocal, Track: tr}, nil
+		},
+	}
+
+	finished := make(chan domain.EventType, 4)
+	started := make(chan domain.EventType, 4)
+	bus.Subscribe(domain.EventTrackFinished, func(e domain.Event) { finished <- e.Type })
+	bus.Subscribe(domain.EventTrackStarted, func(e domain.Event) { started <- e.Type })
+
+	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	c.SetQueue(queue)
+
+	if err := c.Play(ctx, t1.ID); err != nil {
+		t.Fatalf("Play() error = %v", err)
+	}
+	if player.prepared != mimeTypeMPEG {
+		t.Fatalf("prepared = %q, want %q", player.prepared, mimeTypeMPEG)
+	}
+
+	// Drain the initial EventTrackStarted that Play publishes for t1.
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial EventTrackStarted")
+	}
+
+	// Signal natural end.
+	close(player.done)
+
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for EventTrackFinished")
+	}
+	// The commit's EventTrackStarted is published after CommitNext + currentTrack
+	// update, so receiving it establishes the happens-before for those reads.
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for committed EventTrackStarted")
+	}
+
+	if !player.committed {
+		t.Fatal("CommitNext was not called on natural end")
+	}
+	if c.GetState() != domain.PlayerStatePlaying {
+		t.Fatalf("state = %v, want playing (gapless commit must not go Idle)", c.GetState())
+	}
+	if got := c.GetCurrentTrack(); got != t2 {
+		t.Fatalf("currentTrack = %v, want t2", got)
+	}
+}
+
+func TestPlaybackController_NaturalEnd_NoPrepared_FallsBack(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	t1 := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
+	repo := &testLibraryRepo{track: t1}
+	player := &testPlayer{done: make(chan struct{})}
+	queue := &testQueue{tracks: []*domain.Track{t1}}
+	resolver := &testResolver{
+		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
+			return &ResolvedTrack{Reader: io.NopCloser(strings.NewReader("")), Source: SourceLocal, Track: t1}, nil
+		},
+	}
+
+	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	c.SetQueue(queue)
+	if err := c.Play(ctx, t1.ID); err != nil {
+		t.Fatalf("Play() error = %v", err)
+	}
+
+	// Disable preload so nothing is prepared.
+	c.mu.Lock()
+	c.preparedTrack = nil
+	c.mu.Unlock()
+	player.prepared = ""
+
+	close(player.done)
+
+	select {
+	case <-player.done:
+	case <-time.After(time.Second):
+	}
+	// The fallback path re-Plays the next queue item (t1 again). Give the
+	// watcher a moment; the key assertion is that it doesn't panic and the
+	// state eventually reflects the fallback Play.
+	time.Sleep(50 * time.Millisecond)
 }

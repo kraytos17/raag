@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/ipc"
 	pb "github.com/p-society/raag/proto/gen"
 )
@@ -65,10 +66,11 @@ type Model struct {
 	HelpViewport viewport.Model
 	ShowHelp     bool
 	ShowLyrics   bool
+	ShowEq       bool
+	EQ           domain.EqualizerSettings
 
 	Player PlayerState
-
-	Err error
+	Err    error
 
 	Connected    bool
 	Reconnecting bool
@@ -718,41 +720,22 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 		m.ShowHelp = !m.ShowHelp
 	case key.Matches(msg, keys.Lyrics):
 		m.ShowLyrics = !m.ShowLyrics
+	case key.Matches(msg, keys.Eq):
+		m.ShowEq = !m.ShowEq
+	case key.Matches(msg, keys.EqCycle):
+		cmds = append(cmds, m.cmdCycleEQ())
 	case key.Matches(msg, keys.Tab):
 		m.ActivePanel = (m.ActivePanel + 1) % 4
 	case key.Matches(msg, keys.Search):
 		m.InSearch = true
 		m.SearchInput.Focus()
-	case key.Matches(msg, keys.PlayPause):
-		if m.Player.State == StatePlaying {
-			cmds = append(cmds, m.cmdPause())
-		} else {
-			cmds = append(cmds, m.cmdResume())
-		}
-	case key.Matches(msg, keys.Next):
-		cmds = append(cmds, m.cmdNext())
-	case key.Matches(msg, keys.Prev):
-		cmds = append(cmds, m.cmdPrev())
-	case key.Matches(msg, keys.Stop):
-		cmds = append(cmds, m.cmdStop())
-	case key.Matches(msg, keys.SeekFwd):
-		cmds = append(cmds, m.cmdSeek(10000))
-	case key.Matches(msg, keys.SeekBack):
-		cmds = append(cmds, m.cmdSeek(-10000))
-	case key.Matches(msg, keys.VolUp):
-		cmds = append(cmds, m.cmdVolume(5))
-	case key.Matches(msg, keys.VolDown):
-		cmds = append(cmds, m.cmdVolume(-5))
-	case key.Matches(msg, keys.Enter):
-		if m.ActivePanel == PanelPlaylists {
-			cmds = append(cmds, m.cmdShowSelectedPlaylist())
-		} else {
-			cmds = append(cmds, m.cmdPlaySelected())
-		}
-	case key.Matches(msg, keys.Delete):
-		if m.ActivePanel == PanelQueue {
-			cmds = append(cmds, m.cmdQueueRemove())
-		}
+	case key.Matches(msg, keys.PlayPause), key.Matches(msg, keys.Next),
+		key.Matches(msg, keys.Prev), key.Matches(msg, keys.Stop),
+		key.Matches(msg, keys.SeekFwd), key.Matches(msg, keys.SeekBack),
+		key.Matches(msg, keys.VolUp), key.Matches(msg, keys.VolDown):
+		cmds = append(cmds, m.handleTransportKey(msg, keys)...)
+	case key.Matches(msg, keys.Enter), key.Matches(msg, keys.Delete):
+		cmds = append(cmds, m.handlePanelKey(msg, keys)...)
 	case key.Matches(msg, keys.Refresh):
 		cmds = append(cmds, m.fetchLibrary(), m.fetchQueue(), m.fetchQueueMode(), m.fetchPeers(), m.fetchPlaylists())
 	case key.Matches(msg, keys.Shuffle):
@@ -761,6 +744,49 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) []tea.Cmd {
 		cmds = append(cmds, m.cmdQueueRepeat())
 	}
 	return cmds
+}
+
+// handleTransportKey maps playback transport keys (play/pause, next/prev,
+// stop, seek, volume) to commands.
+func (m *Model) handleTransportKey(msg tea.KeyPressMsg, keys KeyMap) []tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.PlayPause):
+		if m.Player.State == StatePlaying {
+			return []tea.Cmd{m.cmdPause()}
+		}
+		return []tea.Cmd{m.cmdResume()}
+	case key.Matches(msg, keys.Next):
+		return []tea.Cmd{m.cmdNext()}
+	case key.Matches(msg, keys.Prev):
+		return []tea.Cmd{m.cmdPrev()}
+	case key.Matches(msg, keys.Stop):
+		return []tea.Cmd{m.cmdStop()}
+	case key.Matches(msg, keys.SeekFwd):
+		return []tea.Cmd{m.cmdSeek(10000)}
+	case key.Matches(msg, keys.SeekBack):
+		return []tea.Cmd{m.cmdSeek(-10000)}
+	case key.Matches(msg, keys.VolUp):
+		return []tea.Cmd{m.cmdVolume(5)}
+	case key.Matches(msg, keys.VolDown):
+		return []tea.Cmd{m.cmdVolume(-5)}
+	}
+	return nil
+}
+
+// handlePanelKey maps panel-scoped keys (Enter, Delete) to commands.
+func (m *Model) handlePanelKey(msg tea.KeyPressMsg, keys KeyMap) []tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Enter):
+		if m.ActivePanel == PanelPlaylists {
+			return []tea.Cmd{m.cmdShowSelectedPlaylist()}
+		}
+		return []tea.Cmd{m.cmdPlaySelected()}
+	case key.Matches(msg, keys.Delete):
+		if m.ActivePanel == PanelQueue {
+			return []tea.Cmd{m.cmdQueueRemove()}
+		}
+	}
+	return nil
 }
 
 // handleQuit tears down the IPC subscription and client before quitting so the
@@ -815,6 +841,16 @@ func (m *Model) fetchInitialData() tea.Cmd {
 		}
 		if !resp.Success {
 			return StatusMsg{Err: fmt.Errorf("%s", resp.Error)}
+		}
+		if eqResp, err := m.IPCClient.GetEqualizer(); err == nil && eqResp.Success {
+			if eq := eqResp.GetEqualizer(); eq != nil {
+				m.EQ = domain.EqualizerSettings{
+					Enabled: eq.Enabled,
+					Bass:    float64(eq.BassDb),
+					Mid:     float64(eq.MidDb),
+					Treble:  float64(eq.TrebleDb),
+				}
+			}
 		}
 		return StatusMsg{Status: resp.GetStatus()}
 	}
@@ -1091,6 +1127,29 @@ func (m *Model) cmdQueueRepeat() tea.Cmd {
 	}
 }
 
+// cmdCycleEQ cycles to the next EQ preset and applies it via IPC.
+func (m *Model) cmdCycleEQ() tea.Cmd {
+	return func() tea.Msg {
+		idx := 0
+		for i, p := range domain.EQPresets {
+			if p == m.EQ {
+				idx = (i + 1) % len(domain.EQPresets)
+				break
+			}
+		}
+
+		next := domain.EQPresets[idx]
+		_, err := m.IPCClient.SetEqualizer(next.Enabled, next.Bass, next.Mid, next.Treble)
+		if err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+
+		m.EQ = next
+		m.ShowEq = true
+		return nil
+	}
+}
+
 // View renders the entire TUI.
 func (m *Model) View() tea.View {
 	content := m.renderContent()
@@ -1134,6 +1193,15 @@ func (m *Model) renderContent() string {
 				lipgloss.Left,
 				lists,
 				lyrics,
+			)
+		}
+	}
+	if m.ShowEq {
+		if eq := m.renderEQ(); eq != "" {
+			lists = lipgloss.JoinVertical(
+				lipgloss.Left,
+				lists,
+				eq,
 			)
 		}
 	}

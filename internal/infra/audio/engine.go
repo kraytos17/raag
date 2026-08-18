@@ -63,6 +63,10 @@ type Engine struct {
 	desiredVolume int
 	audioSource   AudioSource
 	fading        bool
+
+	nextStreamer beep.StreamSeekCloser
+	nextFormat   beep.Format
+	nextSource   AudioSource
 }
 
 // NewEngine creates an audio engine. bufferSize is the speaker buffer in
@@ -201,6 +205,107 @@ func (e *Engine) startChainLocked(streamer beep.StreamSeekCloser, format beep.Fo
 	e.position = 0
 }
 
+// Prepare decodes the next track into a pre-decode slot without touching the
+// speaker, enabling gapless playback via CommitNext at natural end. Any
+// previously prepared streamer is closed (idempotent replace).
+func (e *Engine) Prepare(reader io.Reader, mimeType string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	rc, err := ensureReadSeekCloser(reader)
+	if err != nil {
+		return fmt.Errorf("prepare: failed to read audio data: %w", err)
+	}
+	streamer, format, err := decode(rc, mimeType)
+	if err != nil {
+		return fmt.Errorf("prepare: decode failed: %w", err)
+	}
+	e.setPreparedLocked(streamer, format, nil)
+	return nil
+}
+
+// PrepareStreaming is the streaming variant of Prepare (kept for interface
+// symmetry; gapless v1 uses local sources only).
+func (e *Engine) PrepareStreaming(source AudioSource, mimeType string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	streamer, format, err := decode(source, mimeType)
+	if err != nil {
+		_ = source.Close()
+		return fmt.Errorf("prepare: decode failed: %w", err)
+	}
+	e.setPreparedLocked(streamer, format, source)
+	return nil
+}
+
+// setPreparedLocked stores a freshly decoded streamer as the gapless next
+// track, closing any previous prepared streamer. Caller must hold e.mu.
+func (e *Engine) setPreparedLocked(streamer beep.StreamSeekCloser, format beep.Format, source AudioSource) {
+	if e.nextStreamer != nil {
+		_ = e.nextStreamer.Close()
+	}
+	if e.nextSource != nil {
+		_ = e.nextSource.Close()
+	}
+	e.nextStreamer = streamer
+	e.nextFormat = format
+	e.nextSource = source
+}
+
+// HasNext reports whether a track has been prepared for gapless commit.
+func (e *Engine) HasNext() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.nextStreamer != nil
+}
+
+// CommitNext swaps the prepared track into the running chain at the natural end
+// of the current track, with no sample gap.
+func (e *Engine) CommitNext() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.commitNextLocked()
+	return nil
+}
+
+// CommitNext swaps the prepared track into the running chain without clearing
+// the speaker, so playback continues at the sample boundary with no gap. No-op
+// when nothing is prepared. Does not signal done (the new streamer's own EOF
+// will, via the existing Seq callback). Caller must hold e.mu.
+func (e *Engine) commitNextLocked() {
+	if e.nextStreamer == nil {
+		return
+	}
+
+	// Close the current streamer/source.
+	if e.streamer != nil {
+		_ = e.streamer.Close()
+	}
+	if e.audioSource != nil {
+		_ = e.audioSource.Close()
+	}
+
+	e.streamer = e.nextStreamer
+	e.format = e.nextFormat
+	e.audioSource = e.nextSource
+	e.nextStreamer = nil
+	e.nextFormat = beep.Format{}
+	e.nextSource = nil
+
+	e.baseStreamer = resampleIfNeeded(e.streamer, e.format.SampleRate, e.sampleRate)
+
+	speaker.Lock()
+	e.ctrl.Streamer = e.dsp.Apply(e.baseStreamer, e.sampleRate, e.trackGainDB)
+	if e.vol != nil {
+		e.vol.Streamer = e.ctrl
+		e.setVolumeLocked(e.desiredVolume)
+	}
+	speaker.Unlock()
+
+	e.position = 0
+}
+
 func (e *Engine) GetBufferFillLevel() float64 {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -269,6 +374,15 @@ func (e *Engine) stopLocked() {
 		_ = e.audioSource.Close()
 		e.audioSource = nil
 	}
+	if e.nextStreamer != nil {
+		_ = e.nextStreamer.Close()
+	}
+	if e.nextSource != nil {
+		_ = e.nextSource.Close()
+	}
+	e.nextStreamer = nil
+	e.nextFormat = beep.Format{}
+	e.nextSource = nil
 
 	e.streamer = nil
 	e.baseStreamer = nil
