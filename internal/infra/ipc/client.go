@@ -560,6 +560,15 @@ func (c *Client) GetEqualizer() (*pb.Response, error) {
 	return c.send(req)
 }
 
+// DebugStats returns aggregated stream-pool, search-index, and DB stats.
+func (c *Client) DebugStats() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload:         &pb.Request_DebugStats{DebugStats: &pb.DebugStatsRequest{}},
+	}
+	return c.send(req)
+}
+
 // QueueAdd adds a track to the playback queue.
 func (c *Client) QueueAdd(trackID string, position int32) (*pb.Response, error) {
 	req := &pb.Request{

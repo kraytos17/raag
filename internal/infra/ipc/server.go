@@ -56,6 +56,7 @@ type Server struct {
 	p2pNode      *p2p.P2PNode
 	eventBus     domain.EventBus
 	metrics      *observability.Metrics
+	dbStats      DebugStatsProvider
 
 	maxConns     *semaphore.Weighted
 	progressCb   func(jobID string, scanned int, total int, currentFile string, phase string)
@@ -75,6 +76,7 @@ type ServerConfig struct {
 	P2PNode      *p2p.P2PNode
 	EventBus     domain.EventBus
 	Metrics      *observability.Metrics
+	DBStats      DebugStatsProvider
 }
 
 func (c *ServerConfig) Validate() error {
@@ -94,6 +96,12 @@ func (c *ServerConfig) Validate() error {
 		return errors.New("queue handler is required")
 	}
 	return nil
+}
+
+// DebugStatsProvider exposes storage size for `raag debug db`. Satisfied by
+// *db.DB (and a mock in tests).
+type DebugStatsProvider interface {
+	Size() (lsmBytes, vlogBytes int64)
 }
 
 type PlaybackHandler interface {
@@ -172,6 +180,7 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 		p2pNode:      config.P2PNode,
 		eventBus:     config.EventBus,
 		metrics:      config.Metrics,
+		dbStats:      config.DBStats,
 		maxConns:     semaphore.NewWeighted(64),
 		subMgr:       NewSubscriptionManager(),
 	}
@@ -591,6 +600,8 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 		resp = s.handleQueueMode()
 	case *pb.Request_Equalizer:
 		resp = s.handleSetEqualizer(p.Equalizer)
+	case *pb.Request_DebugStats:
+		resp = s.handleDebugStats()
 	case *pb.Request_Subscribe:
 		// The conn was already registered with the SubscriptionManager in
 		// handleConn before dispatch; just acknowledge so the client doesn't
@@ -954,6 +965,7 @@ func (s *Server) publishQueueUpdated() {
 	if s.queue == nil {
 		return
 	}
+
 	tracks := s.queue.Tracks()
 	qt := make([]*pb.Track, len(tracks))
 	for i, t := range tracks {
@@ -989,6 +1001,48 @@ func (s *Server) eqResponse() *pb.Response {
 			BassDb:   float32(eq.Bass),
 			MidDb:    float32(eq.Mid),
 			TrebleDb: float32(eq.Treble),
+		}},
+	}
+}
+
+// handleDebugStats aggregates stream-pool, search-index, and DB stats for the
+// `raag debug` commands. Unavailable subsystems report zeros (not errors).
+func (s *Server) handleDebugStats() *pb.Response {
+	var streams *pb.DebugStreams
+	if s.p2pNode != nil {
+		st := s.p2pNode.StreamPool().Stats()
+		streams = &pb.DebugStreams{
+			TotalStreams: int32(st.TotalStreams),
+			PeerCount:    int32(st.PeerCount),
+		}
+	}
+
+	var index *pb.DebugIndex
+	if si, ok := s.search.(interface {
+		Stats(ctx context.Context) (app.IndexStats, error)
+	}); ok {
+		if st, err := si.Stats(context.Background()); err == nil {
+			index = &pb.DebugIndex{
+				TotalTracks:   int32(st.TotalTracks),
+				TotalTerms:    int32(st.TotalTerms),
+				TotalTrigrams: int32(st.TotalTrigrams),
+				LastUpdated:   st.LastUpdated,
+			}
+		}
+	}
+
+	var dbInfo *pb.DebugDB
+	if s.dbStats != nil {
+		lsm, vlog := s.dbStats.Size()
+		dbInfo = &pb.DebugDB{LsmBytes: lsm, VlogBytes: vlog}
+	}
+
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_DebugStats{DebugStats: &pb.DebugStatsResponse{
+			Streams: streams,
+			Index:   index,
+			Db:      dbInfo,
 		}},
 	}
 }

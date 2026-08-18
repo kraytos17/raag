@@ -693,6 +693,43 @@ func TestPersistentClient_GetEqualizer(t *testing.T) {
 	}
 }
 
+// mockDBStats implements DebugStatsProvider.
+type mockDBStats struct {
+	lsm, vlog int64
+}
+
+func (m *mockDBStats) Size() (int64, int64) { return m.lsm, m.vlog }
+
+func TestPersistentClient_DebugStats(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	srv.dbStats = &mockDBStats{lsm: 1024, vlog: 2048}
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.DebugStats()
+	if err != nil {
+		t.Fatalf("debug stats: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("debug stats failed: %s", resp.Error)
+	}
+	ds := resp.GetDebugStats()
+	if ds == nil {
+		t.Fatal("expected debug stats response payload")
+	}
+	// P2P is disabled in the test server, so streams is nil; index is nil (no
+	// Stats method on the mock search); db should round-trip.
+	if ds.GetDb() == nil {
+		t.Fatal("expected db stats")
+	}
+	if ds.GetDb().LsmBytes != 1024 || ds.GetDb().VlogBytes != 2048 {
+		t.Errorf("db = (%d, %d), want (1024, 2048)", ds.GetDb().LsmBytes, ds.GetDb().VlogBytes)
+	}
+}
+
 // TestPersistentClient_MultipleRequests verifies multiple sequential requests work.
 func TestPersistentClient_MultipleRequests(t *testing.T) {
 	srv := startTestServer(t)

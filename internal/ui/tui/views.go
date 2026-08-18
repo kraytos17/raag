@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/p-society/raag/internal/domain"
 )
 
 func (m *Model) renderHeader() string {
@@ -30,7 +32,6 @@ func (m *Model) renderHeader() string {
 	peers := subtleStyle.Render(fmt.Sprintf("peers: %d", m.PeerCount))
 	volume := subtleStyle.Render(fmt.Sprintf("vol: %d%%", m.Volume))
 	version := dimStyle.Render("raag v2")
-
 	right := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		peers,
@@ -45,8 +46,8 @@ func (m *Model) renderHeader() string {
 		lipgloss.Width(right) +
 		lipgloss.Width(separator) +
 		lipgloss.Width(version)
-	spacer := max(m.Width-fixedWidth, 1)
 
+	spacer := max(m.Width-fixedWidth, 1)
 	header := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		logo,
@@ -59,13 +60,11 @@ func (m *Model) renderHeader() string {
 	)
 
 	borderLine := dimStyle.Render(strings.Repeat("─", m.Width))
-
 	return headerStyle.Render(header) + "\n" + borderLine
 }
 
 func (m *Model) renderWide() string {
 	active := m.ActivePanel
-
 	m.Library.Title = " Library "
 	m.Queue.Title = " Queue "
 	m.Peers.Title = " Peers "
@@ -134,7 +133,6 @@ func (m *Model) renderFooter() string {
 
 	volumeWidth := 10
 	volumeBar := m.renderVolumeBar(volumeWidth)
-
 	controls := subtleStyle.Render(
 		"[space] play/pause  [n] next  [p] prev  [f] +10s  [b] -10s  [?] help  [q] quit",
 	)
@@ -145,6 +143,7 @@ func (m *Model) renderFooter() string {
 	} else {
 		modeTags += subtleStyle.Render(" [s:off]")
 	}
+
 	switch m.Player.RepeatMode {
 	case repeatAll:
 		modeTags += statePlayingStyle.Render(" [r:all]")
@@ -179,7 +178,6 @@ func (m *Model) renderSeekBar(width int) string {
 	result.WriteString(strings.Repeat("━", filled))
 	result.WriteString("●")
 	result.WriteString(strings.Repeat("─", rest))
-
 	return lipgloss.NewStyle().Foreground(accentColor).Render(result.String())
 }
 
@@ -225,6 +223,34 @@ func (m *Model) renderLyrics() string {
 	return lyricsStyle.Render(lyrics)
 }
 
+// renderEQ shows the current equalizer preset and band gains.
+func (m *Model) renderEQ() string {
+	name := "custom"
+	for _, p := range domain.EQPresets {
+		if p == m.EQ {
+			name = "flat"
+			if p.Bass > 0 {
+				name = "bass"
+			}
+			if p.Treble > 0 && p.Bass == 0 {
+				name = "treble"
+			}
+			if p.Bass > 0 && p.Treble > 0 {
+				name = "rock"
+			}
+			break
+		}
+	}
+
+	state := "off"
+	if m.EQ.Enabled {
+		state = "on"
+	}
+	content := fmt.Sprintf("EQ: %s (%s)\n  bass %+.1f dB   mid %+.1f dB   treble %+.1f dB",
+		name, state, m.EQ.Bass, m.EQ.Mid, m.EQ.Treble)
+	return eqStyle.Render(content)
+}
+
 func (m *Model) renderHelpOverlay() string {
 	helpContent := `Keybindings
 
@@ -243,6 +269,8 @@ func (m *Model) renderHelpOverlay() string {
   [R]      Cycle repeat
   [r]      Refresh
   [L]      Toggle lyrics
+  [e]      Toggle EQ overlay
+  [E]      Cycle EQ preset
   [?]      Toggle help
   [q]      Quit
 

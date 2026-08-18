@@ -21,6 +21,8 @@ type KeyMap struct {
 	Shuffle   key.Binding
 	Repeat    key.Binding
 	Lyrics    key.Binding
+	Eq        key.Binding
+	EqCycle   key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -43,5 +45,7 @@ func DefaultKeyMap() KeyMap {
 		Shuffle:   key.NewBinding(key.WithKeys("s")),
 		Repeat:    key.NewBinding(key.WithKeys("R")),
 		Lyrics:    key.NewBinding(key.WithKeys("L")),
+		Eq:        key.NewBinding(key.WithKeys("e")),
+		EqCycle:   key.NewBinding(key.WithKeys("E")),
 	}
 }

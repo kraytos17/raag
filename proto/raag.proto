@@ -114,6 +114,7 @@ message Request {
     QueueRepeatRequest queue_repeat = 34;
     QueueModeRequest queue_mode = 35;
     EqualizerRequest equalizer = 36;
+    DebugStatsRequest debug_stats = 37;
   }
 }
 
@@ -140,6 +141,7 @@ message Response {
     QueueListResponse queue_list = 22;
     QueueModeResponse queue_mode = 23;
     EqualizerResponse equalizer = 24;
+    DebugStatsResponse debug_stats = 25;
   }
 }
 
@@ -237,6 +239,31 @@ message EqualizerResponse {
   float bass_db = 2;
   float mid_db = 3;
   float treble_db = 4;
+}
+
+message DebugStatsRequest {}
+
+message DebugStreams {
+  int32 total_streams = 1;
+  int32 peer_count = 2;
+}
+
+message DebugIndex {
+  int32 total_tracks = 1;
+  int32 total_terms = 2;
+  int32 total_trigrams = 3;
+  int64 last_updated = 4;
+}
+
+message DebugDB {
+  int64 lsm_bytes = 1;
+  int64 vlog_bytes = 2;
+}
+
+message DebugStatsResponse {
+  DebugStreams streams = 1;
+  DebugIndex index = 2;
+  DebugDB db = 3;
 }
 
 message SearchRequest {
