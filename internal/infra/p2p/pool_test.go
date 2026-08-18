@@ -220,6 +220,24 @@ func TestStreamPool_Close(t *testing.T) {
 	}
 }
 
+func TestStreamPool_Close_Idempotent(t *testing.T) {
+	host := newMockHost()
+	pool := NewStreamPool(host, "/test/1.0.0")
+
+	pid := peer.ID("test-peer")
+	stream, _ := pool.Acquire(context.Background(), pid)
+	pool.Release(pid, stream)
+
+	// A failed node Start may close the pool; Stop later closes it again. The
+	// second Close must be a no-op, not a double close of the done channel.
+	pool.Close()
+	pool.Close()
+
+	if pool.Stats().TotalStreams != 0 {
+		t.Errorf("TotalStreams after double close = %d, want 0", pool.Stats().TotalStreams)
+	}
+}
+
 func TestStreamPool_CloseWithPendingWaiters(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/test/1.0.0")

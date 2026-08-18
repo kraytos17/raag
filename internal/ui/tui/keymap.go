@@ -20,6 +20,7 @@ type KeyMap struct {
 	Refresh   key.Binding
 	Shuffle   key.Binding
 	Repeat    key.Binding
+	Lyrics    key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -41,5 +42,6 @@ func DefaultKeyMap() KeyMap {
 		Refresh:   key.NewBinding(key.WithKeys("r")),
 		Shuffle:   key.NewBinding(key.WithKeys("s")),
 		Repeat:    key.NewBinding(key.WithKeys("R")),
+		Lyrics:    key.NewBinding(key.WithKeys("L")),
 	}
 }

@@ -50,8 +50,6 @@ type Track struct {
 	ModifiedAt       int64
 	PlayCount        uint64
 	LastPlayed       int64
-	ReplayGainTrack  float32
-	ReplayGainAlbum  float32
 	ContentHash      string
 	IsDuplicate      bool
 	DuplicateOf      TrackID
@@ -113,8 +111,6 @@ func (t *Track) Copy() *Track {
 		ModifiedAt:       t.ModifiedAt,
 		PlayCount:        t.PlayCount,
 		LastPlayed:       t.LastPlayed,
-		ReplayGainTrack:  t.ReplayGainTrack,
-		ReplayGainAlbum:  t.ReplayGainAlbum,
 		ContentHash:      t.ContentHash,
 		IsDuplicate:      t.IsDuplicate,
 		DuplicateOf:      t.DuplicateOf,

@@ -529,9 +529,9 @@ func TestEventClient_StateTransitions(t *testing.T) {
 	}
 }
 
-// TestServer_SubscribeDispatch_Success verifies Request_Subscribe and
-// Request_Empty get a Success reply from dispatch instead of falling through
-// to "unknown request type"
+// TestServer_SubscribeDispatch_Success verifies Request_Subscribe gets a
+// Success reply from dispatch instead of falling through to "unknown request
+// type"
 func TestServer_SubscribeDispatch_Success(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -556,20 +556,6 @@ func TestServer_SubscribeDispatch_Success(t *testing.T) {
 	}
 	if !resp.Success {
 		t.Fatalf("subscribe response Success = false, error = %q; want success", resp.Error)
-	}
-
-	emptyReq := &pb.Request{
-		ProtocolVersion: domain.IPCProtocolVersion,
-		Payload:         &pb.Request_Empty{Empty: &pb.Empty{}},
-	}
-	if err := wire.WriteMsg(conn, emptyReq); err != nil {
-		t.Fatalf("write empty: %v", err)
-	}
-	if err := wire.ReadMsg(conn, &resp); err != nil {
-		t.Fatalf("read empty response: %v", err)
-	}
-	if !resp.Success {
-		t.Fatalf("empty response Success = false, error = %q; want success", resp.Error)
 	}
 }
 
@@ -1002,6 +988,26 @@ func TestTranslateEvent_PlaybackBufferingReady(t *testing.T) {
 	}
 	if string(payload) != "playing" {
 		t.Fatalf("ready payload = %q, want \"playing\"", payload)
+	}
+}
+
+// TestTranslateEvent_VolumeChanged verifies volume changes translate to
+// EVENT_TYPE_VOLUME_CHANGED with a SetVolumeRequest payload
+func TestTranslateEvent_VolumeChanged(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	et, payload := translateEvent(srv.Server, domain.NewEvent(domain.EventVolumeChanged, domain.VolumeChangedPayload{Volume: 42}))
+	if et != pb.EventType_EVENT_TYPE_VOLUME_CHANGED {
+		t.Fatalf("volume event type = %v, want EVENT_TYPE_VOLUME_CHANGED", et)
+	}
+
+	var req pb.SetVolumeRequest
+	if err := proto.Unmarshal(payload, &req); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if req.Volume != 42 {
+		t.Fatalf("volume payload = %d, want 42", req.Volume)
 	}
 }
 

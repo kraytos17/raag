@@ -211,6 +211,20 @@ func (m *Model) renderBuffer() string {
 	return subtleStyle.Render(fmt.Sprintf("buf: %d%%", int(pct)))
 }
 
+// renderLyrics renders the current track's lyrics as a footer overlay. It is
+// empty when nothing is showing lyrics or lyrics are unavailable.
+func (m *Model) renderLyrics() string {
+	if m.Player.CurrentTrack == nil || m.Player.CurrentTrack.Lyrics == "" {
+		return ""
+	}
+
+	lyrics := strings.TrimSpace(m.Player.CurrentTrack.Lyrics)
+	if lyrics == "" {
+		return ""
+	}
+	return lyricsStyle.Render(lyrics)
+}
+
 func (m *Model) renderHelpOverlay() string {
 	helpContent := `Keybindings
 
@@ -228,6 +242,7 @@ func (m *Model) renderHelpOverlay() string {
   [s]      Toggle shuffle
   [R]      Cycle repeat
   [r]      Refresh
+  [L]      Toggle lyrics
   [?]      Toggle help
   [q]      Quit
 

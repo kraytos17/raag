@@ -30,8 +30,6 @@ message Track {
   int64 modified_at = 21;
   uint64 play_count = 22;
   int64 last_played = 23;
-  float replay_gain_track = 24;
-  float replay_gain_album = 25;
   string content_hash = 26;
   bool is_duplicate = 30;
   string duplicate_of = 31;
@@ -44,15 +42,6 @@ message Playlist {
   repeated string track_ids = 3;
   int64 created_at = 4;
   int64 modified_at = 5;
-}
-
-message PeerInfo {
-  string peer_id = 1;
-  repeated string listen_addrs = 2;
-  int64 last_seen = 3;
-  string agent_version = 4;
-  repeated string supported_codecs = 5;
-  bool can_transcode = 6;
 }
 
 message PeerCapabilities {
@@ -91,7 +80,6 @@ message Request {
   string request_id = 1;
   int32 protocol_version = 2;
   oneof payload {
-    Empty empty = 3;
     PlayRequest play = 4;
     PauseRequest pause = 5;
     ResumeRequest resume = 6;
@@ -133,12 +121,10 @@ message Response {
   string error = 3;
   string job_id = 4;
   oneof payload {
-    Empty empty = 5;
     SearchResponse search = 6;
     ListPeersResponse list_peers = 7;
     StatusResponse status = 8;
     HealthCheckResponse health_check = 9;
-    QueueResponse queue = 10;
     GetTrackResponse get_track = 11;
     GetPlaylistResponse get_playlist = 12;
     ListPlaylistsResponse list_playlists = 13;
@@ -148,7 +134,6 @@ message Response {
     AddToPlaylistResponse add_to_playlist = 17;
     Empty ban_peer = 18;
     Empty unban_peer = 19;
-    Event event = 20;
     ListTracksResponse list_tracks = 21;
     QueueListResponse queue_list = 22;
     QueueModeResponse queue_mode = 23;
@@ -239,7 +224,6 @@ message QueueModeResponse {
 message SearchRequest {
   string query = 1;
   int32 limit = 2;
-  int32 offset = 3;
   bool include_peers = 4;
 }
 
@@ -436,13 +420,6 @@ enum EventType {
 message ProgressEvent {
   int64 position_ms = 1;
   int64 duration_ms = 2;
-}
-
-// Library update stats
-message LibraryStats {
-  int32 total_tracks = 1;
-  int32 added_tracks = 2;
-  int32 removed_tracks = 3;
 }
 
 // Subscribe to events

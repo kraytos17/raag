@@ -49,13 +49,16 @@ func (c *StreamClient) GetChunk(ctx context.Context, req *pb.ChunkRequest) (*pb.
 			continue
 		}
 
-		start := time.Now()
 		if err := c.writeRequest(stream, req); err != nil {
 			c.pool.Remove(c.peerID, stream)
 			lastErr = err
 			continue
 		}
 
+		// Time only the response read: the write is a tiny fixed-size request
+		// frame, so including it (or connection setup) would skew the bandwidth
+		// estimate downward.
+		readStart := time.Now()
 		var resp pb.ChunkResponse
 		if err := c.readResponse(stream, &resp); err != nil {
 			c.pool.Remove(c.peerID, stream)
@@ -63,7 +66,7 @@ func (c *StreamClient) GetChunk(ctx context.Context, req *pb.ChunkRequest) (*pb.
 			continue
 		}
 
-		elapsed := time.Since(start)
+		elapsed := time.Since(readStart)
 		if c.scorer != nil {
 			if elapsed > 0 {
 				bps := int64(float64(len(resp.Data)) / elapsed.Seconds())

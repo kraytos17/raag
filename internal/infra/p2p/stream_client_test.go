@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
 
@@ -849,4 +853,81 @@ func TestChunkedReader_Read_StalledPeer_RespectsDeadline(t *testing.T) {
 	if elapsed > time.Second {
 		t.Errorf("Read() took %v, want to respect the 50ms deadline", elapsed)
 	}
+}
+
+// slowWriteStream embeds mockStream but delays every Write so a bandwidth
+// measurement that includes the request write would be skewed downward.
+type slowWriteStream struct {
+	*mockStream
+	writeDelay time.Duration
+	readData   []byte
+	readPos    int
+}
+
+func (s *slowWriteStream) Write(b []byte) (int, error) {
+	time.Sleep(s.writeDelay)
+	return len(b), nil
+}
+
+func (s *slowWriteStream) Read(b []byte) (int, error) {
+	if s.readPos >= len(s.readData) {
+		return 0, io.EOF
+	}
+	n := copy(b, s.readData[s.readPos:])
+	s.readPos += n
+	return n, nil
+}
+
+// TestGetChunk_Bandwidth_ExcludesWriteDelay verifies the bandwidth estimate
+// measures only the response read, not the request write.
+func TestGetChunk_Bandwidth_ExcludesWriteDelay(t *testing.T) {
+	ctx := context.Background()
+
+	// A response frame with a known payload size.
+	var frame bytes.Buffer
+	resp := &pb.ChunkResponse{
+		TrackId:   testTrackID,
+		Data:      make([]byte, 64*1024),
+		LastChunk: false,
+		TotalSize: 128 * 1024,
+	}
+	if err := wire.WriteMsg(&frame, resp); err != nil {
+		t.Fatalf("encode response: %v", err)
+	}
+
+	host := &frameHost{stream: &slowWriteStream{
+		mockStream: &mockStream{id: "slow-write"},
+		writeDelay: 200 * time.Millisecond,
+		readData:   frame.Bytes(),
+	}}
+	pool := NewStreamPool(host, "/test/1.0.0")
+	defer pool.Close()
+
+	scorer := NewPeerScorer()
+	pid := peer.ID("bandwidth-peer")
+	client := NewStreamClient(pid, pool, scorer)
+
+	got, err := client.GetChunk(ctx, &pb.ChunkRequest{TrackId: testTrackID, Offset: 0, Length: 64 * 1024})
+	if err != nil {
+		t.Fatalf("GetChunk() error = %v", err)
+	}
+	if len(got.Data) != 64*1024 {
+		t.Fatalf("GetChunk() data length = %d, want %d", len(got.Data), 64*1024)
+	}
+
+	bw := scorer.AvgBandwidth(pid)
+	// 64 KiB measured over a ~0ms read is many MB/s. If the 200ms write delay
+	// were included it would be ~330 KB/s. Assert well above that.
+	if bw < 1_000_000 {
+		t.Fatalf("AvgBandwidth = %d B/s, want >= 1MB/s (write delay must be excluded)", bw)
+	}
+}
+
+// frameHost returns a single preconfigured stream from NewStream.
+type frameHost struct {
+	stream network.Stream
+}
+
+func (h *frameHost) NewStream(ctx context.Context, _ peer.ID, _ ...protocol.ID) (network.Stream, error) {
+	return h.stream, nil
 }

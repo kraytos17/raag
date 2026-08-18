@@ -156,6 +156,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 ) {
 	bus := events.New()
 	peerRepo := db.NewPeerRepo(database)
+	settings := db.NewSettingsRepo(database)
 	duplicateDetector := duplicate.NewDetector(database, duplicate.ConfigToHandler(cfg.Library.DuplicateHandling))
 	database.StartHealthCheck(10*time.Second, func() {
 		slog.Error("database directory deleted, initiating shutdown")
@@ -163,6 +164,9 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		if cfg.Daemon.SocketPath != "" {
 			os.Remove(cfg.Daemon.SocketPath)
 		}
+
+		removePidFile(cfg.Daemon.PidFile)
+		_ = database.Close()
 		os.Exit(1)
 	})
 
@@ -184,11 +188,18 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		resolver = app.NewLocalResolver(libraryRepo)
 	}
 
-	player := audio.NewEngine(cfg.Playback.SampleRate)
+	player := audio.NewEngine(cfg.Playback.SampleRate, cfg.Playback.BufferSize)
+	warnUnsupportedOutputDevice(cfg.Playback.OutputDevice)
 	queue := audio.NewQueue()
-	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolver, bus, cfg.Playback.Volume)
+
+	// A persisted volume (from the DB) overrides the config default, which is
+	// only a fallback. The config file itself is never rewritten.
+	initialVolume := loadPersistedVolume(cfg, settings)
+	playback := app.NewPlaybackController(libraryRepo, searchService, player, resolver, bus, initialVolume)
 	playback.SetQueue(queue)
-	applyConfiguredVolume(playback, cfg.Playback.Volume)
+	applyConfiguredVolume(playback, initialVolume)
+	persistVolumeChanges(settings, bus)
+
 	ipcServer, err := ipc.NewServer(cfg.Daemon.SocketPath, ipc.ServerConfig{
 		Playback:     playback,
 		Scanner:      scanner,
@@ -238,6 +249,9 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		_ = database.Close()
 		os.Exit(1)
 	}
+	if err := writePidFile(cfg.Daemon.PidFile); err != nil {
+		slog.Warn("failed to write pid file", "path", cfg.Daemon.PidFile, "error", err)
+	}
 	if p2pNodeStarted && p2pNode != nil {
 		slog.Info("P2P streaming enabled", "peer_id", p2pNode.ID())
 	}
@@ -246,8 +260,8 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	if cfg.Metrics.Enabled {
 		startMetricsServer(sigCtx, cfg.Metrics, metrics)
 	}
-	startIndexAndScan(sigCtx, cfg, skipScan, searchService, libraryRepo, scanner, duplicateDetector)
 
+	startIndexAndScan(sigCtx, cfg, skipScan, searchService, libraryRepo, scanner, duplicateDetector)
 	slog.Info(
 		"raag daemon started",
 		"socket", cfg.Daemon.SocketPath,
@@ -273,6 +287,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		slog.Warn("lifecycle stop error", "error", err)
 	}
 
+	removePidFile(cfg.Daemon.PidFile)
 	bus.Close()
 	slog.Info("closing database...")
 	if err := database.CloseWithContext(shutdownCtx); err != nil {
@@ -341,6 +356,7 @@ func startMetricsServer(ctx context.Context, cfg config.MetricsConfig, metrics *
 	if metrics == nil {
 		metrics = observability.NewMetrics()
 	}
+
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	if err := metrics.Start(ctx, addr, cfg.Path); err != nil {
 		slog.Error("failed to start metrics server", "error", err)
@@ -355,6 +371,39 @@ func applyConfiguredVolume(playback *app.PlaybackController, volume int) {
 	if err := playback.SetVolume(context.Background(), volume); err != nil {
 		slog.Warn("failed to apply configured volume", "error", err)
 	}
+}
+
+// warnUnsupportedOutputDevice acknowledges a non-default output_device config.
+// The beep/oto backend cannot select an output device, so only the default
+// ALSA/OS device is supported.
+func warnUnsupportedOutputDevice(device string) {
+	if device != "" && device != "default" {
+		slog.Warn("playback.output_device is not supported by the current audio backend; using the default device", "device", device)
+	}
+}
+
+// loadPersistedVolume returns the restart-surviving volume from the DB, falling
+// back to the config default when nothing is persisted.
+func loadPersistedVolume(cfg *config.Config, settings app.SettingsRepository) int {
+	volume := cfg.Playback.Volume
+	if persisted, ok, err := settings.GetVolume(context.Background()); err == nil && ok {
+		volume = persisted
+	}
+	return volume
+}
+
+// persistVolumeChanges writes every volume change to the DB so the setting
+// survives restarts. Failures are logged, never fatal.
+func persistVolumeChanges(settings app.SettingsRepository, bus *events.EventBus) {
+	bus.Subscribe(domain.EventVolumeChanged, func(e domain.Event) {
+		payload, ok := e.Payload.(domain.VolumeChangedPayload)
+		if !ok {
+			return
+		}
+		if err := settings.SetVolume(context.Background(), payload.Volume); err != nil {
+			slog.Warn("failed to persist volume", "error", err)
+		}
+	})
 }
 
 func usage() {

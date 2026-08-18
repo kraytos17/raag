@@ -27,6 +27,7 @@ type StreamPool struct {
 	pending      map[peer.ID][]chan *PooledStream
 	totalStreams int
 	done         chan struct{}
+	closeOnce    sync.Once
 }
 
 type PooledStream struct {
@@ -211,27 +212,32 @@ func (p *StreamPool) DrainPeer(pid peer.ID) {
 	delete(p.pending, pid)
 }
 
+// Close shuts the pool down, closing all pooled streams and unblocking any
+// pending waiters. It is idempotent: a second call is a no-op (a failed node
+// Start may close the pool, and Stop later closes it again).
 func (p *StreamPool) Close() {
-	close(p.done)
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.closeOnce.Do(func() {
+		close(p.done)
+		p.mu.Lock()
+		defer p.mu.Unlock()
 
-	for pid, pool := range p.pools {
-		for _, ps := range pool {
-			if err := ps.stream.Close(); err != nil {
-				slog.Debug("stream close error on pool close", "peer", pid, "err", err)
+		for pid, pool := range p.pools {
+			for _, ps := range pool {
+				if err := ps.stream.Close(); err != nil {
+					slog.Debug("stream close error on pool close", "peer", pid, "err", err)
+				}
 			}
+			delete(p.pools, pid)
 		}
-		delete(p.pools, pid)
-	}
 
-	p.totalStreams = 0
-	for pid, chans := range p.pending {
-		for _, ch := range chans {
-			ch <- nil
+		p.totalStreams = 0
+		for pid, chans := range p.pending {
+			for _, ch := range chans {
+				ch <- nil
+			}
+			delete(p.pending, pid)
 		}
-		delete(p.pending, pid)
-	}
+	})
 }
 
 func (p *StreamPool) reaper() {
