@@ -188,7 +188,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		resolver = app.NewLocalResolver(libraryRepo)
 	}
 
-	player := audio.NewEngine(cfg.Playback.SampleRate, cfg.Playback.BufferSize)
+	player := audio.NewEngine(cfg.Playback.SampleRate, cfg.Playback.BufferSize, dspFromConfig(cfg.Playback))
 	warnUnsupportedOutputDevice(cfg.Playback.OutputDevice)
 	queue := audio.NewQueue()
 
@@ -379,6 +379,23 @@ func applyConfiguredVolume(playback *app.PlaybackController, volume int) {
 func warnUnsupportedOutputDevice(device string) {
 	if device != "" && device != "default" {
 		slog.Warn("playback.output_device is not supported by the current audio backend; using the default device", "device", device)
+	}
+}
+
+// dspFromConfig maps the playback config to the engine's DSP processing.
+func dspFromConfig(cfg config.PlaybackConfig) audio.DSPConfig {
+	return audio.DSPConfig{
+		Equalizer: audio.EqualizerConfig{
+			Enabled: cfg.Equalizer.Enabled,
+			Bass:    cfg.Equalizer.Bass,
+			Mid:     cfg.Equalizer.Mid,
+			Treble:  cfg.Equalizer.Treble,
+		},
+		Normalize: audio.NormalizeConfig{
+			Enabled:  cfg.Normalize.Enabled,
+			TargetDB: cfg.Normalize.TargetDB,
+		},
+		Crossfade: time.Duration(cfg.CrossfadeMs) * time.Millisecond,
 	}
 }
 

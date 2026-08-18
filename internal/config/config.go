@@ -86,6 +86,21 @@ func (c *Config) Validate() error {
 	if c.Playback.Volume > 100 {
 		return fmt.Errorf("playback volume must be at most 100, got %d", c.Playback.Volume)
 	}
+	if c.Playback.CrossfadeMs < 0 {
+		return fmt.Errorf("playback.crossfade_ms must be non-negative, got %d", c.Playback.CrossfadeMs)
+	}
+	if c.Playback.Equalizer.Bass < -12 || c.Playback.Equalizer.Bass > 12 {
+		return fmt.Errorf("playback.equalizer.bass_db must be within [-12, 12], got %v", c.Playback.Equalizer.Bass)
+	}
+	if c.Playback.Equalizer.Mid < -12 || c.Playback.Equalizer.Mid > 12 {
+		return fmt.Errorf("playback.equalizer.mid_db must be within [-12, 12], got %v", c.Playback.Equalizer.Mid)
+	}
+	if c.Playback.Equalizer.Treble < -12 || c.Playback.Equalizer.Treble > 12 {
+		return fmt.Errorf("playback.equalizer.treble_db must be within [-12, 12], got %v", c.Playback.Equalizer.Treble)
+	}
+	if c.Playback.Normalize.TargetDB < -40 || c.Playback.Normalize.TargetDB > 0 {
+		return fmt.Errorf("playback.normalize.target_db must be within [-40, 0], got %v", c.Playback.Normalize.TargetDB)
+	}
 	return nil
 }
 
@@ -258,6 +273,9 @@ func RunSetup() error {
 			OutputDevice: "default",
 			BufferSize:   4096,
 			SampleRate:   44100,
+			Equalizer:    EqualizerConfig{Enabled: false, Bass: 0, Mid: 0, Treble: 0},
+			Normalize:    NormalizeConfig{Enabled: false, TargetDB: -14},
+			CrossfadeMs:  0,
 		},
 		P2P: P2PConfig{
 			Enabled:          true,
@@ -322,10 +340,25 @@ type LibraryConfig struct {
 }
 
 type PlaybackConfig struct {
-	Volume       int    `mapstructure:"volume"`
-	OutputDevice string `mapstructure:"output_device"`
-	BufferSize   int    `mapstructure:"buffer_size"`
-	SampleRate   int    `mapstructure:"sample_rate"`
+	Volume       int             `mapstructure:"volume"`
+	OutputDevice string          `mapstructure:"output_device"`
+	BufferSize   int             `mapstructure:"buffer_size"`
+	SampleRate   int             `mapstructure:"sample_rate"`
+	Equalizer    EqualizerConfig `mapstructure:"equalizer"`
+	Normalize    NormalizeConfig `mapstructure:"normalize"`
+	CrossfadeMs  int             `mapstructure:"crossfade_ms"`
+}
+
+type EqualizerConfig struct {
+	Enabled bool    `mapstructure:"enabled"`
+	Bass    float64 `mapstructure:"bass_db"`
+	Mid     float64 `mapstructure:"mid_db"`
+	Treble  float64 `mapstructure:"treble_db"`
+}
+
+type NormalizeConfig struct {
+	Enabled  bool    `mapstructure:"enabled"`
+	TargetDB float64 `mapstructure:"target_db"`
 }
 
 type DaemonConfig struct {

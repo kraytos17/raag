@@ -20,6 +20,7 @@ import (
 
 	"github.com/dhowden/tag"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/audio"
 	"github.com/p-society/raag/internal/infra/hashing"
 	"golang.org/x/sync/errgroup"
 )
@@ -527,6 +528,16 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 	track.MimeType = mimeType(filepath.Ext(path))
 	track.Codec = codecFromExtension(filepath.Ext(path))
 	track.ModifiedAt = stat.ModTime().Unix()
+
+	if lf, err := os.Open(path); err == nil {
+		// Best-effort loudness measurement; a failure leaves LoudnessDB at 0
+		// (unknown), which disables loudness normalization for this track.
+		track.LoudnessDB, _ = audio.EstimateLoudnessDB(lf, track.MimeType)
+		_ = lf.Close()
+	} else {
+		slog.Debug("failed to open file for loudness scan", "path", path, "error", err)
+	}
+
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		slog.Warn("failed to seek file for hashing", "path", path, "error", err)
 	} else if s.hashWorker != nil {
@@ -549,6 +560,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 	} else {
 		track.ContentHash = computeSampleHash(file, stat.Size())
 	}
+
 	if s.duplicateCheck != nil && track.ContentHash != "" {
 		originalID, isDup, shouldSkip, err := s.duplicateCheck(context.Background(), track.ContentHash, track.ID, path)
 		if err == nil && isDup {

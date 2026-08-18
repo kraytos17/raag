@@ -7,33 +7,33 @@ import (
 )
 
 func TestNewEngine_SampleRate(t *testing.T) {
-	e := NewEngine(48000, 0)
+	e := NewEngine(48000, 0, DSPConfig{})
 	if e.sampleRate != beep.SampleRate(48000) {
 		t.Errorf("NewEngine(48000).sampleRate = %d, want 48000", e.sampleRate)
 	}
 
-	e2 := NewEngine(0, 0)
+	e2 := NewEngine(0, 0, DSPConfig{})
 	if e2.sampleRate != beep.SampleRate(44100) {
 		t.Errorf("NewEngine(0).sampleRate = %d, want default 44100", e2.sampleRate)
 	}
 
-	e3 := NewEngine(-1, 0)
+	e3 := NewEngine(-1, 0, DSPConfig{})
 	if e3.sampleRate != beep.SampleRate(44100) {
 		t.Errorf("NewEngine(-1).sampleRate = %d, want default 44100", e3.sampleRate)
 	}
 }
 
 func TestNewEngine_BufferSize(t *testing.T) {
-	e := NewEngine(48000, 2048)
+	e := NewEngine(48000, 2048, DSPConfig{})
 	if e.speakerBuffer != 2048 {
-		t.Errorf("NewEngine(48000, 2048).speakerBuffer = %d, want 2048", e.speakerBuffer)
+		t.Errorf("NewEngine(48000, 2048, DSPConfig{}).speakerBuffer = %d, want 2048", e.speakerBuffer)
 	}
 
 	// Non-positive buffer size means the engine keeps the 100ms fallback
 	// (applied inside initSpeaker), so the stored field stays 0.
-	e2 := NewEngine(48000, 0)
+	e2 := NewEngine(48000, 0, DSPConfig{})
 	if e2.speakerBuffer != 0 {
-		t.Errorf("NewEngine(48000, 0).speakerBuffer = %d, want 0 (fallback)", e2.speakerBuffer)
+		t.Errorf("NewEngine(48000, 0, DSPConfig{}).speakerBuffer = %d, want 0 (fallback)", e2.speakerBuffer)
 	}
 }
 

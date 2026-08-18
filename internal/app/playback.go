@@ -81,6 +81,7 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	c.mu.Unlock()
 
 	var playErr error
+	c.player.SetLoudness(float64(track.LoudnessDB))
 	if resolved.Source == SourceP2P {
 		src := audio.NewStreamingSource(resolved.Reader, audio.DefaultBufferSize)
 		// Pre-roll: wait until the buffer has enough data before decoding.
@@ -89,6 +90,7 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 		if err := src.WaitReady(ctx, audio.PreRollBytes); err != nil {
 			_ = src.Close()
 			_ = c.fsm.Send(ctx, domain.EventBufferFail)
+
 			c.mu.Lock()
 			c.currentTrack = nil
 			c.mu.Unlock()
@@ -280,6 +282,16 @@ func (c *PlaybackController) GetVolume() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.volume
+}
+
+// SetEqualizer forwards the EQ settings to the engine (live rebuild).
+func (c *PlaybackController) SetEqualizer(settings domain.EqualizerSettings) {
+	c.player.SetEqualizer(settings)
+}
+
+// GetEqualizer returns the engine's current EQ settings.
+func (c *PlaybackController) GetEqualizer() domain.EqualizerSettings {
+	return c.player.GetEqualizer()
 }
 
 func (c *PlaybackController) GetState() domain.PlayerState {

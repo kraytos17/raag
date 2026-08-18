@@ -78,6 +78,7 @@ var playbackTransitions = map[domain.PlayerState]map[domain.PlaybackEvent]domain
 		domain.EventStop:        domain.PlayerStateIdle,
 	},
 	domain.PlayerStatePlaying: {
+		domain.EventPlay:     domain.PlayerStateBuffering,
 		domain.EventPause:    domain.PlayerStatePaused,
 		domain.EventEOF:      domain.PlayerStateIdle,
 		domain.EventSeek:     domain.PlayerStateSeeking,

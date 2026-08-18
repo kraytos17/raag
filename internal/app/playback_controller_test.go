@@ -106,6 +106,9 @@ func (p *testPlayer) Seek(ctx context.Context, position time.Duration) error {
 }
 
 func (p *testPlayer) SetVolume(ctx context.Context, volume int) error { return nil }
+func (p *testPlayer) SetLoudness(db float64)                          {}
+func (p *testPlayer) SetEqualizer(settings domain.EqualizerSettings)  {}
+func (p *testPlayer) GetEqualizer() domain.EqualizerSettings          { return domain.EqualizerSettings{} }
 func (p *testPlayer) GetState() domain.PlayerState                    { return p.state }
 func (p *testPlayer) GetPosition() time.Duration                      { return p.pos }
 func (p *testPlayer) GetBufferFillLevel() float64                     { return p.fillLevel }
@@ -233,6 +236,35 @@ func TestPlaybackController_Play_LocalSource_UsesPlay(t *testing.T) {
 	}
 	if c.GetState() != domain.PlayerStatePlaying {
 		t.Fatalf("state = %v, want playing", c.GetState())
+	}
+}
+
+// TestPlaybackController_Play_WhilePlaying_IsLegal verifies a mid-playback
+// Play is now a valid FSM transition (Playing → Buffering), so user Next/Prev
+// no longer fail with ErrInvalidTransition (12.2.1 crossfade prerequisite).
+func TestPlaybackController_Play_WhilePlaying_IsLegal(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	track := &domain.Track{ID: domain.TrackID("t1"), Path: tmpT1Path, MimeType: mimeTypeMPEG}
+	repo := &testLibraryRepo{track: track}
+	player := &testPlayer{}
+	resolver := &testResolver{
+		resolveFunc: func(ctx context.Context, trackID domain.TrackID) (*ResolvedTrack, error) {
+			return &ResolvedTrack{
+				Reader: io.NopCloser(strings.NewReader("")),
+				Source: SourceLocal,
+				Track:  track,
+			}, nil
+		},
+	}
+
+	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
+
+	if err := c.Play(ctx, track.ID); err != nil {
+		t.Fatalf("Play() while playing error = %v, want nil (no ErrInvalidTransition)", err)
 	}
 }
 

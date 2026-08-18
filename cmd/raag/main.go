@@ -45,6 +45,7 @@ func run() int {
 		newPrevCmd(),
 		newSeekCmd(),
 		newVolumeCmd(),
+		newEqCmd(),
 		newStatusCmd(),
 		newSearchCmd(),
 		newQueueCmd(),
@@ -248,6 +249,64 @@ func newVolumeCmd() *cobra.Command {
 			}), fmt.Sprintf("volume set to %d", volume))
 		},
 	}
+}
+
+func newEqCmd() *cobra.Command {
+	var eqOn, eqOff bool
+	var eqBass, eqMid, eqTreble float64
+	cmd := &cobra.Command{
+		Use:   "eq",
+		Short: "Get or set the equalizer",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			// With no flags set, this is a read.
+			if !cmd.Flags().Changed("on") && !cmd.Flags().Changed("off") &&
+				!cmd.Flags().Changed("bass") && !cmd.Flags().Changed("mid") && !cmd.Flags().Changed("treble") {
+				resp, err := client.GetEqualizer()
+				if err != nil {
+					return err
+				}
+				if !resp.Success {
+					return errors.New(resp.Error)
+				}
+
+				eq := resp.GetEqualizer()
+				if eq == nil {
+					return errors.New("no equalizer state returned")
+				}
+				fmt.Fprintf(os.Stdout, "enabled: %v\nbass: %+.1f dB\nmid: %+.1f dB\ntreble: %+.1f dB\n",
+					eq.Enabled, eq.BassDb, eq.MidDb, eq.TrebleDb)
+				return nil
+			}
+
+			enabled := false
+			switch {
+			case cmd.Flags().Changed("on") && eqOn:
+				enabled = true
+			case cmd.Flags().Changed("off") && eqOff:
+				enabled = false
+			default:
+				// Band change implies enabled EQ (unless explicitly off).
+				if cmd.Flags().Changed("bass") || cmd.Flags().Changed("mid") || cmd.Flags().Changed("treble") {
+					enabled = true
+				}
+			}
+			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+				return c.SetEqualizer(enabled, eqBass, eqMid, eqTreble)
+			}), fmt.Sprintf("equalizer updated (enabled=%v bass=%+.1f mid=%+.1f treble=%+.1f)",
+				enabled, eqBass, eqMid, eqTreble))
+		},
+	}
+
+	cmd.Flags().BoolVar(&eqOn, "on", false, "enable the equalizer")
+	cmd.Flags().BoolVar(&eqOff, "off", false, "disable the equalizer")
+	cmd.Flags().Float64Var(&eqBass, "bass", 0, "bass gain in dB (-12..12)")
+	cmd.Flags().Float64Var(&eqMid, "mid", 0, "mid gain in dB (-12..12)")
+	cmd.Flags().Float64Var(&eqTreble, "treble", 0, "treble gain in dB (-12..12)")
+	return cmd
 }
 
 func newStatusCmd() *cobra.Command {
