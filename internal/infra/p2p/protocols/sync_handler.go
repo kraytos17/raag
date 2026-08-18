@@ -86,7 +86,6 @@ func (h *SyncHandler) Handle(stream network.Stream) {
 	}
 
 	peerID := stream.Conn().RemotePeer()
-
 	switch payload := req.Payload.(type) {
 	case *pb.SyncRequest_ManifestRequest:
 		if h.admission != nil {
@@ -118,19 +117,12 @@ func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.
 	h.mu.RUnlock()
 
 	if !announce {
-		resp := &pb.SyncResponse{
-			Payload: &pb.SyncResponse_Manifest{
-				Manifest: &pb.LibraryManifest{
-					PeerId:    h.localPeerID.String(),
-					TrackIds:  []string{}, // empty, not nil
-					Timestamp: time.Now().Unix(),
-				},
-			},
-		}
-		if err := wire.WriteMsg(stream, resp); err != nil {
-			slog.Error("failed to send empty manifest", "err", err)
-		}
-		slog.Debug("empty manifest sent (sharing disabled)")
+		// Return a real error so the requesting peer's FetchPeerData can
+		// distinguish "sharing disabled" from a legitimately empty library
+		// (which returns a manifest with no track IDs). This makes the client's
+		// "library sharing disabled" branch reachable
+		h.sendError(stream, "library sharing disabled", pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED)
+		slog.Debug("manifest request refused (sharing disabled)")
 		return
 	}
 

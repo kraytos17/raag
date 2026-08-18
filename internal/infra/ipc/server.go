@@ -764,7 +764,7 @@ func (s *Server) handleLibScanAsync(req *pb.LibScanRequest) *pb.Response {
 		s.publishProgress(jobID, p.Scanned, p.Total, p.CurrentFile, string(p.Phase))
 	}
 	// Register this scan's own progress handler so concurrent scans don't
-	// clobber each other's jobID closure (12.5.5).
+	// clobber each other's jobID closure
 	s.scanner.OnProgress(progressFn)
 
 	go func() {
@@ -800,10 +800,12 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 	}
 
 	var pbPeers []*pb.Peer
+	seen := make(map[string]struct{})
 	for p, err := range s.peerRepo.ListAll(ctx) {
 		if err != nil {
 			continue
 		}
+		seen[string(p.ID)] = struct{}{}
 		if s.p2pNode != nil {
 			if enriched := s.p2pNode.PeerStatus(p); enriched != nil {
 				pbPeers = append(pbPeers, enriched)
@@ -811,6 +813,31 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 			}
 		}
 		pbPeers = append(pbPeers, convert.PeerInfoToProto(p))
+	}
+
+	// Surface mDNS-discovered peers that aren't already persisted/connected, so
+	// the peers panel shows what's out there even before a connect completes.
+	if s.p2pNode != nil {
+		connected := s.p2pNode.Peers()
+		connectedSet := make(map[peer.ID]struct{}, len(connected))
+		for _, pid := range connected {
+			connectedSet[pid] = struct{}{}
+		}
+
+		for _, pi := range s.p2pNode.DiscoveredPeers() {
+			if _, ok := seen[string(pi.ID)]; ok {
+				continue
+			}
+			if _, ok := connectedSet[pi.ID]; ok {
+				continue
+			}
+			addrs := make([]string, len(pi.Addrs))
+			for i, a := range pi.Addrs {
+				addrs[i] = a.String()
+			}
+			pbPeers = append(pbPeers, &pb.Peer{Id: pi.ID.String(), Addrs: addrs, Connected: false})
+			seen[string(pi.ID)] = struct{}{}
+		}
 	}
 	return &pb.Response{
 		Success: true,
