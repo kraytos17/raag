@@ -760,12 +760,24 @@ const (
 	EventError            uint32 = 256
 )
 
+// ConnState reports the lifecycle of an event subscription's connection.
+type ConnState int
+
+const (
+	// ConnConnected is emitted after a successful (re)subscribe.
+	ConnConnected ConnState = iota
+	// ConnReconnecting is emitted when the subscription lost its connection
+	// and is backing off before retrying.
+	ConnReconnecting
+)
+
 // EventClient handles event subscriptions with backpressure. The client's
 // single reader goroutine fans events out to registered subscribers; the
 // EventClient does not read the connection itself.
 type EventClient struct {
 	events    chan *pb.Event
 	errChan   chan error
+	state     chan ConnState
 	closeOnce sync.Once
 	closed    chan struct{}
 	client    *Client
@@ -779,6 +791,7 @@ func (c *Client) Subscribe(eventMask uint32) (*EventClient, error) {
 	ec := &EventClient{
 		events:    make(chan *pb.Event, 100),
 		errChan:   make(chan error, 1),
+		state:     make(chan ConnState, 1),
 		closed:    make(chan struct{}),
 		client:    c,
 		eventMask: eventMask,
@@ -809,6 +822,7 @@ func (c *Client) SubscribeWithRetry(eventMask uint32) *EventClient {
 	ec := &EventClient{
 		events:    make(chan *pb.Event, 100),
 		errChan:   make(chan error, 1),
+		state:     make(chan ConnState, 1),
 		closed:    make(chan struct{}),
 		client:    c,
 		eventMask: eventMask,
@@ -838,6 +852,7 @@ func (ec *EventClient) eventLoopWithRetry() {
 
 		err := ec.resubscribe()
 		if err != nil {
+			ec.setState(ConnReconnecting)
 			if backoff.Wait(ec.closed, policy.Next()) {
 				return
 			}
@@ -845,12 +860,23 @@ func (ec *EventClient) eventLoopWithRetry() {
 		}
 
 		policy.Reset()
+		ec.setState(ConnConnected)
 		select {
 		case <-ec.closed:
 			return
 		case <-ec.errChan:
-			// Connection dropped; resubscribe.
+			// Connection dropped. Report reconnecting immediately — the
+			// resubscribe below may block in the client's dial backoff.
+			ec.setState(ConnReconnecting)
 		}
+	}
+}
+
+// setState emits a connection-state signal to the subscriber (non-blocking).
+func (ec *EventClient) setState(state ConnState) {
+	select {
+	case ec.state <- state:
+	default:
 	}
 }
 
@@ -893,6 +919,12 @@ func (ec *EventClient) notifyConnLost(err error) {
 // Events returns the channel to receive events
 func (ec *EventClient) Events() <-chan *pb.Event {
 	return ec.events
+}
+
+// State returns the channel that reports connection-state transitions
+// (ConnConnected / ConnReconnecting) for this subscription.
+func (ec *EventClient) State() <-chan ConnState {
+	return ec.state
 }
 
 // Err returns the error channel

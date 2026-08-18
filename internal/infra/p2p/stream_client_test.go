@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -784,6 +785,38 @@ func TestChunkedReader_Read_ExpiredDeadline(t *testing.T) {
 	}
 	if _, ok := errors.AsType[timeoutError](err); !ok {
 		t.Errorf("Read() error = %v, want timeoutError", err)
+	}
+}
+
+func TestChunkedReader_Read_EmptyChunkNoProgress_ReturnsError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := NewStreamClient(peer.ID("empty-chunk-peer"), nil, NewPeerScorer())
+	r := &chunkedReader{
+		client:      client,
+		trackID:     testTrackID,
+		chunkSize:   1024,
+		offset:      0,
+		ctx:         ctx,
+		fetchCancel: cancel,
+	}
+
+	// A prefetch that resolves to an empty, non-last chunk: Read must return
+	// an error instead of re-fetching the same offset forever
+	r.ahead = make(chan prefetchResult, 1)
+	r.ahead <- prefetchResult{
+		resp: &pb.ChunkResponse{Data: nil, LastChunk: false},
+		gen:  r.seekGen,
+	}
+
+	buf := make([]byte, 16)
+	_, err := r.Read(buf)
+	if err == nil {
+		t.Fatal("Read() with empty non-last chunk: expected error, got nil")
+	}
+	if strings.Contains(err.Error(), "empty chunk") == false {
+		t.Errorf("Read() error = %q, want empty-chunk error", err)
 	}
 }
 

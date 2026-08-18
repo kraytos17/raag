@@ -155,7 +155,7 @@ func (m *Model) renderFooter() string {
 	}
 
 	row1 := lipgloss.NewStyle().Foreground(textColor).Render(trackInfo)
-	row2 := seekBar + "  " + subtleStyle.Render(posStr+" / "+durStr)
+	row2 := seekBar + "  " + subtleStyle.Render(posStr+" / "+durStr) + "  " + m.renderBuffer()
 	row3 := subtleStyle.Render("vol ") + volumeBar + subtleStyle.Render(fmt.Sprintf(" %d%%  ", m.Volume)) + modeTags + controls
 
 	borderLine := dimStyle.Render(strings.Repeat("─", m.Width))
@@ -191,6 +191,24 @@ func (m *Model) renderVolumeBar(width int) string {
 	result.WriteString(strings.Repeat("█", filled))
 	result.WriteString(strings.Repeat("░", rest))
 	return lipgloss.NewStyle().Foreground(accentColor).Render(result.String())
+}
+
+// renderBuffer shows the audio buffer fill ratio (0-1) as a percentage, so
+// streaming health is visible during P2P playback. A low fill while playing
+// usually means the peer is stalling.
+func (m *Model) renderBuffer() string {
+	if m.Player.State != StatePlaying {
+		return ""
+	}
+
+	pct := m.Player.BufferFill * 100
+	if pct > 100 {
+		pct = 100
+	}
+	if pct <= 0 {
+		return ""
+	}
+	return subtleStyle.Render(fmt.Sprintf("buf: %d%%", int(pct)))
 }
 
 func (m *Model) renderHelpOverlay() string {

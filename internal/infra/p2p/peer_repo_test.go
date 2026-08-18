@@ -10,6 +10,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
@@ -210,6 +211,51 @@ func TestP2PNode_RefreshAllManifests(t *testing.T) {
 			t.Fatal("timed out waiting for peer B's manifest to be cached")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestP2PNode_MeasureAllPeersLatency_ActivePingRecords verifies the latency
+// pass actively pings connected peers and records the RTT to the scorer.
+func TestP2PNode_MeasureAllPeersLatency_ActivePingRecords(t *testing.T) {
+	net := mocknet.New()
+	defer net.Close()
+
+	hostA, err := net.GenPeer()
+	if err != nil {
+		t.Fatalf("GenPeer A: %v", err)
+	}
+
+	hostB, err := net.GenPeer()
+	if err != nil {
+		t.Fatalf("GenPeer B: %v", err)
+	}
+
+	pingA := ping.NewPingService(hostA)
+	pingB := ping.NewPingService(hostB)
+	_ = pingA
+	_ = pingB
+
+	if err := net.LinkAll(); err != nil {
+		t.Fatalf("LinkAll: %v", err)
+	}
+	if err := hostA.Connect(context.Background(), hostB.Peerstore().PeerInfo(hostB.ID())); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	scorer := NewPeerScorer()
+	pm := newPeerManager(hostA, discovery.NewPeerCache(100), nil, scorer, time.Hour, nil)
+	pm.peerCache.Add(hostB.Peerstore().PeerInfo(hostB.ID()))
+	node := &P2PNode{
+		host:      hostA,
+		peerMgr:   pm,
+		peerCache: pm.peerCache,
+		scorer:    scorer,
+		done:      make(chan struct{}),
+	}
+
+	node.measureAllPeersLatency()
+	if got := scorer.AvgLatency(hostB.ID()); got <= 0 {
+		t.Fatalf("AvgLatency(peer) = %v, want > 0 after active probe", got)
 	}
 }
 

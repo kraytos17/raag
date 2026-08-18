@@ -265,6 +265,60 @@ func TestPlaybackController_Play_P2PSource_UsesPlayStreaming(t *testing.T) {
 	if !p2pPlayed {
 		t.Fatal("PlayStreaming was not called for P2P source")
 	}
+	// The pre-roll wait (WaitReady) makes the Buffering state real: the FSM
+	// leaves Idle→Buffering on EventPlay, blocks until PreRollBytes buffer,
+	// then EventBufferReady→Playing. Assert we end in Playing
+	if got := c.GetState(); got != domain.PlayerStatePlaying {
+		t.Fatalf("state after P2P play = %v, want playing", got)
+	}
+}
+
+func TestPlaybackController_Play_BufferingIsReal(t *testing.T) {
+	ctx := context.Background()
+	bus := events.New()
+	defer bus.Close()
+
+	// The monitor (checkBufferLevel), not the play-time EventBufferReady, is
+	// the source of truth for underrun/refill once playback is underway
+	player := &testPlayer{state: domain.PlayerStatePlaying}
+	c := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, player, &testResolver{}, bus)
+	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
+
+	eventsCh := make(chan domain.EventType, 2)
+	unsub := bus.Subscribe(domain.EventPlaybackBuffering, func(e domain.Event) { eventsCh <- e.Type })
+	unsub2 := bus.Subscribe(domain.EventPlaybackReady, func(e domain.Event) { eventsCh <- e.Type })
+	defer unsub()
+	defer unsub2()
+
+	// Low fill while Playing → real underrun → Buffering.
+	player.fillLevel = audio.LowWatermark - 0.05
+	c.checkBufferLevel(ctx)
+	if got := c.GetState(); got != domain.PlayerStateBuffering {
+		t.Fatalf("state after low fill = %v, want buffering", got)
+	}
+
+	// Refilled above HighWatermark → real buffer-ready → Playing.
+	player.fillLevel = audio.HighWatermark + 0.05
+	c.checkBufferLevel(ctx)
+	if got := c.GetState(); got != domain.PlayerStatePlaying {
+		t.Fatalf("state after refill = %v, want playing", got)
+	}
+
+	got := map[domain.EventType]bool{}
+	for range 2 {
+		select {
+		case et := <-eventsCh:
+			got[et] = true
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for buffering events")
+		}
+	}
+	if !got[domain.EventPlaybackBuffering] {
+		t.Error("missing EventPlaybackBuffering on underrun")
+	}
+	if !got[domain.EventPlaybackReady] {
+		t.Error("missing EventPlaybackReady on refill")
+	}
 }
 
 func TestPlaybackController_Play_ResolvesTrackFromResolved(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/p-society/raag/internal/app"
@@ -50,7 +51,6 @@ type P2PNode struct {
 	mdns            *discovery.MdnsDiscovery
 	peerMgr         *peerManager
 	mdnsServiceName string
-	shareManifest   bool
 	admission       *protocols.AdmissionRegistry
 	done            chan struct{}
 	mu              sync.Mutex
@@ -171,7 +171,6 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		mdnsDiscovered:  mdnsDiscovered,
 		peerMgr:         peerMgr,
 		mdnsServiceName: cfg.MdnsServiceName,
-		shareManifest:   cfg.ShareManifest,
 		admission:       admission,
 		lanOnly:         cfg.LANOnly,
 		maxPeers:        cfg.MaxPeers,
@@ -550,14 +549,26 @@ func (n *P2PNode) measureAllPeersLatency() {
 	if n.metrics != nil && n.metrics.ConnectedPeers != nil {
 		n.metrics.ConnectedPeers.Set(float64(len(n.Peers())))
 	}
+
+	// Actively probe connected peers with a ping RTT; fall back to libp2p's
+	// passive LatencyEWMA for known-but-unconnected peers. A peer that is
+	// connected but fails ping is skipped (stale EWMA from an old connection
+	// would mislead the scorer).
+	connected := make(map[peer.ID]bool, len(n.Peers()))
+	for _, pid := range n.Peers() {
+		connected[pid] = true
+		n.probePeerLatency(pid)
+	}
 	for _, pi := range n.peerCache.All() {
+		if connected[pi.ID] {
+			continue
+		}
+
 		latency := n.host.Peerstore().LatencyEWMA(pi.ID)
 		if latency > 0 {
 			n.scorer.RecordLatency(pi.ID, latency)
 		}
 	}
-	// Publish score updates so the UI can refresh a peer's score without
-	// treating it as a new connection
 	if n.bus == nil {
 		return
 	}
@@ -574,6 +585,25 @@ func (n *P2PNode) measureAllPeersLatency() {
 			domain.PeerScoreUpdatedPayload{PeerID: domain.PeerID(pid.String()), Score: score},
 		))
 	}
+}
+
+// latencyProbeTimeout bounds each active ping so a slow peer can't stall the
+// whole measurement pass.
+const latencyProbeTimeout = 3 * time.Second
+
+// probePeerLatency actively measures a connected peer's round-trip time with a
+// libp2p ping and records it to the scorer. Failures are best-effort: a failed
+// ping simply leaves the previous recorded latency in place.
+func (n *P2PNode) probePeerLatency(pid peer.ID) {
+	ctx, cancel := context.WithTimeout(context.Background(), latencyProbeTimeout)
+	defer cancel()
+
+	res := <-ping.Ping(ctx, n.host, pid)
+	if res.Error != nil {
+		slog.Debug("latency probe failed", "peer", pid, "err", res.Error)
+		return
+	}
+	n.scorer.RecordLatency(pid, res.RTT)
 }
 
 func (n *P2PNode) fetchPeerData(pid peer.ID) {

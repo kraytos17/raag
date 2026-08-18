@@ -1961,6 +1961,7 @@ type StatusResponse struct {
 	Volume        int32                  `protobuf:"varint,4,opt,name=volume,proto3" json:"volume,omitempty"`
 	QueueLength   int32                  `protobuf:"varint,5,opt,name=queue_length,json=queueLength,proto3" json:"queue_length,omitempty"`
 	QueuePosition int32                  `protobuf:"varint,6,opt,name=queue_position,json=queuePosition,proto3" json:"queue_position,omitempty"`
+	BufferFill    float32                `protobuf:"fixed32,7,opt,name=buffer_fill,json=bufferFill,proto3" json:"buffer_fill,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2033,6 +2034,13 @@ func (x *StatusResponse) GetQueueLength() int32 {
 func (x *StatusResponse) GetQueuePosition() int32 {
 	if x != nil {
 		return x.QueuePosition
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetBufferFill() float32 {
+	if x != nil {
+		return x.BufferFill
 	}
 	return 0
 }
@@ -5210,7 +5218,7 @@ const file_raag_proto_rawDesc = "" +
 	"\apayload\">\n" +
 	"\vPlayRequest\x12\x19\n" +
 	"\btrack_id\x18\x01 \x01(\tR\atrackId\x12\x14\n" +
-	"\x05query\x18\x02 \x01(\tR\x05query\"\xdb\x01\n" +
+	"\x05query\x18\x02 \x01(\tR\x05query\"\xfc\x01\n" +
 	"\x0eStatusResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x120\n" +
 	"\rcurrent_track\x18\x02 \x01(\v2\v.raag.TrackR\fcurrentTrack\x12\x1f\n" +
@@ -5218,7 +5226,9 @@ const file_raag_proto_rawDesc = "" +
 	"positionMs\x12\x16\n" +
 	"\x06volume\x18\x04 \x01(\x05R\x06volume\x12!\n" +
 	"\fqueue_length\x18\x05 \x01(\x05R\vqueueLength\x12%\n" +
-	"\x0equeue_position\x18\x06 \x01(\x05R\rqueuePosition\"\x0f\n" +
+	"\x0equeue_position\x18\x06 \x01(\x05R\rqueuePosition\x12\x1f\n" +
+	"\vbuffer_fill\x18\a \x01(\x02R\n" +
+	"bufferFill\"\x0f\n" +
 	"\rStatusRequest\"\x0e\n" +
 	"\fPauseRequest\"\x0f\n" +
 	"\rResumeRequest\"\r\n" +
