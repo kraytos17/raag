@@ -74,6 +74,7 @@ type testPlayer struct {
 	prepared          string
 	committed         bool
 	preloadDisabled   bool
+	streamingSource   audio.AudioSource
 }
 
 func (p *testPlayer) Play(ctx context.Context, reader io.Reader, mimeType string) error {
@@ -83,6 +84,7 @@ func (p *testPlayer) Play(ctx context.Context, reader io.Reader, mimeType string
 
 func (p *testPlayer) PlayStreaming(ctx context.Context, source audio.AudioSource, mimeType string) error {
 	p.state = domain.PlayerStatePlaying
+	p.streamingSource = source
 	if p.playStreamingHook != nil {
 		p.playStreamingHook()
 	}
@@ -101,6 +103,10 @@ func (p *testPlayer) Resume(ctx context.Context) error {
 
 func (p *testPlayer) Stop(ctx context.Context) error {
 	p.state = domain.PlayerStateIdle
+	if p.streamingSource != nil {
+		_ = p.streamingSource.Close()
+		p.streamingSource = nil
+	}
 	return nil
 }
 
@@ -160,6 +166,7 @@ func TestPlaybackController_SeekFailure_RollsBackToPaused(t *testing.T) {
 	resolver := &testResolver{}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	c.fsm.SetStateForTest(domain.PlayerStatePaused)
 	c.currentTrack = track
 
@@ -186,6 +193,7 @@ func TestPlaybackController_SeekFailure_RollsBackToPlaying(t *testing.T) {
 	resolver := &testResolver{}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
 	c.currentTrack = track
 
@@ -259,6 +267,7 @@ func TestPlaybackController_Play_LocalSource_UsesPlay(t *testing.T) {
 	}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 
 	if err := c.Play(ctx, track.ID); err != nil {
 		t.Fatalf("Play() error = %v", err)
@@ -290,6 +299,7 @@ func TestPlaybackController_Play_WhilePlaying_IsLegal(t *testing.T) {
 	}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
 
 	if err := c.Play(ctx, track.ID); err != nil {
@@ -320,6 +330,7 @@ func TestPlaybackController_Play_P2PSource_UsesPlayStreaming(t *testing.T) {
 	}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	if err := c.Play(ctx, track.ID); err != nil {
 		t.Fatalf("Play() error = %v", err)
 	}
@@ -343,6 +354,7 @@ func TestPlaybackController_Play_BufferingIsReal(t *testing.T) {
 	// the source of truth for underrun/refill once playback is underway
 	player := &testPlayer{state: domain.PlayerStatePlaying}
 	c := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, player, &testResolver{}, bus)
+	defer c.Stop(ctx)
 	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
 
 	eventsCh := make(chan domain.EventType, 2)
@@ -401,6 +413,7 @@ func TestPlaybackController_Play_ResolvesTrackFromResolved(t *testing.T) {
 	}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	if err := c.Play(ctx, domain.TrackID("remote1")); err != nil {
 		t.Fatalf("Play() error = %v", err)
 	}
@@ -442,6 +455,7 @@ func TestPlaybackController_Underrun_BufferingTransitions(t *testing.T) {
 
 	player := &testPlayer{state: domain.PlayerStatePlaying}
 	c := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, player, &testResolver{}, bus)
+	defer c.Stop(ctx)
 	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
 
 	// In Playing with fill below LowWatermark → underrun → Buffering.
@@ -478,6 +492,7 @@ func TestPlaybackController_Underrun_PublishesEvents(t *testing.T) {
 
 	player := &testPlayer{state: domain.PlayerStatePlaying}
 	c := NewPlaybackController(&testLibraryRepo{}, testSearchHandler{}, player, &testResolver{}, bus)
+	defer c.Stop(ctx)
 	c.fsm.SetStateForTest(domain.PlayerStatePlaying)
 
 	eventsCh := make(chan domain.EventType, 4)
@@ -518,6 +533,7 @@ func TestPlaybackController_TrackFinished_PublishedOnDone(t *testing.T) {
 	track := &domain.Track{ID: domain.TrackID("track-1"), Title: "Finished Song", DurationMs: 180000, PlayCount: 3}
 	player := &testPlayer{done: make(chan struct{})}
 	c := NewPlaybackController(&testLibraryRepo{track: track}, testSearchHandler{}, player, &testResolver{}, bus)
+	defer c.Stop(ctx)
 
 	if err := c.Play(ctx, track.ID); err != nil {
 		t.Fatalf("Play() error = %v", err)
@@ -587,6 +603,7 @@ func TestPlaybackController_Preload_AfterLocalPlay(t *testing.T) {
 	}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	c.SetQueue(queue)
 
 	if err := c.Play(ctx, t1.ID); err != nil {
@@ -623,6 +640,7 @@ func TestPlaybackController_Preload_P2PNext_Skipped(t *testing.T) {
 	}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	c.SetQueue(queue)
 
 	if err := c.Play(ctx, t1.ID); err != nil {
@@ -659,6 +677,7 @@ func TestPlaybackController_NaturalEnd_CommitsPrepared(t *testing.T) {
 	bus.Subscribe(domain.EventTrackStarted, func(e domain.Event) { started <- e.Type })
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	c.SetQueue(queue)
 
 	if err := c.Play(ctx, t1.ID); err != nil {
@@ -718,6 +737,7 @@ func TestPlaybackController_NaturalEnd_NoPrepared_FallsBack(t *testing.T) {
 	}
 
 	c := NewPlaybackController(repo, testSearchHandler{}, player, resolver, bus)
+	defer c.Stop(ctx)
 	c.SetQueue(queue)
 	if err := c.Play(ctx, t1.ID); err != nil {
 		t.Fatalf("Play() error = %v", err)

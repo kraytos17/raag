@@ -217,7 +217,9 @@ func TestP2PNode_RefreshAllManifests(t *testing.T) {
 // TestP2PNode_OverlayLiveScore_MergesScorerSnapshot verifies PeerStatus
 // overlays the live scorer latency/bandwidth/score onto the persisted peer.
 func TestP2PNode_OverlayLiveScore_MergesScorerSnapshot(t *testing.T) {
-	host, err := mocknet.New().GenPeer()
+	net := mocknet.New()
+	defer net.Close()
+	host, err := net.GenPeer()
 	if err != nil {
 		t.Fatalf("GenPeer: %v", err)
 	}
@@ -353,6 +355,7 @@ func TestP2PNode_DiscoveredPeers(t *testing.T) {
 		mdnsDiscovered: discovery.NewTTLPeerCache(100, time.Hour),
 		done:           make(chan struct{}),
 	}
+	defer node.mdnsDiscovered.Close()
 
 	if got := len(node.DiscoveredPeers()); got != 0 {
 		t.Fatalf("DiscoveredPeers() len = %d, want 0 initially", got)

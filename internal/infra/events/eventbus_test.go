@@ -22,10 +22,10 @@ func TestEventBus_New(t *testing.T) {
 
 func TestEventBus_PublishSubscribe(t *testing.T) {
 	bus := New()
+	defer bus.Close()
+
 	ctx := context.Background()
-
 	done := make(chan struct{}, 1)
-
 	unsub := bus.Subscribe(domain.EventTrackStarted, func(e domain.Event) {
 		done <- struct{}{}
 	})
@@ -45,11 +45,11 @@ func TestEventBus_PublishSubscribe(t *testing.T) {
 
 func TestEventBus_MultipleSubscribers(t *testing.T) {
 	bus := New()
+	defer bus.Close()
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
 	wg.Add(5)
-
 	for range 5 {
 		bus.Subscribe(domain.EventTrackStarted, func(e domain.Event) {
 			wg.Done()
@@ -57,7 +57,6 @@ func TestEventBus_MultipleSubscribers(t *testing.T) {
 	}
 
 	bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
-
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -75,12 +74,11 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 	bus := New()
 	ctx := context.Background()
 
-	var count int64
+	var count atomic.Int64
 	var wg sync.WaitGroup
 	wg.Add(1)
-
 	unsub := bus.Subscribe(domain.EventTrackStarted, func(e domain.Event) {
-		atomic.AddInt64(&count, 1)
+		count.Add(1)
 		wg.Done()
 	})
 
@@ -96,18 +94,15 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 	case <-done:
 	}
 
-	if atomic.LoadInt64(&count) != 1 {
-		t.Errorf("before unsubscribe, count = %d, want 1", atomic.LoadInt64(&count))
+	if count.Load() != 1 {
+		t.Errorf("before unsubscribe, count = %d, want 1", count.Load())
 	}
 
 	unsub()
-
 	bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
-	// Ensure any in-flight dispatch has drained.
 	bus.Close()
-
-	if atomic.LoadInt64(&count) != 1 {
-		t.Errorf("after unsubscribe, count = %d, want 1", atomic.LoadInt64(&count))
+	if count.Load() != 1 {
+		t.Errorf("after unsubscribe, count = %d, want 1", count.Load())
 	}
 }
 
@@ -131,12 +126,12 @@ func TestEventBus_DuplicateUnsubscribe(t *testing.T) {
 	bus := New()
 	ctx := context.Background()
 
-	var count int64
+	var count atomic.Int64
 	var wg sync.WaitGroup
 	wg.Add(1)
 
 	unsub := bus.Subscribe(domain.EventTrackStarted, func(e domain.Event) {
-		atomic.AddInt64(&count, 1)
+		count.Add(1)
 		wg.Done()
 	})
 
@@ -158,21 +153,21 @@ func TestEventBus_DuplicateUnsubscribe(t *testing.T) {
 	bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, nil))
 	bus.Close()
 
-	if atomic.LoadInt64(&count) != 1 {
-		t.Errorf("duplicate unsubscribe count = %d, want 1", atomic.LoadInt64(&count))
+	if count.Load() != 1 {
+		t.Errorf("duplicate unsubscribe count = %d, want 1", count.Load())
 	}
 }
 
 func TestEventBus_PublishManyHandlers(t *testing.T) {
 	bus := New()
+	defer bus.Close()
 	ctx := context.Background()
 
-	var count int64
+	var count atomic.Int64
 	var wg sync.WaitGroup
 	wg.Add(1)
-
 	bus.Subscribe(domain.EventTrackStarted, func(e domain.Event) {
-		newCount := atomic.AddInt64(&count, 1)
+		newCount := count.Add(1)
 		if newCount == 50 {
 			wg.Done()
 		}
@@ -193,89 +188,45 @@ func TestEventBus_PublishManyHandlers(t *testing.T) {
 	case <-done:
 	}
 
-	finalCount := atomic.LoadInt64(&count)
+	finalCount := count.Load()
 	if finalCount != 50 {
 		t.Errorf("expected 50 handlers called, got %d", finalCount)
 	}
 }
 
-func TestRingBuffer_PushPop(t *testing.T) {
-	tests := []struct {
-		name     string
-		size     int
-		pushData []domain.EventType
-	}{
-		{
-			name:     "single element",
-			size:     4,
-			pushData: []domain.EventType{domain.EventTrackStarted},
-		},
-		{
-			name:     "multiple elements",
-			size:     4,
-			pushData: []domain.EventType{domain.EventTrackStarted, domain.EventTrackPaused, domain.EventTrackResumed},
-		},
-		{
-			name:     "full buffer",
-			size:     2,
-			pushData: []domain.EventType{domain.EventTrackStarted, domain.EventTrackPaused},
-		},
+func TestSubscription_BackpressureDropOldest(t *testing.T) {
+	sub := &subscription{
+		id:   1,
+		ch:   make(chan domain.Event, 2),
+		stop: make(chan struct{}),
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rb := newRingBuffer(tt.size)
-			for i, et := range tt.pushData {
-				rb.Push(domain.NewEvent(et, nil))
-				if i < tt.size {
-					if rb.count != i+1 {
-						t.Errorf("after push %d, count = %d, want %d", i, rb.count, i+1)
-					}
-				}
-			}
-		})
-	}
-}
+	a := domain.NewEvent(domain.EventTrackStarted, nil)
+	b := domain.NewEvent(domain.EventTrackPaused, nil)
+	c := domain.NewEvent(domain.EventTrackResumed, nil)
 
-func TestRingBuffer_Pop(t *testing.T) {
-	rb := newRingBuffer(4)
-	event, ok := rb.Pop()
-	if ok {
-		t.Error("Pop() on empty buffer should return ok=false")
+	sub.push(a)
+	sub.push(b)
+	// Buffer is now full. push must drop the oldest (a) and deliver c.
+	sub.push(c)
+	got := make([]domain.EventType, 0, 2)
+	for range 2 {
+		select {
+		case e := <-sub.ch:
+			got = append(got, e.Type)
+		case <-time.After(time.Second):
+			t.Fatal("timed out draining subscription channel")
+		}
 	}
 
-	rb.Push(domain.NewEvent(domain.EventTrackStarted, nil))
-	event, ok = rb.Pop()
-	if !ok {
-		t.Error("Pop() on non-empty buffer should return ok=true")
+	want := []domain.EventType{domain.EventTrackPaused, domain.EventTrackResumed}
+	if len(got) != len(want) {
+		t.Fatalf("drained %d events, want %d", len(got), len(want))
 	}
-	if event.Type != domain.EventTrackStarted {
-		t.Errorf("Pop() event.Type = %v, want EventTrackStarted", event.Type)
-	}
-}
-
-func TestRingBuffer_Overflow(t *testing.T) {
-	rb := newRingBuffer(2)
-	rb.Push(domain.NewEvent(domain.EventTrackStarted, nil))
-	rb.Push(domain.NewEvent(domain.EventTrackPaused, nil))
-
-	if rb.count != 2 {
-		t.Errorf("after 2 pushes, count = %d, want 2", rb.count)
-	}
-
-	rb.Push(domain.NewEvent(domain.EventTrackResumed, nil))
-	if rb.count != 2 {
-		t.Errorf("after overflow push, count = %d, want 2", rb.count)
-	}
-}
-
-func TestRingBuffer_Notify(t *testing.T) {
-	rb := newRingBuffer(4)
-	rb.Push(domain.NewEvent(domain.EventTrackStarted, nil))
-	select {
-	case <-rb.notify:
-	default:
-		t.Error("Push() should notify when buffer has events")
+	for i, et := range want {
+		if got[i] != et {
+			t.Errorf("drained event %d = %v, want %v", i, got[i], et)
+		}
 	}
 }
 

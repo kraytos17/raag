@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -35,12 +34,6 @@ const (
 type Server struct {
 	socketPath string
 	listener   net.Listener
-
-	mu    sync.Mutex
-	conns []net.Conn
-	// connWriteMu serializes writes to each conn so broadcast (scan progress)
-	// and handleConn response writes can't interleave frames.
-	connWriteMu map[net.Conn]*sync.Mutex
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -169,7 +162,6 @@ func NewServer(socketPath string, config ServerConfig) (*Server, error) {
 	server := &Server{
 		socketPath:   socketPath,
 		done:         make(chan struct{}),
-		connWriteMu:  make(map[net.Conn]*sync.Mutex),
 		playback:     config.Playback,
 		scanner:      config.Scanner,
 		search:       config.Search,
@@ -359,31 +351,13 @@ func (s *Server) publishProgress(jobID string, scanned int, total int, currentFi
 }
 
 func (s *Server) broadcast(resp *pb.Response) {
-	s.mu.Lock()
-	conns := make([]net.Conn, len(s.conns))
-	copy(conns, s.conns)
-	s.mu.Unlock()
-
-	for _, conn := range conns {
-		if err := s.writeToConn(conn, resp); err != nil {
+	for _, st := range s.subMgr.All() {
+		// Scan progress is intentionally not event-mask gated: every
+		// connected client receives it.
+		if err := s.subMgr.WriteTo(st.conn, resp); err != nil {
 			slog.Debug("failed to broadcast to conn", "error", err)
 		}
 	}
-}
-
-// writeToConn serializes a response write to a conn with its per-conn mutex so
-// concurrent writes (broadcast vs handleConn response) can't interleave frames.
-func (s *Server) writeToConn(conn net.Conn, msg *pb.Response) error {
-	s.mu.Lock()
-	mu := s.connWriteMu[conn]
-	s.mu.Unlock()
-
-	if mu == nil {
-		mu = &sync.Mutex{}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	return wire.WriteMsg(conn, msg)
 }
 
 // publishPlaybackState broadcasts playback state change
@@ -455,10 +429,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			continue
 		}
 
-		s.mu.Lock()
-		s.conns = append(s.conns, conn)
-		s.connWriteMu[conn] = &sync.Mutex{}
-		s.mu.Unlock()
+		s.subMgr.Register(conn)
 
 		s.wg.Add(1)
 		go func() {
@@ -472,7 +443,6 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 	defer func() {
 		_ = conn.Close()
-		s.removeConn(conn)
 		s.subMgr.Unsubscribe(conn)
 	}()
 
@@ -515,7 +485,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			slog.Warn("failed to set write deadline", "error", err)
 			return
 		}
-		if err := s.writeToConn(conn, resp); err != nil {
+		if err := s.subMgr.WriteTo(conn, resp); err != nil {
 			slog.Warn("write response failed", "error", err)
 			return
 		}
@@ -1282,16 +1252,6 @@ func (s *Server) handleGetTrackByPath(ctx context.Context, req *pb.GetTrackByPat
 	}
 }
 
-func (s *Server) removeConn(conn net.Conn) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if i := slices.Index(s.conns, conn); i != -1 {
-		s.conns = slices.Delete(s.conns, i, i+1)
-	}
-	delete(s.connWriteMu, conn)
-}
-
 func (s *Server) Stop(ctx context.Context) error {
 	s.closeOnce.Do(func() {
 		close(s.done)
@@ -1300,15 +1260,10 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.listener != nil {
 		_ = s.listener.Close()
 	}
-
-	s.mu.Lock()
-	for _, conn := range s.conns {
-		_ = conn.Close()
+	for _, st := range s.subMgr.All() {
+		_ = st.conn.Close()
 	}
 
-	s.conns = nil
-	s.connWriteMu = nil
-	s.mu.Unlock()
 	s.wg.Wait()
 	if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
 		slog.Warn("failed to remove socket file", "path", s.socketPath, "error", err)
@@ -1348,36 +1303,79 @@ func AsComponent(server *Server) app.Component {
 
 type SubscriptionManager struct {
 	mu   sync.RWMutex
-	subs map[net.Conn]*Subscription
+	subs map[net.Conn]*connState
 }
 
-type Subscription struct {
+// connState is the per-connection record. It owns the single write mutex for
+// the connection so response writes, scan-progress broadcasts, and event
+// broadcasts all serialize on the same lock (one owner for "who may write to
+// this conn right now").
+type connState struct {
 	conn      net.Conn
-	eventMask uint32
+	eventMask uint32 // 0 until a Subscribe request sets it
 	writeMu   sync.Mutex
 }
 
 func NewSubscriptionManager() *SubscriptionManager {
 	return &SubscriptionManager{
-		subs: make(map[net.Conn]*Subscription),
+		subs: make(map[net.Conn]*connState),
 	}
 }
 
-// Subscribe adds a new subscription
+// Register adds a newly accepted connection to the manager. Call once in the
+// accept loop; the conn now owns its write mutex even before subscribing.
+func (sm *SubscriptionManager) Register(conn net.Conn) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.subs[conn] = &connState{conn: conn}
+}
+
+// Subscribe sets the event mask on an existing connection's state. The
+// connection must already be registered.
 func (sm *SubscriptionManager) Subscribe(conn net.Conn, eventMask uint32) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.subs[conn] = &Subscription{
-		conn:      conn,
-		eventMask: eventMask,
+	if st, ok := sm.subs[conn]; ok {
+		st.eventMask = eventMask
+		return
 	}
+	sm.subs[conn] = &connState{conn: conn, eventMask: eventMask}
 }
 
-// Unsubscribe removes a subscription
+// Unsubscribe removes a connection.
 func (sm *SubscriptionManager) Unsubscribe(conn net.Conn) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	delete(sm.subs, conn)
+}
+
+// WriteTo serializes a message write to a connection under the connection's
+// single write mutex. All response, scan-progress, and event writes go
+// through this so they can never interleave frames.
+func (sm *SubscriptionManager) WriteTo(conn net.Conn, msg *pb.Response) error {
+	sm.mu.RLock()
+	st := sm.subs[conn]
+	sm.mu.RUnlock()
+	if st == nil {
+		// Unregistered conn: write without a shared owner (defensive; the
+		// accept loop registers every conn before it is used).
+		return wire.WriteMsg(conn, msg)
+	}
+
+	st.writeMu.Lock()
+	defer st.writeMu.Unlock()
+	return wire.WriteMsg(conn, msg)
+}
+
+// All returns a snapshot of all registered connections.
+func (sm *SubscriptionManager) All() []*connState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	out := make([]*connState, 0, len(sm.subs))
+	for _, st := range sm.subs {
+		out = append(out, st)
+	}
+	return out
 }
 
 // Broadcast sends an event to all subscribers who are interested in this event type
@@ -1390,23 +1388,21 @@ func (sm *SubscriptionManager) Broadcast(eventType uint32, payload []byte) {
 		Payload:   payload,
 		Timestamp: time.Now().UnixMilli(),
 	}
-
-	for _, sub := range sm.subs {
-		if sub.eventMask&eventType == 0 {
+	for _, st := range sm.subs {
+		if st.eventMask&eventType == 0 {
 			continue // Not subscribed to this event type
 		}
 
-		sub.writeMu.Lock()
-		err := wire.WriteMsg(sub.conn, event)
-		sub.writeMu.Unlock()
-
+		st.writeMu.Lock()
+		err := wire.WriteMsg(st.conn, event)
+		st.writeMu.Unlock()
 		if err != nil {
 			slog.Debug("event broadcast failed", "error", err)
 		}
 	}
 }
 
-// Count returns the number of active subscriptions
+// Count returns the number of active connections
 func (sm *SubscriptionManager) Count() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()

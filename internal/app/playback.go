@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/p-society/raag/internal/domain"
@@ -24,14 +23,8 @@ type PlaybackController struct {
 	preparedTrack *domain.Track
 	volume        int
 	queue         Queue
-	advanceCancel context.CancelFunc
-	advanceGen    atomic.Int64
-
-	bufferCancel     context.CancelFunc
-	bufferMonitorGen atomic.Int64
-
-	progressCb     func(positionMs, durationMs int64)
-	progressTicker *time.Ticker
+	sessionCancel context.CancelFunc
+	progressCb    func(positionMs, durationMs int64)
 }
 
 // NewPlaybackController creates a playback controller. An optional initial
@@ -59,7 +52,26 @@ func NewPlaybackController(
 	}
 }
 
+// startSession creates the context that all per-playback goroutines (advance
+// watcher, buffer monitor, progress ticker) share for this playback session.
+// It cancels any previous session so a new Play supersedes the old one, and
+// Stop cancels it. The generation counters previously used to detect stale
+// watchers are unnecessary: a canceled context stays canceled, so no old
+// goroutine can mistake itself for current.
+func (c *PlaybackController) startSession(ctx context.Context) context.Context {
+	c.mu.Lock()
+	if c.sessionCancel != nil {
+		c.sessionCancel()
+	}
+
+	sessionCtx, cancel := context.WithCancel(ctx)
+	c.sessionCancel = cancel
+	c.mu.Unlock()
+	return sessionCtx
+}
+
 func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) error {
+	sessionCtx := c.startSession(ctx)
 	resolved, err := c.resolver.Resolve(ctx, trackID)
 	if err != nil {
 		return err
@@ -124,9 +136,9 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 		slog.Error("FSM transition to playing failed", "error", err)
 	}
 
-	c.startAdvanceWatcher(ctx)
-	c.startProgressTicker(ctx)
-	c.startBufferMonitor(ctx)
+	c.startAdvanceWatcher(ctx, sessionCtx)
+	c.startProgressTicker(sessionCtx)
+	c.startBufferMonitor(sessionCtx)
 	c.bus.Publish(ctx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
 		TrackID:  track.ID,
 		Title:    track.Title,
@@ -196,17 +208,9 @@ func (c *PlaybackController) Resume(ctx context.Context) error {
 
 func (c *PlaybackController) Stop(ctx context.Context) error {
 	c.mu.Lock()
-	if c.advanceCancel != nil {
-		c.advanceCancel()
-		c.advanceCancel = nil
-	}
-	if c.bufferCancel != nil {
-		c.bufferCancel()
-		c.bufferCancel = nil
-	}
-	if c.progressTicker != nil {
-		c.progressTicker.Stop()
-		c.progressTicker = nil
+	if c.sessionCancel != nil {
+		c.sessionCancel()
+		c.sessionCancel = nil
 	}
 
 	state := c.fsm.State()
@@ -362,23 +366,15 @@ func (c *PlaybackController) preloadNext(ctx context.Context) {
 	c.mu.Unlock()
 }
 
-func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
-	if c.advanceCancel != nil {
-		c.advanceCancel()
-	}
-
-	gen := c.advanceGen.Add(1)
-	watchCtx, cancel := context.WithCancel(ctx)
-	c.advanceCancel = cancel
+// startAdvanceWatcher waits for the current track's natural end and advances
+// the queue. It is bound to the playback session: when sessionCtx is canceled
+// (a newer Play superseded this one, or Stop ran), the watcher exits. playCtx
+// is the caller's original context, used only for the fallback re-Play path.
+func (c *PlaybackController) startAdvanceWatcher(playCtx, sessionCtx context.Context) {
 	go func() {
 		select {
 		case <-c.player.Done():
-		case <-watchCtx.Done():
-			return
-		}
-
-		// Check if this watcher is stale
-		if gen != c.advanceGen.Load() {
+		case <-sessionCtx.Done():
 			return
 		}
 
@@ -389,17 +385,13 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		track := c.currentTrack
 		c.mu.RUnlock()
 		if track != nil {
-			c.bus.Publish(watchCtx, domain.NewEvent(domain.EventTrackFinished, domain.TrackFinishedPayload{
+			c.bus.Publish(sessionCtx, domain.NewEvent(domain.EventTrackFinished, domain.TrackFinishedPayload{
 				TrackID:   track.ID,
 				PlayCount: track.PlayCount,
 				Duration:  track.Duration(),
 				Completed: true,
 			}))
 		}
-
-		// Gapless path: a next track was preloaded. Commit it in place (state
-		// stays Playing, no Idle hop / EventEOF), then re-arm the watcher for
-		// the new track's end.
 		if c.player.HasNext() {
 			if err := c.player.CommitNext(); err == nil {
 				c.mu.Lock()
@@ -408,12 +400,12 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 				c.currentTrack = next
 				c.mu.Unlock()
 				if next != nil {
-					c.bus.Publish(watchCtx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
+					c.bus.Publish(sessionCtx, domain.NewEvent(domain.EventTrackStarted, domain.TrackStartedPayload{
 						TrackID:  next.ID,
 						Duration: next.Duration(),
 					}))
 				}
-				c.startAdvanceWatcher(watchCtx)
+				c.startAdvanceWatcher(playCtx, sessionCtx)
 				return
 			}
 		}
@@ -424,7 +416,7 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		c.preparedTrack = nil
 		c.mu.Unlock()
 
-		_ = c.fsm.Send(watchCtx, domain.EventEOF)
+		_ = c.fsm.Send(sessionCtx, domain.EventEOF)
 		c.mu.Lock()
 		state := c.fsm.State()
 		queue := c.queue
@@ -441,7 +433,7 @@ func (c *PlaybackController) startAdvanceWatcher(ctx context.Context) {
 		if next == nil {
 			return
 		}
-		_ = c.Play(watchCtx, next.ID)
+		_ = c.Play(playCtx, next.ID)
 	}()
 }
 
@@ -452,29 +444,16 @@ func (c *PlaybackController) search(ctx context.Context, query string, limit int
 // startBufferMonitor watches the player's buffer fill level and drives the
 // FSM Playing↔Buffering transitions on underrun and refill.
 // Without this, a drained buffer would silently stop the track.
-func (c *PlaybackController) startBufferMonitor(ctx context.Context) {
-	c.mu.Lock()
-	if c.bufferCancel != nil {
-		c.bufferCancel()
-	}
-
-	gen := c.bufferMonitorGen.Add(1)
-	monitorCtx, cancel := context.WithCancel(ctx)
-	c.bufferCancel = cancel
-	c.mu.Unlock()
-
+func (c *PlaybackController) startBufferMonitor(sessionCtx context.Context) {
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-monitorCtx.Done():
+			case <-sessionCtx.Done():
 				return
 			case <-ticker.C:
-				if gen != c.bufferMonitorGen.Load() {
-					return
-				}
-				c.checkBufferLevel(monitorCtx)
+				c.checkBufferLevel(sessionCtx)
 			}
 		}
 	}()
@@ -515,16 +494,10 @@ func (c *PlaybackController) OnProgress(callback func(positionMs, durationMs int
 	c.progressCb = callback
 }
 
-func (c *PlaybackController) startProgressTicker(ctx context.Context) {
-	c.mu.Lock()
-	if c.progressTicker != nil {
-		c.progressTicker.Stop()
-	}
-
+func (c *PlaybackController) startProgressTicker(sessionCtx context.Context) {
 	ticker := time.NewTicker(100 * time.Millisecond)
-	c.progressTicker = ticker
-	c.mu.Unlock()
 	go func() {
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
@@ -545,13 +518,7 @@ func (c *PlaybackController) startProgressTicker(ctx context.Context) {
 				if cb != nil {
 					cb(pos.Milliseconds(), durMs)
 				}
-			case <-ctx.Done():
-				c.mu.Lock()
-				if c.progressTicker != nil {
-					c.progressTicker.Stop()
-					c.progressTicker = nil
-				}
-				c.mu.Unlock()
+			case <-sessionCtx.Done():
 				return
 			}
 		}

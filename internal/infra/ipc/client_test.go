@@ -1557,8 +1557,8 @@ func TestServer_ConcurrentLibScans_NoClobber(t *testing.T) {
 	t.Fatal("progress handlers were not removed after scans completed")
 }
 
-// TestServer_Broadcast_WithConcurrentResponseWrites verifies writeToConn
-// serializes concurrent writes so frames don't interleave.
+// TestServer_Broadcast_WithConcurrentResponseWrites verifies the shared
+// per-conn write lock serializes concurrent writes so frames don't interleave.
 func TestServer_Broadcast_WithConcurrentResponseWrites(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -1567,11 +1567,7 @@ func TestServer_Broadcast_WithConcurrentResponseWrites(t *testing.T) {
 	serverConn, clientConn := net.Pipe()
 	defer clientConn.Close()
 
-	srv.mu.Lock()
-	srv.conns = append(srv.conns, serverConn)
-	srv.connWriteMu[serverConn] = &sync.Mutex{}
-	srv.mu.Unlock()
-	defer srv.removeConn(serverConn)
+	srv.subMgr.Register(serverConn)
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -1596,7 +1592,7 @@ func TestServer_Broadcast_WithConcurrentResponseWrites(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				_ = srv.writeToConn(serverConn, &pb.Response{Success: true, JobId: "resp"})
+				_ = srv.subMgr.WriteTo(serverConn, &pb.Response{Success: true, JobId: "resp"})
 			}
 		}
 	}()

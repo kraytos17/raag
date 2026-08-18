@@ -7,7 +7,6 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -34,7 +33,6 @@ type Notifee struct {
 	host         host.Host
 	onDiscovered PeerHandler
 	onConnected  PeerHandler
-	mu           sync.Mutex
 	done         <-chan struct{}
 	sem          chan struct{}
 	pending      chan peer.AddrInfo
@@ -55,9 +53,7 @@ func (n *Notifee) HandlePeerFound(pi peer.AddrInfo) {
 	default:
 	}
 
-	n.mu.Lock()
 	onDiscovered := n.onDiscovered
-	n.mu.Unlock()
 
 	if onDiscovered != nil {
 		onDiscovered(pi)
@@ -256,9 +252,20 @@ func (c *PeerCache) Len() int {
 }
 
 // TTLPeerCache is a discovery peer cache whose entries expire after a TTL, used
-// for discovered-but-not-connected peers so they don't persist forever.
+// for discovered-but-not-connected peers so they don't persist forever. Unlike
+// hashicorp/golang-lru's expirable LRU — whose janitor goroutine can never be
+// stopped — this cache owns its background sweeper and can be closed.
 type TTLPeerCache struct {
-	cache *expirable.LRU[peer.ID, peer.AddrInfo]
+	mu        sync.Mutex
+	entries   map[peer.ID]ttlEntry
+	ttl       time.Duration
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+type ttlEntry struct {
+	addr      peer.AddrInfo
+	expiresAt time.Time
 }
 
 func NewTTLPeerCache(maxSize int, ttl time.Duration) *TTLPeerCache {
@@ -268,25 +275,70 @@ func NewTTLPeerCache(maxSize int, ttl time.Duration) *TTLPeerCache {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	return &TTLPeerCache{
-		cache: expirable.NewLRU[peer.ID, peer.AddrInfo](maxSize, nil, ttl),
+
+	c := &TTLPeerCache{
+		entries: make(map[peer.ID]ttlEntry, maxSize),
+		ttl:     ttl,
+		done:    make(chan struct{}),
+	}
+	go c.sweeper()
+	return c
+}
+
+// sweeper periodically removes expired entries. It stops when Close is called.
+func (c *TTLPeerCache) sweeper() {
+	ticker := time.NewTicker(c.ttl / 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ticker.C:
+			c.removeExpired()
+		}
 	}
 }
 
+func (c *TTLPeerCache) removeExpired() {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, e := range c.entries {
+		if now.After(e.expiresAt) {
+			delete(c.entries, id)
+		}
+	}
+}
+
+// Close stops the background sweeper. The cache must not be used afterwards.
+func (c *TTLPeerCache) Close() {
+	c.closeOnce.Do(func() { close(c.done) })
+}
+
 func (c *TTLPeerCache) Add(pi peer.AddrInfo) {
-	c.cache.Add(pi.ID, pi)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[pi.ID] = ttlEntry{addr: pi, expiresAt: time.Now().Add(c.ttl)}
 }
 
 func (c *TTLPeerCache) Remove(id peer.ID) {
-	c.cache.Remove(id)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, id)
 }
 
 func (c *TTLPeerCache) All() []peer.AddrInfo {
-	result := make([]peer.AddrInfo, 0, c.cache.Len())
-	for _, info := range c.cache.Keys() {
-		if v, ok := c.cache.Get(info); ok {
-			result = append(result, v)
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	result := make([]peer.AddrInfo, 0, len(c.entries))
+	for id, e := range c.entries {
+		if now.After(e.expiresAt) {
+			delete(c.entries, id)
+			continue
 		}
+		result = append(result, e.addr)
 	}
 	return result
 }
