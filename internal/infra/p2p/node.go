@@ -37,31 +37,34 @@ const (
 )
 
 type P2PNode struct {
-	host            host.Host
-	gater           *PeerGater
-	bootstrapPeers  []string
-	identity        *IdentityManager
-	streamPool      *StreamPool
-	streamHandler   *protocols.StreamHandler
-	syncHandler     *protocols.SyncHandler
-	resolver        *P2PResolver
-	scorer          *PeerScorer
-	peerCache       *discovery.PeerCache
-	mdnsDiscovered  *discovery.TTLPeerCache
-	mdns            *discovery.MdnsDiscovery
-	peerMgr         *peerManager
-	mdnsServiceName string
-	admission       *protocols.AdmissionRegistry
-	done            chan struct{}
-	mu              sync.Mutex
-	started         bool
-	lanOnly         bool
-	maxPeers        int
-	maxKnownPeers   int
-	chunkSize       int
-	peerDataTTL     time.Duration
-	metrics         *observability.Metrics
-	bus             domain.EventBus
+	host             host.Host
+	gater            *PeerGater
+	bootstrapPeers   []string
+	identity         *IdentityManager
+	streamPool       *StreamPool
+	streamHandler    *protocols.StreamHandler
+	syncHandler      *protocols.SyncHandler
+	resolver         *P2PResolver
+	scorer           *PeerScorer
+	peerCache        *discovery.PeerCache
+	mdnsDiscovered   *discovery.TTLPeerCache
+	mdns             *discovery.MdnsDiscovery
+	broadcast        *discovery.BroadcastDiscovery
+	peerMgr          *peerManager
+	mdnsServiceName  string
+	admission        *protocols.AdmissionRegistry
+	done             chan struct{}
+	mu               sync.Mutex
+	started          bool
+	lanOnly          bool
+	maxPeers         int
+	maxKnownPeers    int
+	chunkSize        int
+	peerDataTTL      time.Duration
+	broadcastPort    int
+	broadcastEnabled bool
+	metrics          *observability.Metrics
+	bus              domain.EventBus
 }
 
 type P2PNodeConfig struct {
@@ -85,6 +88,8 @@ type P2PNodeConfig struct {
 	MaxKnownPeers      int
 	ChunkSize          int
 	PeerDataTTL        time.Duration
+	BroadcastEnabled   bool
+	BroadcastPort      int
 	Transcoder         *transcoder.Transcoder
 	PeerRepo           app.PeerRepository
 	Search             app.SearchHandler
@@ -158,26 +163,28 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 	syncHandler.SetAdmissionRegistry(admission)
 	streamHandler.SetAdmissionRegistry(admission)
 	node := &P2PNode{
-		host:            p2pHost,
-		gater:           gater,
-		bootstrapPeers:  cfg.BootstrapPeers,
-		identity:        identity,
-		streamPool:      streamPool,
-		streamHandler:   streamHandler,
-		syncHandler:     syncHandler,
-		resolver:        resolver,
-		scorer:          scorer,
-		peerCache:       peerCache,
-		mdnsDiscovered:  mdnsDiscovered,
-		peerMgr:         peerMgr,
-		mdnsServiceName: cfg.MdnsServiceName,
-		admission:       admission,
-		lanOnly:         cfg.LANOnly,
-		maxPeers:        cfg.MaxPeers,
-		maxKnownPeers:   cfg.MaxKnownPeers,
-		chunkSize:       cfg.ChunkSize,
-		peerDataTTL:     cfg.PeerDataTTL,
-		metrics:         cfg.Metrics,
+		host:             p2pHost,
+		gater:            gater,
+		bootstrapPeers:   cfg.BootstrapPeers,
+		identity:         identity,
+		streamPool:       streamPool,
+		streamHandler:    streamHandler,
+		syncHandler:      syncHandler,
+		resolver:         resolver,
+		scorer:           scorer,
+		peerCache:        peerCache,
+		mdnsDiscovered:   mdnsDiscovered,
+		peerMgr:          peerMgr,
+		mdnsServiceName:  cfg.MdnsServiceName,
+		admission:        admission,
+		lanOnly:          cfg.LANOnly,
+		maxPeers:         cfg.MaxPeers,
+		maxKnownPeers:    cfg.MaxKnownPeers,
+		chunkSize:        cfg.ChunkSize,
+		peerDataTTL:      cfg.PeerDataTTL,
+		broadcastPort:    cfg.BroadcastPort,
+		broadcastEnabled: cfg.BroadcastEnabled,
+		metrics:          cfg.Metrics,
 	}
 
 	node.done = make(chan struct{})
@@ -246,6 +253,29 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 		return err
 	}
 
+	if n.broadcastEnabled {
+		bc := discovery.NewBroadcastDiscovery(
+			n.done,
+			n.host,
+			n.broadcastPort,
+			func(pi peer.AddrInfo) {
+				n.mdnsDiscovered.Add(pi)
+			},
+			func(pi peer.AddrInfo) {
+				slog.Info("peer discovered via broadcast", "peer", pi.ID)
+			},
+		)
+		if err := bc.Start(); err != nil {
+			n.mdns.Close()
+			n.streamPool.Close()
+			n.mu.Lock()
+			n.started = false
+			n.mu.Unlock()
+			return err
+		}
+		n.broadcast = bc
+	}
+
 	go n.measureLatencyLoop()
 	go n.refreshManifestsLoop()
 	if !n.lanOnly {
@@ -273,8 +303,13 @@ func (n *P2PNode) Stop(ctx context.Context) error {
 			slog.Warn("failed to close mDNS", "error", err)
 		}
 	}
-	n.mdnsDiscovered.Close()
+	if n.broadcast != nil {
+		if err := n.broadcast.Close(); err != nil {
+			slog.Warn("failed to close broadcast discovery", "error", err)
+		}
+	}
 
+	n.mdnsDiscovered.Close()
 	n.streamPool.Close()
 	if err := n.host.Close(); err != nil {
 		slog.Warn("failed to close host", "error", err)

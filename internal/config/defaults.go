@@ -10,13 +10,14 @@ import (
 )
 
 const (
-	DefaultLogLevel    = "info"
-	DefaultSampleRate  = 44100
-	DefaultBufferSize  = 4096
-	DefaultVolume      = 80
-	DefaultMaxPeers    = 20
-	DefaultStreamPort  = 7845
-	DefaultMetricsPort = 9200
+	DefaultLogLevel      = "info"
+	DefaultSampleRate    = 44100
+	DefaultBufferSize    = 4096
+	DefaultVolume        = 80
+	DefaultMaxPeers      = 20
+	DefaultStreamPort    = 7845
+	DefaultBroadcastPort = 7846
+	DefaultMetricsPort   = 9200
 )
 
 var DefaultListenAddrs = []string{
@@ -87,6 +88,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("p2p.max_known_peers", 100)
 	v.SetDefault("p2p.chunk_size", 256*1024)
 	v.SetDefault("p2p.peer_data_ttl", 24*time.Hour)
+	v.SetDefault("p2p.broadcast_enabled", true)
+	v.SetDefault("p2p.broadcast_port", DefaultBroadcastPort)
 
 	v.SetDefault("transcoder.ffmpeg_path", "ffmpeg")
 	v.SetDefault("transcoder.stream_codec", DefaultStreamCodec)
