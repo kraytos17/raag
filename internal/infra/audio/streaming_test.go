@@ -236,8 +236,7 @@ func TestStreamingSource_CancelContext(t *testing.T) {
 		dataCh: make(chan struct{}, 1),
 	}
 
-	ss.wg.Add(1)
-	go ss.fillBuffer()
+	ss.wg.Go(ss.fillBuffer)
 
 	time.Sleep(50 * time.Millisecond)
 	close(done)

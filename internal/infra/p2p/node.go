@@ -18,6 +18,7 @@ import (
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/backoff"
+	"github.com/p-society/raag/internal/infra/fsroot"
 	"github.com/p-society/raag/internal/infra/observability"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	protocols "github.com/p-society/raag/internal/infra/p2p/protocols"
@@ -53,7 +54,8 @@ type P2PNode struct {
 	peerMgr          *peerManager
 	mdnsServiceName  string
 	admission        *protocols.AdmissionRegistry
-	done             chan struct{}
+	ctx              context.Context
+	cancel           context.CancelCauseFunc
 	mu               sync.Mutex
 	started          bool
 	lanOnly          bool
@@ -90,6 +92,7 @@ type P2PNodeConfig struct {
 	PeerDataTTL        time.Duration
 	BroadcastEnabled   bool
 	BroadcastPort      int
+	LibraryPaths       []string
 	Transcoder         *transcoder.Transcoder
 	PeerRepo           app.PeerRepository
 	Search             app.SearchHandler
@@ -145,7 +148,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		uploadBandwidth: cfg.UploadBandwidth,
 	})
 
-	streamHandler := protocols.NewStreamHandler(libraryRepo)
+	streamHandler := protocols.NewStreamHandler(libraryRepo, fsroot.Open(cfg.LibraryPaths))
 	streamHandler.SetRateLimiters(cfg.PerPeerRateLimit, cfg.UploadBandwidth)
 	if cfg.Transcoder != nil {
 		streamHandler.SetTranscoder(cfg.Transcoder)
@@ -187,7 +190,6 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		metrics:          cfg.Metrics,
 	}
 
-	node.done = make(chan struct{})
 	return node, nil
 }
 
@@ -198,6 +200,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 		return nil
 	}
 
+	n.ctx, n.cancel = context.WithCancelCause(ctx)
 	n.started = true
 	n.mu.Unlock()
 
@@ -211,7 +214,6 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 		syncHandler:   n.syncHandler,
 		peerMgr:       n.peerMgr,
 		bus:           bus,
-		done:          n.done,
 		streamPool:    n.streamPool,
 		admission:     n.admission,
 		maxPeers:      n.maxPeers,
@@ -230,7 +232,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 	}
 
 	mdns := discovery.NewMdnsDiscoveryWithHandlers(
-		n.done,
+		n.ctx.Done(),
 		n.host,
 		n.mdnsServiceName,
 		func(pi peer.AddrInfo) {
@@ -255,7 +257,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 
 	if n.broadcastEnabled {
 		bc := discovery.NewBroadcastDiscovery(
-			n.done,
+			n.ctx.Done(),
 			n.host,
 			n.broadcastPort,
 			func(pi peer.AddrInfo) {
@@ -292,10 +294,8 @@ func (n *P2PNode) Stop(ctx context.Context) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	select {
-	case <-n.done:
-	default:
-		close(n.done)
+	if n.cancel != nil {
+		n.cancel(errors.New("p2p node stopped"))
 	}
 
 	if n.mdns != nil {
@@ -507,7 +507,6 @@ type connNotifier struct {
 	syncHandler   *protocols.SyncHandler
 	peerMgr       *peerManager
 	bus           domain.EventBus
-	done          <-chan struct{}
 	streamPool    *StreamPool
 	admission     *protocols.AdmissionRegistry
 	maxPeers      int
@@ -575,17 +574,7 @@ func (cn *connNotifier) OpenedStream(_ network.Network, s network.Stream) {}
 func (cn *connNotifier) ClosedStream(_ network.Network, s network.Stream) {}
 
 func (n *P2PNode) measureLatencyLoop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-n.done:
-			return
-		case <-ticker.C:
-			n.measureAllPeersLatency()
-		}
-	}
+	runTickerLoop(n.ctx, 30*time.Second, n.measureAllPeersLatency)
 }
 
 // manifestRefreshInterval is how often peer library manifests are re-fetched so
@@ -596,15 +585,21 @@ const manifestRefreshInterval = 5 * time.Minute
 // so their libraries stay fresh. FetchPeerData is idempotent and cancels any
 // prior in-flight fetch per peer, so overlapping ticks are safe.
 func (n *P2PNode) refreshManifestsLoop() {
-	ticker := time.NewTicker(manifestRefreshInterval)
+	runTickerLoop(n.ctx, manifestRefreshInterval, n.refreshAllManifests)
+}
+
+// runTickerLoop invokes work once per interval until ctx is canceled. Shared by
+// the latency and manifest refresh loops so their timing can be tested directly.
+func runTickerLoop(ctx context.Context, interval time.Duration, work func()) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-n.done:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n.refreshAllManifests()
+			work()
 		}
 	}
 }
@@ -997,10 +992,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 
 	var trackCount int
 	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for attempt := range 4 {
 			err := pm.FetchManifest(baseCtx, pid)
 			if err == nil {
@@ -1023,9 +1015,8 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 				return
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for attempt := range 4 {
 			err := pm.FetchCapabilities(baseCtx, pid)
 			if err == nil {
@@ -1039,7 +1030,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 				return
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 	pm.fetchCancelMu.Lock()
@@ -1054,7 +1045,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 			"transcode", caps.CanTranscode)
 	}
 	// Persist the freshly fetched manifest, capabilities, and score so the
-	// peer repo (and therefore `raag peers` / the TUI panel) reflects them.
+	// peer repo reflects them.
 	pm.persist(pid)
 }
 

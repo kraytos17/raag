@@ -194,7 +194,7 @@ func TestP2PNode_RefreshAllManifests(t *testing.T) {
 
 	// Node A's peer manager, wired to its host, fetches from B.
 	pm := newPeerManager(hostA, discovery.NewPeerCache(100), nil, nil, time.Hour, nil)
-	node := &P2PNode{host: hostA, peerMgr: pm, done: make(chan struct{})}
+	node := &P2PNode{host: hostA, peerMgr: pm}
 
 	node.refreshAllManifests()
 
@@ -292,7 +292,6 @@ func TestP2PNode_MeasureAllPeersLatency_ActivePingRecords(t *testing.T) {
 		peerMgr:   pm,
 		peerCache: pm.peerCache,
 		scorer:    scorer,
-		done:      make(chan struct{}),
 	}
 
 	node.measureAllPeersLatency()
@@ -353,7 +352,6 @@ func TestP2PNode_DiscoveredPeers(t *testing.T) {
 	node := &P2PNode{
 		host:           hostA,
 		mdnsDiscovered: discovery.NewTTLPeerCache(100, time.Hour),
-		done:           make(chan struct{}),
 	}
 	defer node.mdnsDiscovered.Close()
 

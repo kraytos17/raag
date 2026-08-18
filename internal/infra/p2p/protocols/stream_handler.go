@@ -14,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/fsroot"
 	"github.com/p-society/raag/internal/infra/transcoder"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
@@ -25,6 +26,7 @@ const MaxChunkSize = 256 * 1024
 type StreamHandler struct {
 	mu         sync.RWMutex
 	library    app.LibraryRepository
+	roots      *fsroot.Roots
 	admission  *AdmissionRegistry
 	transcoder *transcoder.Transcoder
 
@@ -40,9 +42,14 @@ type StreamHandler struct {
 	uploadLimiter *rate.Limiter
 }
 
-func NewStreamHandler(library app.LibraryRepository) *StreamHandler {
+// NewStreamHandler creates a handler that serves track chunks over libp2p
+// streams. roots scopes every file open to the configured library directories;
+// when nil, serving is disabled for any path that cannot be resolved (the
+// safe default for tests and misconfiguration).
+func NewStreamHandler(library app.LibraryRepository, roots *fsroot.Roots) *StreamHandler {
 	return &StreamHandler{
 		library:     library,
+		roots:       roots,
 		reqLimiters: make(map[peer.ID]*rate.Limiter),
 	}
 }
@@ -215,6 +222,14 @@ func (h *StreamHandler) serveChunk(ctx context.Context, stream network.Stream, r
 }
 
 func (h *StreamHandler) serveTranscoded(ctx context.Context, stream network.Stream, tr *transcoder.Transcoder, track *domain.Track, req *pb.ChunkRequest) {
+	// The transcode runs ffmpeg as a subprocess, which os.Root cannot scope.
+	// Reject any path outside a configured library root before handing it over.
+	if h.roots == nil || !h.roots.Contains(track.Path) {
+		slog.Warn("refusing to transcode path outside library roots", "path", track.Path)
+		h.sendError(stream, req.TrackId, "transcode error", pb.ErrorCode_ERROR_CODE_TRANSCODE_FAILED)
+		return
+	}
+
 	bitrate := ""
 	if req.Bitrate > 0 {
 		bitrate = fmt.Sprintf("%dk", req.Bitrate)
@@ -284,7 +299,12 @@ func (h *StreamHandler) serveTranscoded(ctx context.Context, stream network.Stre
 }
 
 func (h *StreamHandler) serveRaw(ctx context.Context, stream network.Stream, track *domain.Track, req *pb.ChunkRequest) {
-	f, err := os.Open(track.Path)
+	if h.roots == nil {
+		h.sendError(stream, req.TrackId, "library serving disabled", pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED)
+		return
+	}
+
+	f, err := h.roots.Open(track.Path)
 	if err != nil {
 		slog.Error("failed to open track", "path", track.Path)
 		h.sendError(stream, req.TrackId, "file error", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)

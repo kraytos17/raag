@@ -56,16 +56,24 @@ func daemonConfig() (*config.Config, error) {
 // falling back to PATH.
 func resolveDaemonBinary() (string, error) {
 	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidate := filepath.Join(dir, "raagd")
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
+		if p, ok := findDaemonBinary(filepath.Dir(exe)); ok {
+			return p, nil
 		}
 	}
 	if p, err := exec.LookPath("raagd"); err == nil {
 		return p, nil
 	}
 	return "", errors.New("raagd binary not found (build it with `make build-raagd` or add it to PATH)")
+}
+
+// findDaemonBinary returns the path to a raagd executable inside dir, if one
+// exists there.
+func findDaemonBinary(dir string) (string, bool) {
+	candidate := filepath.Join(dir, "raagd")
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate, true
+	}
+	return "", false
 }
 
 // waitForDaemon polls the IPC socket until the daemon answers or the timeout
