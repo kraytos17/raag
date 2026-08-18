@@ -366,15 +366,44 @@ func (n *P2PNode) PeerStatus(info *domain.PeerInfo) *pb.Peer {
 	pid := info.ID
 	peer := convert.PeerInfoToProto(info)
 	peer.Connected = n.host.Network().Connectedness(pid) == network.Connected
-	if caps := n.peerMgr.GetPeerCapabilities(pid); caps != nil {
-		peer.Capabilities = &pb.PeerCapabilities{
-			SupportedCodecs:   caps.SupportedCodecs,
-			SupportedBitrates: caps.SupportedBitrates,
-			CanTranscode:      caps.CanTranscode,
-			ProtocolVersion:   caps.ProtocolVersion,
+	if n.peerMgr != nil {
+		if caps := n.peerMgr.GetPeerCapabilities(pid); caps != nil {
+			peer.Capabilities = &pb.PeerCapabilities{
+				SupportedCodecs:   caps.SupportedCodecs,
+				SupportedBitrates: caps.SupportedBitrates,
+				CanTranscode:      caps.CanTranscode,
+				ProtocolVersion:   caps.ProtocolVersion,
+			}
 		}
 	}
+	// Overlay the live scorer snapshot so latency/bandwidth/score reflect the
+	// most recent measurement
+	n.overlayLiveScore(peer, pid)
 	return peer
+}
+
+// overlayLiveScore merges the in-memory scorer's live snapshot into a peer's
+// proto, filling latency/bandwidth/failure/success and recomputing the score.
+func (n *P2PNode) overlayLiveScore(peer *pb.Peer, pid peer.ID) {
+	latency, bandwidth, successes, failures, _ := n.scorer.Snapshot(pid)
+	successRate := 0.0
+	if successes+failures > 0 {
+		successRate = float64(successes) / float64(successes+failures)
+	}
+
+	score := n.scorer.Score(pid, latency, bandwidth, successRate)
+	if peer.Score == nil {
+		peer.Score = &pb.PeerScore{PeerId: string(pid)}
+	}
+
+	peer.Score.AvgLatencyMs = float64(latency.Milliseconds())
+	peer.Score.AvgBandwidth = bandwidth
+	peer.Score.SuccessCount = int32(successes)
+	peer.Score.FailureCount = int32(failures)
+	peer.Score.Score = score
+	if peer.Score.LastSeen == 0 {
+		peer.Score.LastSeen = time.Now().Unix()
+	}
 }
 
 func (n *P2PNode) SyncHandler() *protocols.SyncHandler {

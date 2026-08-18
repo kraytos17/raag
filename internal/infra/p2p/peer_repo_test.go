@@ -214,6 +214,46 @@ func TestP2PNode_RefreshAllManifests(t *testing.T) {
 	}
 }
 
+// TestP2PNode_OverlayLiveScore_MergesScorerSnapshot verifies PeerStatus
+// overlays the live scorer latency/bandwidth/score onto the persisted peer.
+func TestP2PNode_OverlayLiveScore_MergesScorerSnapshot(t *testing.T) {
+	host, err := mocknet.New().GenPeer()
+	if err != nil {
+		t.Fatalf("GenPeer: %v", err)
+	}
+
+	scorer := NewPeerScorer()
+	node := &P2PNode{host: host, scorer: scorer}
+
+	pid := peer.ID("live-peer")
+	info := domain.NewPeerInfo(pid, []string{"/ip4/10.0.0.1/tcp/7844"})
+	scorer.RecordLatency(pid, 12*time.Millisecond)
+	scorer.RecordBandwidth(pid, 1_200_000)
+	scorer.RecordSuccess(pid)
+	scorer.RecordSuccess(pid)
+
+	pbPeer := node.PeerStatus(info)
+	if pbPeer == nil {
+		t.Fatal("PeerStatus() = nil")
+	}
+	if pbPeer.Score == nil {
+		t.Fatal("expected live score to be attached")
+	}
+	if pbPeer.Score.AvgLatencyMs != 12 {
+		t.Errorf("AvgLatencyMs = %v, want 12", pbPeer.Score.AvgLatencyMs)
+	}
+	if pbPeer.Score.AvgBandwidth != 1_200_000 {
+		t.Errorf("AvgBandwidth = %d, want 1200000", pbPeer.Score.AvgBandwidth)
+	}
+	if pbPeer.Score.SuccessCount != 2 {
+		t.Errorf("SuccessCount = %d, want 2", pbPeer.Score.SuccessCount)
+	}
+	// score = latency*0.5 + successRate*0.4 + bandwidth*0.1, all > 0 here.
+	if pbPeer.Score.Score <= 0 {
+		t.Errorf("Score = %v, want > 0", pbPeer.Score.Score)
+	}
+}
+
 // TestP2PNode_MeasureAllPeersLatency_ActivePingRecords verifies the latency
 // pass actively pings connected peers and records the RTT to the scorer.
 func TestP2PNode_MeasureAllPeersLatency_ActivePingRecords(t *testing.T) {
