@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/events"
+	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 	"google.golang.org/protobuf/proto"
 )
@@ -93,7 +97,8 @@ func (m *mockPlaybackHandler) OnProgress(callback func(positionMs, durationMs in
 
 // mockScannerHandler implements ScannerHandler for testing.
 type mockScannerHandler struct {
-	progressFn func(app.ScanProgress)
+	mu         sync.Mutex
+	progressFn []func(app.ScanProgress)
 }
 
 func newMockScannerHandler() *mockScannerHandler {
@@ -109,7 +114,20 @@ func (m *mockScannerHandler) ScanIncremental(_ context.Context) (added, modified
 }
 
 func (m *mockScannerHandler) OnProgress(fn func(app.ScanProgress)) {
-	m.progressFn = fn
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.progressFn = append(m.progressFn, fn)
+}
+
+func (m *mockScannerHandler) RemoveProgressHandler(fn func(app.ScanProgress)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, h := range m.progressFn {
+		if reflect.ValueOf(h).Pointer() == reflect.ValueOf(fn).Pointer() {
+			m.progressFn = append(m.progressFn[:i], m.progressFn[i+1:]...)
+			return
+		}
+	}
 }
 
 // mockSearchHandler implements SearchHandler for testing.
@@ -1148,5 +1166,123 @@ func TestPersistentClient_SearchRemote(t *testing.T) {
 	}
 	if !remoteFound {
 		t.Fatalf("expected remote track with peer_id, got %+v", sr.Tracks)
+	}
+}
+
+// TestServer_ConcurrentLibScans_NoClobber verifies each scan registers its own
+// progress handler so concurrent scans don't clobber each other's jobID
+func TestServer_ConcurrentLibScans_NoClobber(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	mockScanner := newMockScannerHandler()
+	srv.scanner = mockScanner
+
+	// Both scans register their own progress handlers.
+	resp1 := srv.handleLibScanAsync(&pb.LibScanRequest{})
+	resp2 := srv.handleLibScanAsync(&pb.LibScanRequest{})
+
+	if resp1.JobId == "" || resp2.JobId == "" {
+		t.Fatal("expected non-empty job ids")
+	}
+	if resp1.JobId == resp2.JobId {
+		t.Fatal("concurrent scans must have distinct job ids")
+	}
+
+	// Both handlers must be registered before the scans complete.
+	mockScanner.mu.Lock()
+	registered := len(mockScanner.progressFn)
+	mockScanner.mu.Unlock()
+	if registered != 2 {
+		t.Fatalf("registered progress handlers = %d, want 2", registered)
+	}
+
+	// The server's goroutine removes the handler on completion; since the mock
+	// scanner returns immediately, wait for the removal.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mockScanner.mu.Lock()
+		remaining := len(mockScanner.progressFn)
+		mockScanner.mu.Unlock()
+		if remaining == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("progress handlers were not removed after scans completed")
+}
+
+// TestServer_Broadcast_WithConcurrentResponseWrites verifies writeToConn
+// serializes concurrent writes so frames don't interleave.
+func TestServer_Broadcast_WithConcurrentResponseWrites(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	// A net.Pipe pair stands in for a connected client conn.
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	srv.mu.Lock()
+	srv.conns = append(srv.conns, serverConn)
+	srv.connWriteMu[serverConn] = &sync.Mutex{}
+	srv.mu.Unlock()
+	defer srv.removeConn(serverConn)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Concurrent writer: broadcast and per-conn response writes.
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				srv.broadcast(&pb.Response{Success: true, JobId: "broadcast"})
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = srv.writeToConn(serverConn, &pb.Response{Success: true, JobId: "resp"})
+			}
+		}
+	}()
+
+	// Reader drains frames and verifies each decodes cleanly.
+	readErr := make(chan error, 1)
+	go func() {
+		for {
+			var resp pb.Response
+			if err := wire.ReadMsg(clientConn, &resp); err != nil {
+				readErr <- err
+				return
+			}
+			if resp.JobId != "broadcast" && resp.JobId != "resp" {
+				readErr <- fmt.Errorf("corrupted frame: job_id=%q", resp.JobId)
+				return
+			}
+		}
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+	clientConn.Close()
+
+	select {
+	case err := <-readErr:
+		if !isConnClosed(err) && !strings.Contains(err.Error(), "closed pipe") {
+			t.Fatalf("frame corruption or read error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reader did not terminate after writes stopped")
 	}
 }
