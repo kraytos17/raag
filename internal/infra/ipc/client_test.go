@@ -36,6 +36,7 @@ type mockPlaybackHandler struct {
 	currentTrack *domain.Track
 	position     time.Duration
 	bufferFill   float64
+	eq           domain.EqualizerSettings
 }
 
 func newMockPlaybackHandler() *mockPlaybackHandler {
@@ -97,6 +98,14 @@ func (m *mockPlaybackHandler) GetPosition() time.Duration {
 
 func (m *mockPlaybackHandler) GetBufferFillLevel() float64 {
 	return m.bufferFill
+}
+
+func (m *mockPlaybackHandler) SetEqualizer(settings domain.EqualizerSettings) {
+	m.eq = settings
+}
+
+func (m *mockPlaybackHandler) GetEqualizer() domain.EqualizerSettings {
+	return m.eq
 }
 
 func (m *mockPlaybackHandler) OnProgress(callback func(positionMs, durationMs int64)) {
@@ -629,6 +638,58 @@ func TestPersistentClient_HealthCheck(t *testing.T) {
 	}
 	if !hc.Healthy {
 		t.Fatal("expected healthy=true")
+	}
+}
+
+func TestPersistentClient_SetEqualizer_RoundTrip(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.SetEqualizer(true, 3.5, -2, 0)
+	if err != nil {
+		t.Fatalf("set equalizer: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("set equalizer failed: %s", resp.Error)
+	}
+	eq := resp.GetEqualizer()
+	if eq == nil {
+		t.Fatal("expected equalizer response payload")
+	}
+	if !eq.Enabled {
+		t.Error("enabled = false, want true")
+	}
+	if eq.BassDb != 3.5 || eq.MidDb != -2 || eq.TrebleDb != 0 {
+		t.Errorf("EQ = (%v, %v, %v), want (3.5, -2, 0)", eq.BassDb, eq.MidDb, eq.TrebleDb)
+	}
+}
+
+func TestPersistentClient_GetEqualizer(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	mockPlayback, _ := srv.playback.(*mockPlaybackHandler)
+	mockPlayback.eq = domain.EqualizerSettings{Enabled: true, Bass: 2, Mid: 0, Treble: 1}
+
+	c := NewClient(srv.socketPath)
+	defer func() { _ = c.Close() }()
+
+	resp, err := c.GetEqualizer()
+	if err != nil {
+		t.Fatalf("get equalizer: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("get equalizer failed: %s", resp.Error)
+	}
+	eq := resp.GetEqualizer()
+	if eq == nil {
+		t.Fatal("expected equalizer response payload")
+	}
+	if !eq.Enabled || eq.BassDb != 2 || eq.MidDb != 0 || eq.TrebleDb != 1 {
+		t.Errorf("EQ = (%v, %v, %v, %v), want (true, 2, 0, 1)", eq.Enabled, eq.BassDb, eq.MidDb, eq.TrebleDb)
 	}
 }
 

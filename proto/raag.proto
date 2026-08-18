@@ -34,6 +34,7 @@ message Track {
   bool is_duplicate = 30;
   string duplicate_of = 31;
   string peer_id = 32;
+  float loudness_db = 33;
 }
 
 message Playlist {
@@ -112,6 +113,7 @@ message Request {
     QueueShuffleRequest queue_shuffle = 33;
     QueueRepeatRequest queue_repeat = 34;
     QueueModeRequest queue_mode = 35;
+    EqualizerRequest equalizer = 36;
   }
 }
 
@@ -137,6 +139,7 @@ message Response {
     ListTracksResponse list_tracks = 21;
     QueueListResponse queue_list = 22;
     QueueModeResponse queue_mode = 23;
+    EqualizerResponse equalizer = 24;
   }
 }
 
@@ -219,6 +222,21 @@ message QueueModeRequest {}
 message QueueModeResponse {
   bool shuffle = 1;
   string repeat = 2;
+}
+
+message EqualizerRequest {
+  bool get = 5; // if true, return current state without applying changes
+  bool enabled = 1;
+  float bass_db = 2;
+  float mid_db = 3;
+  float treble_db = 4;
+}
+
+message EqualizerResponse {
+  bool enabled = 1;
+  float bass_db = 2;
+  float mid_db = 3;
+  float treble_db = 4;
 }
 
 message SearchRequest {

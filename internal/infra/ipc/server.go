@@ -109,6 +109,8 @@ type PlaybackHandler interface {
 	GetCurrentTrack() *domain.Track
 	GetPosition() time.Duration
 	GetBufferFillLevel() float64
+	SetEqualizer(settings domain.EqualizerSettings)
+	GetEqualizer() domain.EqualizerSettings
 	OnProgress(callback func(positionMs, durationMs int64))
 }
 
@@ -587,6 +589,8 @@ func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
 		resp = s.handleQueueRepeat(p.QueueRepeat)
 	case *pb.Request_QueueMode:
 		resp = s.handleQueueMode()
+	case *pb.Request_Equalizer:
+		resp = s.handleSetEqualizer(p.Equalizer)
 	case *pb.Request_Subscribe:
 		// The conn was already registered with the SubscriptionManager in
 		// handleConn before dispatch; just acknowledge so the client doesn't
@@ -956,6 +960,37 @@ func (s *Server) publishQueueUpdated() {
 		qt[i] = convert.TrackToProto(t)
 	}
 	s.PublishEvent(EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
+}
+
+// handleSetEqualizer applies EQ settings to the live playback engine and
+// returns the resulting state. With get=true it returns the current state
+// without mutating anything (serves `raag eq` reads).
+func (s *Server) handleSetEqualizer(req *pb.EqualizerRequest) *pb.Response {
+	if req == nil {
+		return &pb.Response{Success: false, Error: "missing equalizer request"}
+	}
+	if !req.Get {
+		s.playback.SetEqualizer(domain.EqualizerSettings{
+			Enabled: req.Enabled,
+			Bass:    float64(req.BassDb),
+			Mid:     float64(req.MidDb),
+			Treble:  float64(req.TrebleDb),
+		})
+	}
+	return s.eqResponse()
+}
+
+func (s *Server) eqResponse() *pb.Response {
+	eq := s.playback.GetEqualizer()
+	return &pb.Response{
+		Success: true,
+		Payload: &pb.Response_Equalizer{Equalizer: &pb.EqualizerResponse{
+			Enabled:  eq.Enabled,
+			BassDb:   float32(eq.Bass),
+			MidDb:    float32(eq.Mid),
+			TrebleDb: float32(eq.Treble),
+		}},
+	}
 }
 
 func (s *Server) handleNetworkStatus() *pb.Response {

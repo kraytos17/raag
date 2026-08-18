@@ -50,6 +50,7 @@ type Track struct {
 	ModifiedAt       int64
 	PlayCount        uint64
 	LastPlayed       int64
+	LoudnessDB       float32 // dBFS loudness measured at scan time (-Inf → silence)
 	ContentHash      string
 	IsDuplicate      bool
 	DuplicateOf      TrackID
@@ -111,6 +112,7 @@ func (t *Track) Copy() *Track {
 		ModifiedAt:       t.ModifiedAt,
 		PlayCount:        t.PlayCount,
 		LastPlayed:       t.LastPlayed,
+		LoudnessDB:       t.LoudnessDB,
 		ContentHash:      t.ContentHash,
 		IsDuplicate:      t.IsDuplicate,
 		DuplicateOf:      t.DuplicateOf,

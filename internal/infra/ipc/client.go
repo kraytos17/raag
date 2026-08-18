@@ -534,6 +534,32 @@ func (c *Client) SetVolume(volume int32) (*pb.Response, error) {
 	return c.send(req)
 }
 
+// SetEqualizer sets the EQ (enabled + band gains) and returns the resulting
+// state.
+func (c *Client) SetEqualizer(enabled bool, bass, mid, treble float64) (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload: &pb.Request_Equalizer{Equalizer: &pb.EqualizerRequest{
+			Enabled:  enabled,
+			BassDb:   float32(bass),
+			MidDb:    float32(mid),
+			TrebleDb: float32(treble),
+		}},
+	}
+	return c.send(req)
+}
+
+// GetEqualizer returns the current EQ state without mutating it.
+func (c *Client) GetEqualizer() (*pb.Response, error) {
+	req := &pb.Request{
+		ProtocolVersion: domain.IPCProtocolVersion,
+		Payload: &pb.Request_Equalizer{Equalizer: &pb.EqualizerRequest{
+			Get: true,
+		}},
+	}
+	return c.send(req)
+}
+
 // QueueAdd adds a track to the playback queue.
 func (c *Client) QueueAdd(trackID string, position int32) (*pb.Response, error) {
 	req := &pb.Request{

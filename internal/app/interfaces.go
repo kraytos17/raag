@@ -113,6 +113,9 @@ type Player interface {
 	Stop(ctx context.Context) error
 	Seek(ctx context.Context, position time.Duration) error
 	SetVolume(ctx context.Context, volume int) error
+	SetLoudness(db float64)
+	SetEqualizer(settings domain.EqualizerSettings)
+	GetEqualizer() domain.EqualizerSettings
 	GetState() domain.PlayerState
 	GetPosition() time.Duration
 	GetBufferFillLevel() float64

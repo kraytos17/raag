@@ -122,6 +122,14 @@ type VolumeChangedPayload struct {
 	Previous int
 }
 
+// EqualizerSettings is the user-facing three-band EQ state.
+type EqualizerSettings struct {
+	Enabled bool
+	Bass    float64 // dB, [-12, 12]
+	Mid     float64 // dB, [-12, 12]
+	Treble  float64 // dB, [-12, 12]
+}
+
 type QueueUpdatedPayload struct {
 	Action   QueueAction
 	TrackID  TrackID
