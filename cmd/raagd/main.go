@@ -26,11 +26,12 @@ import (
 
 func main() {
 	cfg, skipScan := loadConfig()
-	database, libraryRepo, p2pNode, p2pEnabled, searchService, metrics := initializeServices(cfg)
-	runDaemon(cfg, database, libraryRepo, p2pNode, p2pEnabled, searchService, skipScan, metrics)
+	tr := transcoder.New(transcoder.Config{FFmpegPath: cfg.Transcoder.FFmpegPath, StreamCodec: cfg.Transcoder.StreamCodec, StreamBitrate: cfg.Transcoder.StreamBitrate})
+	database, libraryRepo, p2pNode, p2pEnabled, searchService, metrics := initializeServices(cfg, tr)
+	runDaemon(cfg, database, libraryRepo, p2pNode, p2pEnabled, searchService, skipScan, metrics, tr)
 }
 
-func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool, *app.SearchService, *observability.Metrics) {
+func initializeServices(cfg *config.Config, tr *transcoder.Transcoder) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool, *app.SearchService, *observability.Metrics) {
 	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
 	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
 	if err != nil {
@@ -46,7 +47,6 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 	}
 
 	metrics := observability.NewMetrics()
-
 	searchIndex := app.NewSearchIndex(libraryRepo)
 	searchService := app.NewSearchService(searchIndex, libraryRepo)
 	enabled := cfg.P2P.Enabled
@@ -75,7 +75,7 @@ func initializeServices(cfg *config.Config) (*db.DB, db.LibraryRepo, *p2p.P2PNod
 		MaxKnownPeers:      cfg.P2P.MaxKnownPeers,
 		ChunkSize:          cfg.P2P.ChunkSize,
 		PeerDataTTL:        cfg.P2P.PeerDataTTL,
-		Transcoder:         transcoder.New(transcoder.Config{FFmpegPath: cfg.Transcoder.FFmpegPath, StreamCodec: cfg.Transcoder.StreamCodec, StreamBitrate: cfg.Transcoder.StreamBitrate}),
+		Transcoder:         tr,
 		PeerRepo:           peerRepo,
 		Search:             searchService,
 		Metrics:            metrics,
@@ -104,6 +104,7 @@ func loadConfig() (*config.Config, bool) {
 	} else {
 		cfg, err = config.Load()
 	}
+
 	if *setup || err != nil || (cfg != nil && len(cfg.Library.Paths) == 0) {
 		if !isInteractive() && !*setup {
 			fmt.Fprintf(os.Stderr, "error: no config found and not running in interactive mode. Run with --setup to run the setup wizard.\n")
@@ -152,7 +153,7 @@ func loadConfig() (*config.Config, bool) {
 
 func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	p2pNode *p2p.P2PNode, p2pEnabled bool, searchService *app.SearchService,
-	skipScan bool, metrics *observability.Metrics,
+	skipScan bool, metrics *observability.Metrics, tr *transcoder.Transcoder,
 ) {
 	bus := events.New()
 	peerRepo := db.NewPeerRepo(database)
@@ -181,11 +182,11 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	if p2pEnabled && p2pNode != nil {
 		p2pResolver := p2p.NewP2PResolverAdapter(p2pNode.Resolver())
 		p2pResolver.SetPeersProvider(p2pNode.Peers)
-		resolver = app.NewMultiSourceResolver(libraryRepo, p2pResolver)
+		resolver = app.NewMultiSourceResolver(libraryRepo, p2pResolver, tr)
 		searchService.SetRemote(resolver.(app.RemoteSearcher))
 		p2pNodeStarted = true
 	} else {
-		resolver = app.NewLocalResolver(libraryRepo)
+		resolver = app.NewLocalResolver(libraryRepo, tr)
 	}
 
 	player := audio.NewEngine(cfg.Playback.SampleRate, cfg.Playback.BufferSize, dspFromConfig(cfg.Playback))
@@ -289,6 +290,10 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 
 	removePidFile(cfg.Daemon.PidFile)
 	bus.Close()
+	if tr != nil {
+		tr.Cleanup()
+	}
+
 	slog.Info("closing database...")
 	if err := database.CloseWithContext(shutdownCtx); err != nil {
 		slog.Error("database close failed", "error", err)

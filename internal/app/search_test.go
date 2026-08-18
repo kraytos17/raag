@@ -487,7 +487,7 @@ func TestMultiSourceResolver_SearchRemote_FanOut(t *testing.T) {
 		},
 	}
 
-	r := NewMultiSourceResolver(repo, adapter)
+	r := NewMultiSourceResolver(repo, adapter, nil)
 	hits := r.(*MultiSourceResolver).SearchRemote(context.Background(), "x", 10)
 	if len(hits) != 2 {
 		t.Fatalf("SearchRemote() hits = %d, want 2: %+v", len(hits), hits)
@@ -505,12 +505,12 @@ func TestMultiSourceResolver_SearchRemote_FanOut(t *testing.T) {
 func TestMultiSourceResolver_SearchRemote_NoPeers(t *testing.T) {
 	repo := &MockSearchRepo{tracks: make(map[domain.TrackID]*domain.Track)}
 	adapter := &fakeRemoteAdapter{peers: nil}
-	r := NewMultiSourceResolver(repo, adapter)
+	r := NewMultiSourceResolver(repo, adapter, nil)
 	if hits := r.(*MultiSourceResolver).SearchRemote(context.Background(), "x", 10); len(hits) != 0 {
 		t.Fatalf("SearchRemote() with no peers = %+v, want empty", hits)
 	}
 
-	r2 := NewMultiSourceResolver(repo, nil)
+	r2 := NewMultiSourceResolver(repo, nil, nil)
 	if hits := r2.(*MultiSourceResolver).SearchRemote(context.Background(), "x", 10); len(hits) != 0 {
 		t.Fatalf("SearchRemote() with nil adapter = %+v, want empty", hits)
 	}
