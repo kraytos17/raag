@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -25,6 +26,17 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	p2pNode *p2p.P2PNode, p2pEnabled bool, searchService *app.SearchService,
 	skipScan bool, metrics *observability.Metrics, tr *transcoder.Transcoder,
 ) {
+	if err := checkStalePidFile(cfg.Daemon.PidFile); err != nil {
+		if errors.Is(err, ErrAlreadyRunning) {
+			slog.Error("refusing to start: another raagd daemon is already running",
+				"pid_file", cfg.Daemon.PidFile)
+		} else {
+			slog.Error("failed to check pid file", "pid_file", cfg.Daemon.PidFile, "error", err)
+		}
+		_ = database.Close()
+		os.Exit(1)
+	}
+
 	bus := events.New()
 	peerRepo := db.NewPeerRepo(database)
 	settings := db.NewSettingsRepo(database)

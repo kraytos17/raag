@@ -294,6 +294,7 @@ func RunSetup() error {
 			PeerDataTTL:      24 * time.Hour,
 			BroadcastEnabled: true,
 			BroadcastPort:    DefaultBroadcastPort,
+			BroadcastTarget:  "",
 		},
 		Transcoder: TranscoderConfig{
 			FFmpegPath:    "ffmpeg",
@@ -392,6 +393,7 @@ type P2PConfig struct {
 	PeerDataTTL        time.Duration `mapstructure:"peer_data_ttl"`
 	BroadcastEnabled   bool          `mapstructure:"broadcast_enabled"`
 	BroadcastPort      int           `mapstructure:"broadcast_port"`
+	BroadcastTarget    string        `mapstructure:"broadcast_target"`
 }
 
 type TranscoderConfig struct {

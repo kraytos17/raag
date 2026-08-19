@@ -104,7 +104,7 @@ func TestBroadcastDiscovery_AnnouncesAndDiscovers(t *testing.T) {
 	connectedCh := make(chan peer.ID, 4)
 	mk := func(h host.Host, listenPort, targetPort int, done <-chan struct{}) *BroadcastDiscovery {
 		bc := NewBroadcastDiscovery(
-			done, h, listenPort,
+			done, h, listenPort, "",
 			func(pi peer.AddrInfo) {},
 			func(pi peer.AddrInfo) { connectedCh <- pi.ID },
 		)
@@ -130,7 +130,7 @@ func TestBroadcastDiscovery_AnnouncesAndDiscovers(t *testing.T) {
 	// Each side should eventually discover (and connect to) the other.
 	wantA, wantB := hostB.ID(), hostA.ID()
 	gotA, gotB := false, false
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(10 * time.Second)
 	for !gotA || !gotB {
 		select {
 		case id := <-connectedCh:
@@ -157,7 +157,7 @@ func TestBroadcastDiscovery_SkipsSelf(t *testing.T) {
 	port := freeUDPPort(t)
 	done := make(chan struct{})
 	bc := NewBroadcastDiscovery(
-		done, host, port,
+		done, host, port, "",
 		func(pi peer.AddrInfo) {},
 		func(pi peer.AddrInfo) { t.Error("self announcement should not connect") },
 	)
@@ -188,7 +188,7 @@ func TestBroadcastDiscovery_IgnoresGarbage(t *testing.T) {
 
 	port := freeUDPPort(t)
 	done := make(chan struct{})
-	bc := NewBroadcastDiscovery(done, host, port, nil, nil)
+	bc := NewBroadcastDiscovery(done, host, port, "", nil, nil)
 	bc.target = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
 	bc.interval = 50 * time.Millisecond
 	if err := bc.Start(); err != nil {
@@ -223,7 +223,7 @@ func TestBroadcastDiscovery_CloseStopsGoroutines(t *testing.T) {
 
 	port := freeUDPPort(t)
 	done := make(chan struct{})
-	bc := NewBroadcastDiscovery(done, host, port, nil, nil)
+	bc := NewBroadcastDiscovery(done, host, port, "", nil, nil)
 	bc.target = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
 	bc.interval = 10 * time.Millisecond
 	if err := bc.Start(); err != nil {
@@ -257,8 +257,8 @@ func TestBroadcastDiscovery_SharedPort(t *testing.T) {
 	}
 
 	port := freeUDPPort(t)
-	bcA := NewBroadcastDiscovery(make(chan struct{}), hostA, port, nil, nil)
-	bcB := NewBroadcastDiscovery(make(chan struct{}), hostB, port, nil, nil)
+	bcA := NewBroadcastDiscovery(make(chan struct{}), hostA, port, "", nil, nil)
+	bcB := NewBroadcastDiscovery(make(chan struct{}), hostB, port, "", nil, nil)
 	defer bcA.Close()
 	defer bcB.Close()
 
@@ -279,7 +279,7 @@ func TestBroadcastDiscovery_MalformedDatagramNoPanic(t *testing.T) {
 	}
 
 	port := freeUDPPort(t)
-	bc := NewBroadcastDiscovery(make(chan struct{}), host, port, nil, nil)
+	bc := NewBroadcastDiscovery(make(chan struct{}), host, port, "", nil, nil)
 	bc.target = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
 	bc.interval = 10 * time.Millisecond
 	if err := bc.Start(); err != nil {

@@ -64,6 +64,7 @@ type P2PNode struct {
 	chunkSize        int
 	peerDataTTL      time.Duration
 	broadcastPort    int
+	broadcastTarget  string
 	broadcastEnabled bool
 	metrics          *observability.Metrics
 	bus              domain.EventBus
@@ -92,6 +93,7 @@ type P2PNodeConfig struct {
 	PeerDataTTL        time.Duration
 	BroadcastEnabled   bool
 	BroadcastPort      int
+	BroadcastTarget    string
 	LibraryPaths       []string
 	Transcoder         *transcoder.Transcoder
 	PeerRepo           app.PeerRepository
@@ -186,6 +188,7 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		chunkSize:        cfg.ChunkSize,
 		peerDataTTL:      cfg.PeerDataTTL,
 		broadcastPort:    cfg.BroadcastPort,
+		broadcastTarget:  cfg.BroadcastTarget,
 		broadcastEnabled: cfg.BroadcastEnabled,
 		metrics:          cfg.Metrics,
 	}
@@ -260,6 +263,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 			n.ctx.Done(),
 			n.host,
 			n.broadcastPort,
+			n.broadcastTarget,
 			func(pi peer.AddrInfo) {
 				n.mdnsDiscovered.Add(pi)
 			},
@@ -429,7 +433,7 @@ func (n *P2PNode) overlayLiveScore(peer *pb.Peer, pid peer.ID) {
 
 	score := n.scorer.Score(pid, latency, bandwidth, successRate)
 	if peer.Score == nil {
-		peer.Score = &pb.PeerScore{PeerId: string(pid)}
+		peer.Score = &pb.PeerScore{PeerId: pid.String()}
 	}
 
 	peer.Score.AvgLatencyMs = float64(latency.Milliseconds())
@@ -649,7 +653,7 @@ func (n *P2PNode) measureAllPeersLatency() {
 		score := n.scorer.Score(pid, latency, bandwidth, successRate)
 		n.bus.Publish(context.Background(), domain.NewEvent(
 			domain.EventPeerScoreUpdated,
-			domain.PeerScoreUpdatedPayload{PeerID: domain.PeerID(pid.String()), Score: score},
+			domain.PeerScoreUpdatedPayload{PeerID: pid, Score: score},
 		))
 	}
 }

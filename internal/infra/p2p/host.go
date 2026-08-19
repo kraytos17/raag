@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -17,6 +18,55 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+// ErrPortInUse is returned when a configured listen port is already bound by
+// another process. libp2p's TCP transport enables SO_REUSEPORT by default, so
+// two daemons can otherwise silently co-bind the same port and answer dials
+// with different identities (peer id mismatch). Failing loudly instead of
+// co-binding prevents that.
+var ErrPortInUse = errors.New("p2p listen port already in use")
+
+// probeListenAddrs binds each configured TCP/UDP port without SO_REUSEPORT and
+// releases it immediately. If the port is already held by another process
+// (e.g. a stale raagd daemon), the bind fails with EADDRINUSE and the caller
+// can abort before libp2p silently shares the port. Port 0 (ephemeral) is
+// skipped: it can never conflict.
+func probeListenAddrs(listenAddrs []ma.Multiaddr) error {
+	for _, a := range listenAddrs {
+		host := ""
+		if v, err := a.ValueForProtocol(ma.P_IP4); err == nil {
+			host = v
+		} else if v, err := a.ValueForProtocol(ma.P_IP6); err == nil {
+			host = "[" + v + "]"
+		}
+
+		if v, err := a.ValueForProtocol(ma.P_TCP); err == nil {
+			port, err := strconv.Atoi(v)
+			if err != nil || port == 0 {
+				continue
+			}
+
+			l, err := net.Listen("tcp", net.JoinHostPort(host, v))
+			if err != nil {
+				return fmt.Errorf("%w (tcp): %s: %v", ErrPortInUse, net.JoinHostPort(host, v), err)
+			}
+			_ = l.Close()
+		}
+		if v, err := a.ValueForProtocol(ma.P_UDP); err == nil {
+			port, err := strconv.Atoi(v)
+			if err != nil || port == 0 {
+				continue
+			}
+
+			pc, err := net.ListenPacket("udp", net.JoinHostPort(host, v))
+			if err != nil {
+				return fmt.Errorf("%w (udp): %s: %v", ErrPortInUse, net.JoinHostPort(host, v), err)
+			}
+			_ = pc.Close()
+		}
+	}
+	return nil
+}
 
 func listenPorts(listenAddrs []ma.Multiaddr) (tcpPorts []int, quicPorts []int, err error) {
 	seenTCP := map[int]bool{}
@@ -96,6 +146,9 @@ func NewHost(privKey crypto.PrivKey, cfg P2PConfig) (host.Host, error) {
 
 	_, _, err = listenPorts(listenAddrs)
 	if err != nil {
+		return nil, err
+	}
+	if err := probeListenAddrs(listenAddrs); err != nil {
 		return nil, err
 	}
 

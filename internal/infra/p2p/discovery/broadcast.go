@@ -50,7 +50,7 @@ type BroadcastDiscovery struct {
 	target    *net.UDPAddr
 }
 
-func NewBroadcastDiscovery(done <-chan struct{}, h host.Host, port int, onDiscovered PeerHandler, onConnected PeerHandler) *BroadcastDiscovery {
+func NewBroadcastDiscovery(done <-chan struct{}, h host.Host, port int, target string, onDiscovered PeerHandler, onConnected PeerHandler) *BroadcastDiscovery {
 	n := &Notifee{
 		host:         h,
 		onDiscovered: onDiscovered,
@@ -59,7 +59,7 @@ func NewBroadcastDiscovery(done <-chan struct{}, h host.Host, port int, onDiscov
 		sem:          make(chan struct{}, 10),
 		pending:      make(chan peer.AddrInfo, pendingQueueSize),
 	}
-	return &BroadcastDiscovery{
+	b := &BroadcastDiscovery{
 		host:     h,
 		port:     port,
 		notifee:  n,
@@ -68,6 +68,15 @@ func NewBroadcastDiscovery(done <-chan struct{}, h host.Host, port int, onDiscov
 		interval: broadcastAnnounceInterval,
 		target:   &net.UDPAddr{IP: net.IPv4bcast, Port: port},
 	}
+
+	// An explicit target (e.g. "127.0.0.1:7846" for local testing or a
+	// container bridge) overrides the default limited broadcast address.
+	if target != "" {
+		if addr, err := net.ResolveUDPAddr("udp4", target); err == nil {
+			b.target = addr
+		}
+	}
+	return b
 }
 
 // Start binds the UDP listener and launches the announce + listen loops.

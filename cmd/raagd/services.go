@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 
@@ -58,6 +59,7 @@ func initializeServices(cfg *config.Config, tr *transcoder.Transcoder) (*db.DB, 
 		PeerDataTTL:        cfg.P2P.PeerDataTTL,
 		BroadcastEnabled:   cfg.P2P.BroadcastEnabled,
 		BroadcastPort:      cfg.P2P.BroadcastPort,
+		BroadcastTarget:    cfg.P2P.BroadcastTarget,
 		LibraryPaths:       cfg.Library.Paths,
 		Transcoder:         tr,
 		PeerRepo:           peerRepo,
@@ -65,6 +67,12 @@ func initializeServices(cfg *config.Config, tr *transcoder.Transcoder) (*db.DB, 
 		Metrics:            metrics,
 	}, libraryRepo)
 	if err != nil {
+		if errors.Is(err, p2p.ErrPortInUse) {
+			slog.Error("P2P listen port already in use by another process", "error", err,
+				"hint", "a stale raagd daemon is likely running; stop it before starting a new one")
+			database.Close()
+			os.Exit(1)
+		}
 		slog.Error("failed to create P2P node", "error", err)
 		return database, libraryRepo, nil, false, searchService, metrics
 	}

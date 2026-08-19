@@ -125,3 +125,28 @@ func TestServer_ConcurrentScanAndEventBroadcast_NoFrameInterleave(t *testing.T) 
 		t.Fatalf("received %d frames, want %d (some frames were merged/torn)", reads, expected)
 	}
 }
+
+func TestIPCCommandLabel_AllPayloads(t *testing.T) {
+	// Regression: oneof wrapper types (e.g. *Request_HealthCheck) do not
+	// implement proto.Message; the label must come from reflection, not a
+	// type assertion that panics on the daemon's per-request metrics path.
+	cases := []struct {
+		req  *pb.Request
+		want string
+	}{
+		{nil, unknownCommand},
+		{&pb.Request{}, unknownCommand},
+		{&pb.Request{Payload: &pb.Request_Play{Play: &pb.PlayRequest{}}}, "Request_Play"},
+		{&pb.Request{Payload: &pb.Request_HealthCheck{HealthCheck: &pb.HealthCheckRequest{}}}, "Request_HealthCheck"},
+		{&pb.Request{Payload: &pb.Request_Status{Status: &pb.StatusRequest{}}}, "Request_Status"},
+		{&pb.Request{Payload: &pb.Request_Search{Search: &pb.SearchRequest{}}}, "Request_Search"},
+		{&pb.Request{Payload: &pb.Request_SetVolume{SetVolume: &pb.SetVolumeRequest{}}}, "Request_SetVolume"},
+		{&pb.Request{Payload: &pb.Request_ListPeers{ListPeers: &pb.ListPeersRequest{}}}, "Request_ListPeers"},
+	}
+
+	for _, tc := range cases {
+		if got := ipcCommandLabel(tc.req); got != tc.want {
+			t.Errorf("ipcCommandLabel(%T) = %q, want %q", tc.req, got, tc.want)
+		}
+	}
+}

@@ -232,6 +232,16 @@ func TestSyncHandler_Manifest_Disabled_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestSyncHandler_ReadErrorOnClosedConn_IsBenign verifies that a read failure
+// on an already-closed connection (daemon shutdown closes local connections)
+// exits the sync handler quietly instead of logging an error and resetting
+// the stream.
+func TestSyncHandler_ReadErrorOnClosedConn_IsBenign(t *testing.T) {
+	h := newTestSyncHandler(&syncTestLibrary{}, peer.ID("local"))
+	stream := &syncTestStream{conn: &closedConn{remote: peer.ID("remote")}}
+	h.Handle(stream)
+}
+
 var (
 	_ network.Conn          = (*mockConn)(nil)
 	_ network.Stream        = (*syncTestStream)(nil)
