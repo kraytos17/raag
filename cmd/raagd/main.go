@@ -1,6 +1,8 @@
 package main
 
-import "github.com/p-society/raag/internal/infra/transcoder"
+import (
+	"github.com/p-society/raag/internal/infra/transcoder"
+)
 
 func main() {
 	cfg, skipScan := loadConfig()

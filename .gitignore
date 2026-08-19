@@ -24,6 +24,10 @@ go.work
 
 #o/p binary
 bin/
+dist/
 coverage.html
+coverage.out
+raagd.log
+raagd.pid
 raag.md
 PLAN_IMPLEMENTATION.md

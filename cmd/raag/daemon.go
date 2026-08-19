@@ -49,6 +49,9 @@ func daemonConfig() (*config.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
+	if socketPath != "" {
+		cfg.Daemon.SocketPath = config.ExpandHome(socketPath)
+	}
 	return cfg, nil
 }
 

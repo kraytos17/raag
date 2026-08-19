@@ -1,9 +1,14 @@
-.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-fix lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release
+.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-fix lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify
 
 BIN := bin
 RAAG := $(BIN)/raag
 RAAGD := $(BIN)/raagd
 GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo $(shell go env GOPATH)/bin/golangci-lint)
+
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+VERSION_PKG := github.com/p-society/raag/internal/version
+LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).BuildTime=$(BUILD_TIME)
 
 help:
 	@echo "Available targets:"
@@ -17,6 +22,7 @@ help:
 	@echo "  test-short         - Run tests (no race detector)"
 	@echo "  test-coverage      - Run tests with coverage report"
 	@echo "  test-bench         - Run benchmarks"
+	@echo "  docs-verify        - Verify README CLI docs match the real binary"
 	@echo "  lint               - Check formatting and lint code"
 	@echo "  lint-fix           - Auto-fix formatting and linting issues"
 	@echo "  lint-ci            - Lint for CI (GitHub Actions annotations)"
@@ -38,32 +44,36 @@ help:
 	@echo "  release            - Build release binaries"
 
 build: $(BIN)
-	go build -ldflags="-s -w" -o $(RAAG) ./cmd/raag
-	go build -ldflags="-s -w" -o $(RAAGD) ./cmd/raagd
+	go build -ldflags="$(LDFLAGS)" -o $(RAAG) ./cmd/raag
+	go build -ldflags="$(LDFLAGS)" -o $(RAAGD) ./cmd/raagd
 
 $(BIN):
 	mkdir -p $(BIN)
 
 build-raag: $(BIN)
-	go build -ldflags="-s -w" -o $(RAAG) ./cmd/raag
+	go build -ldflags="$(LDFLAGS)" -o $(RAAG) ./cmd/raag
 
 build-raagd: $(BIN)
-	go build -ldflags="-s -w" -o $(RAAGD) ./cmd/raagd
+	go build -ldflags="$(LDFLAGS)" -o $(RAAGD) ./cmd/raagd
 
 dev:
 	air
 
 run-daemon:
-	go run ./cmd/raagd
+	go run ./cmd/raagd --music-path "$${RAAG_MUSIC:-$$HOME/Music}"
 
 run-cli:
-	go run ./cmd/raag
+	go run ./cmd/raag tui
 
 test:
 	go test -v -race -cover ./...
 
 test-short:
 	go test ./...
+
+docs-verify:
+	go test ./internal/docsverify/
+	go test ./internal/civerify/
 
 test-coverage:
 	go test -coverprofile=coverage.out ./...
@@ -139,23 +149,24 @@ daemon-start:
 	./bin/raagd
 
 daemon-start-detach:
-	@nohup ./bin/raagd > raagd.log 2>&1 & echo $$! > raagd.pid && echo "Daemon started with PID $$(cat raagd.pid)"
+	./bin/raag daemon start
 
 daemon-stop:
-	@if [ -f raagd.pid ]; then \
-		kill $$(cat raagd.pid) 2>/dev/null && rm raagd.pid && echo "Daemon stopped"; \
-	else \
-		pkill raagd && echo "Daemon stopped (no PID file)" || echo "No daemon running"; \
-	fi
+	./bin/raag daemon stop
 
 daemon-status:
-	./bin/raag status || echo "Daemon not running"
+	./bin/raag daemon status
 
 docker-build:
-	docker build -t raag:1.0.0 .
+	docker build -t raag:latest .
 
 docker-run:
-	docker run -d --name raag -p 7844:7844 -v ~/Music:/music raag:1.0.0
+	docker run -d --name raag \
+		-p 7844:7844/tcp -p 7844:7844/udp \
+		-p 7845:7845/udp -p 7846:7846/udp \
+		-e RAAG_MUSIC=/music \
+		-v "$${RAAG_MUSIC_DIR:-$$HOME/Music}:/music" \
+		raag:latest
 
 docker-stop:
 	docker stop raag || true
@@ -193,7 +204,8 @@ clean-all: clean
 
 ci: lint-format lint-go lint-golangci
 	go test -race ./...
-	mkdir -p bin && go build -o bin/raag ./cmd/raag && go build -o bin/raagd ./cmd/raagd
+	go test ./internal/docsverify/
+	mkdir -p bin && go build -ldflags="$(LDFLAGS)" -o bin/raag ./cmd/raag && go build -ldflags="$(LDFLAGS)" -o bin/raagd ./cmd/raagd
 
 release:
-	goreleaser release --clean --skip-publish
+	goreleaser release --clean --skip=publish
