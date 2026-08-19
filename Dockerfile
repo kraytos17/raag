@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26.1-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -19,10 +19,10 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
 RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+    go build -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" \
     -o raagd ./cmd/raagd && \
     CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+    go build -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" \
     -o raag ./cmd/raag
 
 FROM debian:bookworm-slim AS runtime
@@ -35,6 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && (getent group raag >/dev/null || groupadd --gid 1000 raag) \
     && (getent passwd raag >/dev/null || useradd -o --uid 1000 --gid raag --shell /bin/false --create-home raag)
+
+# machineid (used for the BadgerDB encryption key) reads /etc/machine-id,
+# which is absent in bookworm-slim. Bake a stable random ID so the DB key
+# survives container restarts and is stable per-image.
+RUN sh -c 'cat /proc/sys/kernel/random/uuid > /etc/machine-id'
 
 WORKDIR /home/raag
 
@@ -50,8 +55,8 @@ USER raag
 ENV RAAG_DATA_DIR=${RAAG_DATA_DIR}
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD ["./raag", "--socket", "/home/raag/.local/share/raag/raag.sock", "status"] || exit 1
+    CMD ["./raag", "--socket", "/home/raag/.local/share/raag/raag.sock", "daemon", "status"] || exit 1
 
-EXPOSE 7844/tcp 7844/udp 7845/udp
+EXPOSE 7844/tcp 7844/udp 7845/udp 7846/udp
 
 ENTRYPOINT ["./entrypoint.sh"]

@@ -7,6 +7,7 @@ import (
 
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/infra/ipc"
+	"github.com/p-society/raag/internal/version"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
@@ -28,10 +29,12 @@ func run() int {
 	}()
 
 	rootCmd := &cobra.Command{
-		Use:   "raag",
-		Short: "Raag - Terminal music player with P2P streaming",
+		Use:     "raag",
+		Short:   "Raag - Terminal music player with P2P streaming",
+		Version: version.String("raag"),
 	}
 
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.PersistentFlags().StringVar(&socketPath, "socket", "", "IPC socket path (default: ~/.local/share/raag/raag.sock)")
 
 	rootCmd.AddCommand(

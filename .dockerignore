@@ -4,9 +4,13 @@
 
 # Build artifacts
 bin/
+dist/
 *.exe
 *.test
 coverage.out
+coverage.html
+raagd.log
+raagd.pid
 
 # IDE
 .vscode/

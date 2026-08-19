@@ -1,0 +1,39 @@
+name: Changelog
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    name: Regenerate CHANGELOG.md
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog with git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: .cliff.toml
+          args: --verbose
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: regenerate CHANGELOG.md for $(git describe --tags --abbrev=0)"
+            git push origin "HEAD:${GITHUB_BASE_REF:-main}"
+          else
+            echo "CHANGELOG.md unchanged; nothing to commit."
+          fi

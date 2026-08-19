@@ -12,6 +12,8 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
+      - -X github.com/p-society/raag/internal/version.Version={{.Version}}
+      - -X github.com/p-society/raag/internal/version.BuildTime={{.Date}}
     goos:
       - linux
       - darwin
@@ -30,6 +32,8 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
+      - -X github.com/p-society/raag/internal/version.Version={{.Version}}
+      - -X github.com/p-society/raag/internal/version.BuildTime={{.Date}}
     goos:
       - linux
       - darwin

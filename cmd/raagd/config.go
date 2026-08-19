@@ -8,6 +8,7 @@ import (
 
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/infra/observability"
+	"github.com/p-society/raag/internal/version"
 	"golang.org/x/term"
 )
 
@@ -18,8 +19,14 @@ func loadConfig() (*config.Config, bool) {
 	dataDir := flag.String("data-dir", "", "Data directory (overrides config)")
 	noScan := flag.Bool("no-scan", false, "Skip library scan on startup")
 	p2pFlag := flag.Bool("p2p", false, "Enable P2P networking (use --p2p=false to disable)")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = usage
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Fprintln(os.Stdout, version.String("raagd"))
+		os.Exit(0)
+	}
 
 	var cfg *config.Config
 	var err error

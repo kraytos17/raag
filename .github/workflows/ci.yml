@@ -121,8 +121,14 @@ jobs:
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck -f stylish ./...
 
+      - name: Docs-verify (README commands match CLI)
+        run: go test ./internal/docsverify/
+
+      - name: CI-verify (workflow YAML valid, no mutable action refs)
+        run: go test ./internal/civerify/
+
       - name: Security scan (gosec)
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.21.0
         with:
           args: "-no-fail -fmt sarif -out gosec-results.sarif ./..."
         continue-on-error: true
@@ -242,7 +248,7 @@ jobs:
           fetch-depth: 0
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5.0.0
         with:
           fail-on-severity: high
           comment-summary-in-pr: always
@@ -286,20 +292,22 @@ jobs:
           mkdir -p bin
 
           echo "Building raag..."
-          go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o bin/raag ./cmd/raag
+          go build -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" -o bin/raag ./cmd/raag
 
           echo "Building raagd..."
-          go build -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" -o bin/raagd ./cmd/raagd
+          go build -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" -o bin/raagd ./cmd/raagd
 
       - name: Verify binaries
         run: |
           echo "Verifying raag binary:"
           file bin/raag
-          bin/raag --help || true
+          bin/raag --version
+          bin/raag --help > /dev/null
 
           echo "Verifying raagd binary:"
           file bin/raagd
-          bin/raagd --help || true
+          bin/raagd -version
+          bin/raagd --help > /dev/null || true
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
@@ -372,7 +380,7 @@ jobs:
           sbom: true
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           format: sarif
@@ -388,7 +396,7 @@ jobs:
         continue-on-error: true
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           format: spdx-json
