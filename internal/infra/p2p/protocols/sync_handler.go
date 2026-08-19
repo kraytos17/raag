@@ -2,6 +2,8 @@ package protocols
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -75,6 +77,13 @@ func (h *SyncHandler) Handle(stream network.Stream) {
 
 	var req pb.SyncRequest
 	if err := wire.ReadMsg(stream, &req); err != nil {
+		// Clean peer close (EOF) or a stream/connection reset (client
+		// abort, or the host closing its connections during daemon shutdown)
+		// are benign end-of-stream conditions, not serving failures.
+		if errors.Is(err, io.EOF) || errors.Is(err, network.ErrReset) {
+			return
+		}
+
 		slog.Error("failed to read sync request", "err", err)
 		if err := stream.Reset(); err != nil {
 			slog.Debug("stream reset error", "err", err)

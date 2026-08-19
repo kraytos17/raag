@@ -180,7 +180,7 @@ func (r *MultiSourceResolver) SearchRemote(ctx context.Context, query string, li
 			}
 
 			mu.Lock()
-			hits = append(hits, RemoteSearchHit{PeerID: string(pid), Tracks: tracks})
+			hits = append(hits, RemoteSearchHit{PeerID: pid.String(), Tracks: tracks})
 			mu.Unlock()
 		})
 	}

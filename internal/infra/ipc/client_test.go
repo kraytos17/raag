@@ -1121,9 +1121,11 @@ func TestTranslateEvent_PeerConnected(t *testing.T) {
 	if et != pb.EventType_EVENT_TYPE_PEER_CONNECTED {
 		t.Fatalf("event type = %v, want PEER_CONNECTED", et)
 	}
-	// mockPeerRepoHandler returns ErrPeerUnavailable, so payload falls back to raw peer id
-	if string(payload) != testPeerID {
-		t.Fatalf("payload = %q, want raw peer id", payload)
+	// mockPeerRepoHandler returns ErrPeerUnavailable, so payload falls back to
+	// the peer id in its String() (base58) form.
+	want := domain.PeerID(testPeerID).String()
+	if string(payload) != want {
+		t.Fatalf("payload = %q, want %q (String() form of peer id)", payload, want)
 	}
 }
 
@@ -1191,8 +1193,9 @@ func TestPersistentClient_ListPeers_Enriched(t *testing.T) {
 		t.Fatalf("expected 1 peer, got %d", len(lp.Peers))
 	}
 	p := lp.Peers[0]
-	if p.Id != testPeerID {
-		t.Fatalf("unexpected peer id: %s", p.Id)
+	wantID := domain.PeerID(testPeerID).String()
+	if p.Id != wantID {
+		t.Fatalf("unexpected peer id: %s, want %s", p.Id, wantID)
 	}
 	if p.Score == nil {
 		t.Fatal("expected peer score to be populated")

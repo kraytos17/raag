@@ -1,4 +1,4 @@
-.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-fix lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify
+.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-fix lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify smoke-test
 
 BIN := bin
 RAAG := $(BIN)/raag
@@ -23,6 +23,7 @@ help:
 	@echo "  test-coverage      - Run tests with coverage report"
 	@echo "  test-bench         - Run benchmarks"
 	@echo "  docs-verify        - Verify README CLI docs match the real binary"
+	@echo "  smoke-test         - Run the two-daemon LAN P2P smoke test"
 	@echo "  lint               - Check formatting and lint code"
 	@echo "  lint-fix           - Auto-fix formatting and linting issues"
 	@echo "  lint-ci            - Lint for CI (GitHub Actions annotations)"
@@ -74,6 +75,9 @@ test-short:
 docs-verify:
 	go test ./internal/docsverify/
 	go test ./internal/civerify/
+
+smoke-test: build
+	./scripts/smoke-test.sh
 
 test-coverage:
 	go test -coverprofile=coverage.out ./...

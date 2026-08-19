@@ -90,6 +90,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("p2p.peer_data_ttl", 24*time.Hour)
 	v.SetDefault("p2p.broadcast_enabled", true)
 	v.SetDefault("p2p.broadcast_port", DefaultBroadcastPort)
+	v.SetDefault("p2p.broadcast_target", "")
 
 	v.SetDefault("transcoder.ffmpeg_path", "ffmpeg")
 	v.SetDefault("transcoder.stream_codec", DefaultStreamCodec)

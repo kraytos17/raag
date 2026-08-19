@@ -163,7 +163,13 @@ func (h *StreamHandler) Handle(stream network.Stream) {
 
 		var req pb.ChunkRequest
 		if err := wire.ReadMsg(stream, &req); err != nil {
-			if errors.Is(err, io.EOF) {
+			// Clean peer close (EOF) or a stream/connection reset (client
+			// abort, or the host closing its connections during daemon
+			// shutdown) are benign end-of-stream conditions, not serving
+			// failures. ErrReset also matches *network.ConnError, which is
+			// what a blocked read observes when shutdown closes the
+			// connection.
+			if errors.Is(err, io.EOF) || errors.Is(err, network.ErrReset) {
 				return
 			}
 
@@ -274,12 +280,12 @@ func (h *StreamHandler) serveTranscoded(ctx context.Context, stream network.Stre
 	length := min(int(req.Length), MaxChunkSize)
 	data := make([]byte, length)
 	n, err := io.ReadFull(f, data)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		h.sendError(stream, req.TrackId, "read error", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
 		return
 	}
 
-	lastChunk := n < int(req.Length) || err == io.EOF
+	lastChunk := n < int(req.Length) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 	resp := &pb.ChunkResponse{
 		TrackId:   req.TrackId,
 		Offset:    req.Offset,
@@ -327,13 +333,13 @@ func (h *StreamHandler) serveRaw(ctx context.Context, stream network.Stream, tra
 	length := min(int(req.Length), MaxChunkSize)
 	data := make([]byte, length)
 	n, err := io.ReadFull(f, data)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		slog.Error("read failed", "err", err)
 		h.sendError(stream, req.TrackId, "read error", pb.ErrorCode_ERROR_CODE_UNSPECIFIED)
 		return
 	}
 
-	lastChunk := n < int(req.Length) || err == io.EOF
+	lastChunk := n < int(req.Length) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 	resp := &pb.ChunkResponse{
 		TrackId:   req.TrackId,
 		Offset:    req.Offset,

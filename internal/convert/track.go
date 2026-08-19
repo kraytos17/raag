@@ -3,9 +3,22 @@ package convert
 import (
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/domain"
 	pb "github.com/p-society/raag/proto/gen"
 )
+
+// decodePeerID reconstructs a peer.ID from its base58 string form. The reverse
+// conversion (peer.ID -> proto string) uses String(); decoding back via a raw
+// type cast would treat the base58 bytes as the raw multihash and corrupt the
+// ID on every round-trip. Returns the empty peer.ID when the string is invalid.
+func decodePeerID(s string) domain.PeerID {
+	id, err := peer.Decode(s)
+	if err != nil {
+		return ""
+	}
+	return id
+}
 
 func TrackToProto(t *domain.Track) *pb.Track {
 	if t == nil {
@@ -151,7 +164,7 @@ func PeerInfoToProto(p *domain.PeerInfo) *pb.Peer {
 	var score *pb.PeerScore
 	if p.Score != nil {
 		score = &pb.PeerScore{
-			PeerId:       string(p.ID),
+			PeerId:       p.ID.String(),
 			AvgLatencyMs: float64(p.Score.AvgLatency.Milliseconds()),
 			AvgBandwidth: p.Score.AvgBandwidth,
 			FailureCount: int32(p.Score.FailureCount),
@@ -161,7 +174,7 @@ func PeerInfoToProto(p *domain.PeerInfo) *pb.Peer {
 		}
 	}
 	return &pb.Peer{
-		Id:           string(p.ID),
+		Id:           p.ID.String(),
 		Addrs:        addrs,
 		Capabilities: caps,
 		Score:        score,
@@ -175,9 +188,8 @@ func ProtoToPeerInfo(p *pb.Peer) *domain.PeerInfo {
 
 	addrs := make([]string, len(p.Addrs))
 	copy(addrs, p.Addrs)
-
 	info := &domain.PeerInfo{
-		ID:       domain.PeerID(p.Id),
+		ID:       decodePeerID(p.Id),
 		Addrs:    addrs,
 		LastSeen: time.Now(),
 	}
@@ -198,7 +210,7 @@ func PeerScoreToProto(s *domain.PeerScore) *pb.PeerScore {
 		return nil
 	}
 	return &pb.PeerScore{
-		PeerId:       string(s.PeerID),
+		PeerId:       s.PeerID.String(),
 		AvgLatencyMs: float64(s.AvgLatency.Milliseconds()),
 		AvgBandwidth: s.AvgBandwidth,
 		FailureCount: int32(s.FailureCount),
@@ -212,7 +224,7 @@ func ProtoToPeerScore(p *pb.PeerScore) *domain.PeerScore {
 		return nil
 	}
 	return &domain.PeerScore{
-		PeerID:       domain.PeerID(p.PeerId),
+		PeerID:       decodePeerID(p.PeerId),
 		AvgLatency:   time.Duration(p.AvgLatencyMs) * time.Millisecond,
 		AvgBandwidth: p.AvgBandwidth,
 		FailureCount: int(p.FailureCount),
@@ -253,7 +265,7 @@ func LibraryManifestToProto(m *domain.LibraryManifest) *pb.LibraryManifest {
 		trackIDs[i] = string(id)
 	}
 	return &pb.LibraryManifest{
-		PeerId:    string(m.PeerID),
+		PeerId:    m.PeerID.String(),
 		Timestamp: m.LastUpdated.Unix(),
 		TrackIds:  trackIDs,
 	}
@@ -269,7 +281,7 @@ func ProtoToLibraryManifest(p *pb.LibraryManifest) *domain.LibraryManifest {
 		trackIDs[i] = domain.TrackID(id)
 	}
 	return &domain.LibraryManifest{
-		PeerID:      domain.PeerID(p.PeerId),
+		PeerID:      decodePeerID(p.PeerId),
 		TrackIDs:    trackIDs,
 		LastUpdated: time.Unix(p.Timestamp, 0),
 	}

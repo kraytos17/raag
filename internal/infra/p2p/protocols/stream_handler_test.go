@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	protocol "github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/fsroot"
@@ -53,11 +55,56 @@ func (s *recordingStream) readResponse() (*pb.ChunkResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var resp pb.ChunkResponse
 	if err := proto.Unmarshal(frame, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// closedConn is a minimal network.Conn that reports itself fully closed, as a
+// connection does after the host is shut down.
+type closedConn struct {
+	remote peer.ID
+}
+
+func (c *closedConn) Close() error { return nil }
+func (c *closedConn) CloseWithError(code network.ConnErrorCode) error {
+	return nil
+}
+
+func (c *closedConn) ID() string { return "closed-conn" }
+func (c *closedConn) NewStream(ctx context.Context) (network.Stream, error) {
+	return nil, io.EOF
+}
+
+func (c *closedConn) GetStreams() []network.Stream         { return nil }
+func (c *closedConn) IsClosed() bool                       { return true }
+func (c *closedConn) As(target any) bool                   { return false }
+func (c *closedConn) LocalPeer() peer.ID                   { return peer.ID("local") }
+func (c *closedConn) RemotePeer() peer.ID                  { return c.remote }
+func (c *closedConn) RemotePublicKey() crypto.PubKey       { return nil }
+func (c *closedConn) ConnState() network.ConnectionState   { return network.ConnectionState{} }
+func (c *closedConn) LocalMultiaddr() multiaddr.Multiaddr  { return nil }
+func (c *closedConn) RemoteMultiaddr() multiaddr.Multiaddr { return nil }
+func (c *closedConn) Stat() network.ConnStats              { return network.ConnStats{} }
+func (c *closedConn) Scope() network.ConnScope             { return nil }
+
+// shutdownStream is a recordingStream whose connection is closed and whose
+// Read returns the teardown error a blocked read observes after the host
+// closes its connections during shutdown.
+type shutdownStream struct {
+	recordingStream
+	conn network.Conn
+}
+
+func (s *shutdownStream) Conn() network.Conn { return s.conn }
+
+func (s *shutdownStream) Read(p []byte) (int, error) {
+	return 0, &network.ConnError{
+		ErrorCode: network.ConnNoError,
+	}
 }
 
 // testLibrary is a minimal LibraryRepository stub; serveTranscoded does not use it.
@@ -409,4 +456,101 @@ func TestServeRaw_OutsideRoot(t *testing.T) {
 	if resp.Error == "" {
 		t.Fatal("serveRaw(outside root) returned no error, want an error response")
 	}
+}
+
+// TestServeRaw_ServesFileShorterThanRequestedChunk verifies a track smaller
+// than the requested chunk length is served as a single LastChunk response
+// instead of being rejected on the short read at EOF.
+func TestServeRaw_ServesFileShorterThanRequestedChunk(t *testing.T) {
+	root := t.TempDir()
+	data := bytes.Repeat([]byte("ab"), 4096)
+	path := filepath.Join(root, "small.mp3")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewStreamHandler(&testLibrary{}, fsroot.Open([]string{root}))
+	track := &domain.Track{
+		ID:        domain.GenerateTrackID(path),
+		Path:      path,
+		SizeBytes: uint64(len(data)),
+		MimeType:  "audio/mpeg",
+		Codec:     "mp3",
+	}
+
+	stream := &recordingStream{}
+	h.serveRaw(context.Background(), stream, track, &pb.ChunkRequest{
+		TrackId: string(track.ID),
+		Length:  MaxChunkSize,
+		Offset:  0,
+	})
+
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("response error: %q", resp.Error)
+	}
+	if !resp.LastChunk {
+		t.Error("LastChunk = false, want true for a file shorter than the requested chunk")
+	}
+	if !bytes.Equal(resp.Data, data) {
+		t.Errorf("served %d bytes, want the full %d-byte file", len(resp.Data), len(data))
+	}
+	if resp.TotalSize != int64(len(data)) {
+		t.Errorf("TotalSize = %d, want %d", resp.TotalSize, len(data))
+	}
+}
+
+// TestServeRaw_LastChunkOnlyWhenShortRead verifies a file that is a multiple of
+// the requested chunk size is served in full-sized chunks with LastChunk only
+// on the final request, and that an exact-boundary request at EOF returns
+// io.EOF without a truncated response.
+func TestServeRaw_LastChunkOnlyWhenShortRead(t *testing.T) {
+	root := t.TempDir()
+	data := bytes.Repeat([]byte{0xAB}, 1024)
+	path := filepath.Join(root, "chunks.mp3")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewStreamHandler(&testLibrary{}, fsroot.Open([]string{root}))
+	track := &domain.Track{
+		ID:        domain.GenerateTrackID(path),
+		Path:      path,
+		SizeBytes: uint64(len(data)),
+		MimeType:  "audio/mpeg",
+		Codec:     "mp3",
+	}
+
+	stream := &recordingStream{}
+	h.serveRaw(context.Background(), stream, track, &pb.ChunkRequest{
+		TrackId: string(track.ID),
+		Length:  1024,
+		Offset:  0,
+	})
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("response error: %q", resp.Error)
+	}
+	if resp.LastChunk {
+		t.Error("LastChunk = true on an exact-fit chunk, want false")
+	}
+	if len(resp.Data) != 1024 {
+		t.Errorf("served %d bytes, want 1024", len(resp.Data))
+	}
+}
+
+// TestHandle_ReadErrorOnClosedConn_IsBenign verifies that a read failure on an
+// already-closed connection (daemon shutdown tears down local connections,
+// so a blocked read observes "connection closed" instead of io.EOF) exits the
+// handler quietly instead of logging an error and resetting the stream.
+func TestHandle_ReadErrorOnClosedConn_IsBenign(t *testing.T) {
+	h := NewStreamHandler(&testLibrary{}, nil)
+	stream := &shutdownStream{conn: &closedConn{remote: peer.ID("remote")}}
+	h.Handle(stream)
 }

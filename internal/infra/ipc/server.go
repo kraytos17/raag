@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,9 @@ const (
 	errP2PNotEnabled        = "P2P is not enabled"
 	errPlaylistsUnavailable = "playlists not available"
 	errQueueUnavailable     = "queue is not available"
+
+	// unknownCommand is the IPC metrics label for requests with no payload.
+	unknownCommand = "unknown"
 )
 
 type Server struct {
@@ -243,7 +247,7 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 
 		info, err := s.peerRepo.GetPeerInfo(context.Background(), pid)
 		if err != nil {
-			return pb.EventType_EVENT_TYPE_PEER_CONNECTED, []byte(string(pid))
+			return pb.EventType_EVENT_TYPE_PEER_CONNECTED, []byte(pid.String())
 		}
 		peer := convert.PeerInfoToProto(info)
 		return pb.EventType_EVENT_TYPE_PEER_CONNECTED, mustMarshal(peer)
@@ -260,7 +264,7 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 
 		info, err := s.peerRepo.GetPeerInfo(context.Background(), pid)
 		if err != nil {
-			return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, []byte(string(pid))
+			return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, []byte(pid.String())
 		}
 		peer := convert.PeerInfoToProto(info)
 		return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, mustMarshal(peer)
@@ -274,7 +278,7 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 		default:
 			return pb.EventType_EVENT_TYPE_UNSPECIFIED, nil
 		}
-		return pb.EventType_EVENT_TYPE_PEER_DISCONNECTED, []byte(string(pid))
+		return pb.EventType_EVENT_TYPE_PEER_DISCONNECTED, []byte(pid.String())
 	case domain.EventScanStarted:
 		return pb.EventType_EVENT_TYPE_LIBRARY_UPDATED, []byte("started")
 	case domain.EventScanComplete:
@@ -489,12 +493,22 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 }
 
 // ipcCommandLabel returns a stable label for an IPC request based on its
-// payload message name (e.g. "Request_Play"), or "unknown" if the payload is nil.
+// payload message name (e.g. "Request_Play"), or unknownCommand if the payload
+// is nil. The oneof wrapper types do not implement proto.Message, so the label
+// is derived via reflection on the payload's concrete type instead.
 func ipcCommandLabel(req *pb.Request) string {
 	if req == nil || req.Payload == nil {
-		return "unknown"
+		return unknownCommand
 	}
-	return string(proto.MessageName(req.Payload.(proto.Message)))
+
+	t := reflect.TypeOf(req.Payload)
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Name() != "" {
+		return t.Name()
+	}
+	return unknownCommand
 }
 
 //nolint:gocyclo // dispatch function has many cases for IPC requests
@@ -791,7 +805,7 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 		if err != nil {
 			continue
 		}
-		seen[string(p.ID)] = struct{}{}
+		seen[p.ID.String()] = struct{}{}
 		if s.p2pNode != nil {
 			if enriched := s.p2pNode.PeerStatus(p); enriched != nil {
 				pbPeers = append(pbPeers, enriched)
@@ -801,28 +815,42 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 		pbPeers = append(pbPeers, convert.PeerInfoToProto(p))
 	}
 
-	// Surface mDNS-discovered peers that aren't already persisted/connected, so
-	// the peers panel shows what's out there even before a connect completes.
+	// Surface live connected peers that aren't yet persisted (e.g. a
+	// brand-new broadcast discovery), so `raag peers list` is never empty
+	// right after a connect — `network` already shows them, `peers list`
+	// should be consistent.
 	if s.p2pNode != nil {
 		connected := s.p2pNode.Peers()
 		connectedSet := make(map[peer.ID]struct{}, len(connected))
 		for _, pid := range connected {
 			connectedSet[pid] = struct{}{}
-		}
+			if _, ok := seen[pid.String()]; ok {
+				continue
+			}
 
+			pi := s.p2pNode.Host().Peerstore().PeerInfo(pid)
+			addrs := make([]string, len(pi.Addrs))
+			for i, a := range pi.Addrs {
+				addrs[i] = a.String()
+			}
+
+			pbPeers = append(pbPeers, &pb.Peer{Id: pid.String(), Addrs: addrs, Connected: true})
+			seen[pid.String()] = struct{}{}
+		}
 		for _, pi := range s.p2pNode.DiscoveredPeers() {
-			if _, ok := seen[string(pi.ID)]; ok {
+			if _, ok := seen[pi.ID.String()]; ok {
 				continue
 			}
 			if _, ok := connectedSet[pi.ID]; ok {
 				continue
 			}
+
 			addrs := make([]string, len(pi.Addrs))
 			for i, a := range pi.Addrs {
 				addrs[i] = a.String()
 			}
 			pbPeers = append(pbPeers, &pb.Peer{Id: pi.ID.String(), Addrs: addrs, Connected: false})
-			seen[string(pi.ID)] = struct{}{}
+			seen[pi.ID.String()] = struct{}{}
 		}
 	}
 	return &pb.Response{

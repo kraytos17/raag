@@ -497,8 +497,10 @@ func TestMultiSourceResolver_SearchRemote_FanOut(t *testing.T) {
 	for _, h := range hits {
 		seen[h.PeerID] = true
 	}
-	if !seen["p1"] || !seen["p2"] {
-		t.Fatalf("SearchRemote() peers = %v, want both p1 and p2", seen)
+
+	want1, want2 := domain.PeerID("p1").String(), domain.PeerID("p2").String()
+	if !seen[want1] || !seen[want2] {
+		t.Fatalf("SearchRemote() peers = %v, want both %q and %q", seen, want1, want2)
 	}
 }
 
