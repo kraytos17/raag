@@ -91,6 +91,9 @@ func (r *P2PResolver) fetchTrackMetadata(ctx context.Context, trackID domain.Tra
 	if tr, ok := resp.GetPayload().(*pb.SyncResponse_Track); ok {
 		return convert.ProtoToTrack(tr.Track), nil
 	}
+	if er, ok := resp.GetPayload().(*pb.SyncResponse_Error); ok {
+		return nil, &SyncError{Code: er.Error.Code, Message: er.Error.Message}
+	}
 	return nil, errors.New("unexpected response type")
 }
 

@@ -1,13 +1,20 @@
 package p2p
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"errors"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/domain"
+	"github.com/p-society/raag/internal/infra/wire"
+	pb "github.com/p-society/raag/proto/gen"
 )
 
 func TestP2PResolverAdapter_PeersConcurrentProviderUpdates(t *testing.T) {
@@ -71,6 +78,62 @@ func TestP2PResolverAdapter_FindPeersWithTrack(t *testing.T) {
 	result := adapter.FindPeersWithTrack(context.Background(), trackID)
 	if len(result) != 2 {
 		t.Fatalf("FindPeersWithTrack() len = %d, want 2", len(result))
+	}
+}
+
+func TestP2PResolverAdapter_SearchPeerPreservesErrorCode(t *testing.T) {
+	var frame bytes.Buffer
+	if err := wire.WriteMsg(&frame, &pb.SyncResponse{Payload: &pb.SyncResponse_Error{
+		Error: &pb.ErrorResponse{Message: "slow down", Code: pb.ErrorCode_ERROR_CODE_RATE_LIMITED},
+	}}); err != nil {
+		t.Fatalf("encode error response: %v", err)
+	}
+	seqHost := &resolverSequenceHost{streams: []network.Stream{&resolverFrameStream{
+		mockStream: &mockStream{id: "search-error"},
+		response:   frame.Bytes(),
+	}}}
+	resolver := NewP2PResolver(nil, nil, nil, nil, seqHost)
+	adapter := NewP2PResolverAdapter(resolver)
+
+	_, err := adapter.SearchPeer(context.Background(), peer.ID("search-peer"), "query", 10)
+	var syncErr *SyncError
+	if !errors.As(err, &syncErr) {
+		t.Fatalf("SearchPeer() error = %v, want *SyncError", err)
+	}
+	if syncErr.Code != pb.ErrorCode_ERROR_CODE_RATE_LIMITED {
+		t.Errorf("SyncError.Code = %v, want RATE_LIMITED", syncErr.Code)
+	}
+}
+
+func TestP2PResolverAdapter_FetchTrackMetadataPreservesErrorCode(t *testing.T) {
+	var frame bytes.Buffer
+	if err := wire.WriteMsg(&frame, &pb.SyncResponse{Payload: &pb.SyncResponse_Error{
+		Error: &pb.ErrorResponse{Message: "track not found", Code: pb.ErrorCode_ERROR_CODE_TRACK_NOT_FOUND},
+	}}); err != nil {
+		t.Fatalf("encode error response: %v", err)
+	}
+	seqHost := &resolverSequenceHost{streams: []network.Stream{&resolverFrameStream{
+		mockStream: &mockStream{id: "track-detail-error"},
+		response:   frame.Bytes(),
+	}}}
+	resolver := NewP2PResolver(nil, nil, nil, nil, seqHost)
+	adapter := NewP2PResolverAdapter(resolver)
+
+	_, pub, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key: %v", err)
+	}
+	detailPeer, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		t.Fatalf("IDFromPublicKey: %v", err)
+	}
+	_, err = adapter.FetchTrackMetadata(context.Background(), domain.TrackID(track1ID), detailPeer.String())
+	var syncErr *SyncError
+	if !errors.As(err, &syncErr) {
+		t.Fatalf("FetchTrackMetadata() error = %v, want *SyncError", err)
+	}
+	if syncErr.Code != pb.ErrorCode_ERROR_CODE_TRACK_NOT_FOUND {
+		t.Errorf("SyncError.Code = %v, want TRACK_NOT_FOUND", syncErr.Code)
 	}
 }
 

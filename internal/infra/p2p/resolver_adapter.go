@@ -90,7 +90,7 @@ func (a *P2PResolverAdapter) SearchPeer(ctx context.Context, pid peer.ID, query 
 		return tracks, nil
 	}
 	if er, ok := resp.GetPayload().(*pb.SyncResponse_Error); ok {
-		return nil, errors.New(er.Error.Message)
+		return nil, &SyncError{Code: er.Error.Code, Message: er.Error.Message}
 	}
 	return nil, errors.New("unexpected response type")
 }

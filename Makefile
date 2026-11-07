@@ -1,4 +1,4 @@
-.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-format lint-go lint-golangci lint-fix lint-fix-format lint-fix-golangci lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify smoke-test
+.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-format lint-go lint-golangci lint-fix lint-fix-format lint-fix-golangci lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-buildx docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify smoke-test
 
 BIN := bin
 RAAG := $(BIN)/raag
@@ -48,6 +48,7 @@ help:
 	@echo "  daemon-stop        - Stop daemon"
 	@echo "  daemon-status      - Check daemon status"
 	@echo "  docker-build       - Build Docker image"
+	@echo "  docker-buildx      - Optimized buildx image (PUSH=1 for multi-arch push)"
 	@echo "  docker-run         - Run Docker container"
 	@echo "  docker-stop        - Stop Docker container"
 	@echo "  dev-setup          - Setup dev environment (tools + deps + generate)"
@@ -177,6 +178,20 @@ daemon-status:
 
 docker-build:
 	docker build -t raag:latest .
+
+# Optimized buildx build: fresh bases, version stamping, multi-arch ready.
+# Default loads a native-arch image locally; PUSH=1 pushes multi-arch.
+docker-buildx:
+	VERSION=$$(git describe --tags --always --dirty 2>/dev/null || echo dev); \
+	BUILD_TIME=$$(date -u '+%Y-%m-%d_%H:%M:%S'); \
+	if [ "$${PUSH:-0}" = "1" ]; then \
+		OUTPUT="--push --platform linux/amd64,linux/arm64"; \
+	else \
+		OUTPUT="--load"; \
+	fi; \
+	docker buildx build --pull $$OUTPUT \
+		--build-arg VERSION=$$VERSION --build-arg BUILD_TIME=$$BUILD_TIME \
+		-t raag:latest .
 
 docker-run:
 	docker run -d --name raag \

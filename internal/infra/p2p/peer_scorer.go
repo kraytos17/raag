@@ -127,9 +127,7 @@ func (s *PeerScorer) RecordFailure(pid peer.ID) {
 }
 
 func (s *PeerScorer) Snapshot(pid peer.ID) (avgLatency time.Duration, avgBandwidth int64, successes int, failures int, banned bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	s.mu.RLock()
 	lats := s.latencies[pid]
 	if len(lats) > 0 {
 		var sum time.Duration
@@ -149,15 +147,29 @@ func (s *PeerScorer) Snapshot(pid peer.ID) (avgLatency time.Duration, avgBandwid
 		}
 		avgBandwidth = sum / int64(len(bws))
 	}
-	if s.banned[pid] {
-		if time.Since(s.lastFailure[pid]) > s.cooldown {
-			delete(s.banned, pid)
-			banned = false
-		} else {
-			banned = true
-		}
-	}
+
+	s.mu.RUnlock()
+	banned = s.checkBanned(pid)
 	return avgLatency, avgBandwidth, successes, failures, banned
+}
+
+// checkBanned reports whether pid is banned, lazily expiring cooldown-passed
+// bans. Reads run under RLock; only an actual expiry takes the write lock.
+func (s *PeerScorer) checkBanned(pid peer.ID) bool {
+	s.mu.RLock()
+	banned, lastFailure := s.banned[pid], s.lastFailure[pid]
+	s.mu.RUnlock()
+	if !banned || time.Since(lastFailure) <= s.cooldown {
+		return banned
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.banned[pid] && time.Since(s.lastFailure[pid]) > s.cooldown {
+		delete(s.banned, pid)
+		return false
+	}
+	return s.banned[pid]
 }
 
 func (s *PeerScorer) ClearLatency(pid peer.ID) {
@@ -167,17 +179,7 @@ func (s *PeerScorer) ClearLatency(pid peer.ID) {
 }
 
 func (s *PeerScorer) IsBanned(pid peer.ID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.banned[pid] {
-		return false
-	}
-	if time.Since(s.lastFailure[pid]) > s.cooldown {
-		delete(s.banned, pid)
-		return false
-	}
-	return true
+	return s.checkBanned(pid)
 }
 
 func (s *PeerScorer) Reset(pid peer.ID) {

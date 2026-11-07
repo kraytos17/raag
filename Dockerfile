@@ -1,10 +1,11 @@
-FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm AS builder
+# syntax=docker/dockerfile:1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    libasound2-dev \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# Pure-Go build: audio output (oto/purego) dlopens ALSA at runtime, so no C
+# toolchain or ALSA headers are needed to compile. CGO stays off, which
+# yields a fully static binary that runs on the musl-based runtime below.
+FROM --platform=$BUILDPLATFORM golang:1.27.0-alpine3.24 AS builder
+
+ENV CGO_ENABLED=0
 
 WORKDIR /app
 
@@ -18,39 +19,36 @@ ARG BUILD_TIME=unknown
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
-RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" \
-    -o raagd ./cmd/raagd && \
-    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" \
-    -o raag ./cmd/raag
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" \
+    -o /out/raagd ./cmd/raagd && \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w -X github.com/p-society/raag/internal/version.Version=${VERSION} -X github.com/p-society/raag/internal/version.BuildTime=${BUILD_TIME}" \
+    -o /out/raag ./cmd/raag
 
-FROM debian:bookworm-slim AS runtime
+FROM alpine:3.24 AS runtime
 
 ARG RAAG_DATA_DIR=/home/raag/.local/share/raag
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/* \
-    && (getent group raag >/dev/null || groupadd --gid 1000 raag) \
-    && (getent passwd raag >/dev/null || useradd -o --uid 1000 --gid raag --shell /bin/false --create-home raag)
-
-# machineid (used for the BadgerDB encryption key) reads /etc/machine-id,
-# which is absent in bookworm-slim. Bake a stable random ID so the DB key
-# survives container restarts and is stable per-image.
-RUN sh -c 'cat /proc/sys/kernel/random/uuid > /etc/machine-id'
+# alsa-lib is dlopened at runtime by oto for audio output; ca-certificates
+# for any TLS dials. machine-id (used for the BadgerDB encryption key) is
+# absent in alpine-minimal, so bake a stable random ID to keep the DB key
+# stable across container restarts of the same image.
+RUN apk add --no-cache ca-certificates alsa-lib \
+    && addgroup -g 1000 raag \
+    && adduser -D -u 1000 -G raag -h /home/raag -s /bin/false raag \
+    && cat /proc/sys/kernel/random/uuid > /etc/machine-id
 
 WORKDIR /home/raag
 
-COPY --from=builder /app/raagd /app/raag ./
-COPY --from=builder /app/entrypoint.sh ./
-
-RUN mkdir -p /home/raag/.config/raag ${RAAG_DATA_DIR} && \
-    chmod +x entrypoint.sh && \
-    chown -R raag:raag /home/raag
+COPY --from=builder --chown=raag:raag --chmod=755 /out/raagd /out/raag ./
+COPY --from=builder --chown=raag:raag --chmod=755 /app/entrypoint.sh ./
 
 USER raag
+
+RUN mkdir -p .config/raag ${RAAG_DATA_DIR}
 
 ENV RAAG_DATA_DIR=${RAAG_DATA_DIR}
 

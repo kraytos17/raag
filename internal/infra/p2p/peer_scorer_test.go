@@ -56,6 +56,25 @@ func TestPeerScorer_Cooldown(t *testing.T) {
 	}
 }
 
+func TestPeerScorer_SnapshotExpiresBan(t *testing.T) {
+	scorer := NewPeerScorerWithConfig(1, 50*time.Millisecond)
+	pid := peer.ID("snapshot-peer")
+	scorer.RecordLatency(pid, 10*time.Millisecond)
+	scorer.RecordFailure(pid)
+	if _, _, _, _, banned := scorer.Snapshot(pid); !banned {
+		t.Fatal("Snapshot() banned = false, want true before cooldown")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if _, _, _, _, banned := scorer.Snapshot(pid); banned {
+		t.Fatal("Snapshot() banned = true, want false after cooldown")
+	}
+	// The expiry must have removed the ban so later reads stay clean.
+	if scorer.IsBanned(pid) {
+		t.Error("IsBanned() = true, want false after Snapshot expired the ban")
+	}
+}
+
 func TestPeerScorer_RecordFailure_NoGaterEscalation(t *testing.T) {
 	// Failure-based bans must stay cooldown-bounded and never escalate to a
 	// permanent gater ban, which RecordSuccess cannot undo.
