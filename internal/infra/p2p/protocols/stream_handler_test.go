@@ -24,6 +24,34 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// chunkRequestStream serves a single framed ChunkRequest via Read, then EOF,
+// and reports a fixed remote peer — driving StreamHandler.Handle directly.
+type chunkRequestStream struct {
+	recordingStream
+	conn network.Conn
+	req  []byte
+}
+
+func newChunkRequestStream(t *testing.T, req *pb.ChunkRequest, remote peer.ID) *chunkRequestStream {
+	t.Helper()
+	var frame bytes.Buffer
+	if err := wire.WriteMsg(&frame, req); err != nil {
+		t.Fatalf("encode chunk request: %v", err)
+	}
+	return &chunkRequestStream{conn: newMockConn(remote), req: frame.Bytes()}
+}
+
+func (s *chunkRequestStream) Read(p []byte) (int, error) {
+	if len(s.req) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, s.req)
+	s.req = s.req[n:]
+	return n, nil
+}
+
+func (s *chunkRequestStream) Conn() network.Conn { return s.conn }
+
 // testCodec is the codec requested for transcoding in tests.
 const testCodec = "mp3"
 
@@ -158,6 +186,74 @@ func newTestStreamHandler(t *testing.T, dir string) *StreamHandler {
 		StreamBitrate: "96k",
 	}))
 	return h
+}
+
+func TestStreamHandler_Handle_RejectsUnadmittedPeer(t *testing.T) {
+	registry := NewAdmissionRegistry()
+	h := &StreamHandler{library: &testLibrary{}, admission: registry}
+	remote := peer.ID("unadmitted-peer")
+
+	stream := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1"}, remote)
+	h.Handle(stream)
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatal("expected error response for unadmitted peer, got success")
+	}
+}
+
+func TestStreamHandler_Handle_AdmitsAfterManifestExchange(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("0123456789abcdef")
+	if err := os.WriteFile(filepath.Join(dir, "track.bin"), content, 0o644); err != nil {
+		t.Fatalf("write track file: %v", err)
+	}
+	lib := &syncTestLibrary{track: &domain.Track{
+		ID:        domain.TrackID("track-1"),
+		Path:      filepath.Join(dir, "track.bin"),
+		SizeBytes: uint64(len(content)),
+		MimeType:  "application/octet-stream",
+	}}
+	registry := NewAdmissionRegistry()
+	h := NewStreamHandler(lib, fsroot.Open([]string{dir}))
+	h.SetAdmissionRegistry(registry)
+	remote := peer.ID("admitted-peer")
+
+	// Unadmitted chunk requests are rejected before any admission.
+	denied := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1", Length: 16}, remote)
+	h.Handle(denied)
+	if resp, err := denied.readResponse(); err != nil {
+		t.Fatalf("read denial: %v", err)
+	} else if resp.Error == "" {
+		t.Fatal("expected error response before admission, got success")
+	}
+
+	// Manifest exchange (simulated by the registry grant) admits the peer;
+	// revoking it re-blocks chunks, mirroring disconnect cleanup.
+	registry.Admit(remote)
+	served := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1", Length: 16}, remote)
+	h.Handle(served)
+	resp, err := served.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("response error after admission: %q", resp.Error)
+	}
+	if string(resp.Data) != string(content) {
+		t.Errorf("Data = %q, want file content", resp.Data)
+	}
+
+	registry.Revoke(remote)
+	blocked := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1", Length: 16}, remote)
+	h.Handle(blocked)
+	if resp, err := blocked.readResponse(); err != nil {
+		t.Fatalf("read denial: %v", err)
+	} else if resp.Error == "" {
+		t.Fatal("expected error response after revoke, got success")
+	}
 }
 
 func TestServeTranscoded_SetsTotalSize(t *testing.T) {

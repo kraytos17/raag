@@ -137,6 +137,128 @@ func newTestSyncHandler(lib app.LibraryRepository, local peer.ID) *SyncHandler {
 	return h
 }
 
+// stubSearchHandler returns canned tracks for remote-search tests.
+type stubSearchHandler struct {
+	tracks []*domain.Track
+	err    error
+}
+
+func (s *stubSearchHandler) Search(_ context.Context, _ string, _ int) ([]*domain.Track, error) {
+	return s.tracks, s.err
+}
+
+// stubCapsProvider returns canned capabilities for capabilities tests.
+type stubCapsProvider struct {
+	caps *pb.PeerCapabilities
+}
+
+func (s *stubCapsProvider) GetLocalCapabilities() *pb.PeerCapabilities { return s.caps }
+
+func TestSyncHandler_RemoteSearch_UnauthorizedBeforeManifest(t *testing.T) {
+	h := newTestSyncHandler(&syncTestLibrary{}, peer.ID("local"))
+	req := &pb.SyncRequest{
+		Payload: &pb.SyncRequest_RemoteSearchRequest{
+			RemoteSearchRequest: &pb.RemoteSearchRequest{Query: "rock", Limit: 10},
+		},
+	}
+
+	stream := newSyncTestStream(req, peer.ID("remote"))
+	h.Handle(stream)
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	er, ok := resp.GetPayload().(*pb.SyncResponse_Error)
+	if !ok {
+		t.Fatalf("expected error response, got %T", resp.GetPayload())
+	}
+	if er.Error.Code != pb.ErrorCode_ERROR_CODE_UNAUTHORIZED {
+		t.Errorf("error code = %v, want UNAUTHORIZED", er.Error.Code)
+	}
+}
+
+func TestSyncHandler_RemoteSearch_AfterManifest(t *testing.T) {
+	track := &domain.Track{ID: domain.TrackID("track-9"), Title: "Nine"}
+	lib := &syncTestLibrary{track: track}
+	h := NewSyncHandler(lib, &stubSearchHandler{tracks: []*domain.Track{track}}, peer.ID("local"))
+	h.SetAdmissionRegistry(NewAdmissionRegistry())
+	remote := peer.ID("remote")
+
+	// Manifest exchange admits the peer (sharing enabled so the manifest
+	// itself succeeds).
+	h.SetAnnounceLibrary(true)
+	mreq := &pb.SyncRequest{Payload: &pb.SyncRequest_ManifestRequest{}}
+	mstream := newSyncTestStream(mreq, remote)
+	h.Handle(mstream)
+	if _, err := mstream.readResponse(); err != nil {
+		t.Fatalf("read manifest response: %v", err)
+	}
+
+	sreq := &pb.SyncRequest{
+		Payload: &pb.SyncRequest_RemoteSearchRequest{
+			RemoteSearchRequest: &pb.RemoteSearchRequest{Query: "nine", Limit: 10},
+		},
+	}
+	sstream := newSyncTestStream(sreq, remote)
+	h.Handle(sstream)
+	resp, err := sstream.readResponse()
+	if err != nil {
+		t.Fatalf("read search response: %v", err)
+	}
+	sr, ok := resp.GetPayload().(*pb.SyncResponse_Search)
+	if !ok {
+		t.Fatalf("expected search response, got %T", resp.GetPayload())
+	}
+	if len(sr.Search.Tracks) != 1 {
+		t.Fatalf("tracks = %d, want 1", len(sr.Search.Tracks))
+	}
+}
+
+func TestSyncHandler_CapabilitiesRequest(t *testing.T) {
+	newHandler := func() (*SyncHandler, peer.ID) {
+		h := newTestSyncHandler(&syncTestLibrary{}, peer.ID("local"))
+		return h, peer.ID("remote")
+	}
+	capsReq := &pb.SyncRequest{Payload: &pb.SyncRequest_CapabilitiesRequest{}}
+
+	// Without a provider, the handler serves playable defaults. Capabilities
+	// are public: no manifest exchange required.
+	h, remote := newHandler()
+	stream := newSyncTestStream(capsReq, remote)
+	h.Handle(stream)
+	resp, err := stream.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	cr, ok := resp.GetPayload().(*pb.SyncResponse_Capabilities)
+	if !ok {
+		t.Fatalf("expected capabilities response, got %T", resp.GetPayload())
+	}
+	if len(cr.Capabilities.SupportedCodecs) == 0 {
+		t.Error("expected default supported codecs, got none")
+	}
+
+	// With a provider, its capabilities are echoed.
+	h2, remote2 := newHandler()
+	h2.SetCapabilitiesProvider(&stubCapsProvider{caps: &pb.PeerCapabilities{
+		SupportedCodecs: []string{"opus"},
+		CanTranscode:    true,
+	}})
+	stream2 := newSyncTestStream(capsReq, remote2)
+	h2.Handle(stream2)
+	resp2, err := stream2.readResponse()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	cr2, ok := resp2.GetPayload().(*pb.SyncResponse_Capabilities)
+	if !ok {
+		t.Fatalf("expected capabilities response, got %T", resp2.GetPayload())
+	}
+	if len(cr2.Capabilities.SupportedCodecs) != 1 || !cr2.Capabilities.CanTranscode {
+		t.Errorf("capabilities = %+v, want provider echo", cr2.Capabilities)
+	}
+}
+
 // testTrackPath is the path used by sync handler tests.
 const testTrackPath = "/tmp/a.mp3"
 
