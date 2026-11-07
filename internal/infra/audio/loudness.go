@@ -13,7 +13,7 @@ func EstimateLoudnessDB(rc io.ReadCloser, mimeType string) (float32, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = streamer.Close() }()
+	defer func() { streamer.Close() }()
 
 	samples := make([][2]float64, 1024)
 	var sumSquares float64

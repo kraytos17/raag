@@ -104,7 +104,7 @@ func (p *testPlayer) Resume(ctx context.Context) error {
 func (p *testPlayer) Stop(ctx context.Context) error {
 	p.state = domain.PlayerStateIdle
 	if p.streamingSource != nil {
-		_ = p.streamingSource.Close()
+		p.streamingSource.Close()
 		p.streamingSource = nil
 	}
 	return nil

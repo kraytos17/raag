@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
@@ -62,7 +62,7 @@ func newPeersCmd() *cobra.Command {
 		Short: "Ban a peer by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.BanPeer(args[0])
 			}), "peer banned")
 		},
@@ -73,7 +73,7 @@ func newPeersCmd() *cobra.Command {
 		Short: "Unban a peer by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.UnbanPeer(args[0])
 			}), "peer unbanned")
 		},

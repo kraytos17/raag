@@ -38,7 +38,7 @@ func TestLocalResolver_Decodable_NoTranscode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	defer func() { _ = resolved.Reader.Close() }()
+	defer func() { resolved.Reader.Close() }()
 
 	if resolved.Source != SourceLocal {
 		t.Fatalf("source = %v, want SourceLocal", resolved.Source)
@@ -64,7 +64,7 @@ func TestLocalResolver_TranscodesNonDecodable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	defer func() { _ = resolved.Reader.Close() }()
+	defer func() { resolved.Reader.Close() }()
 
 	if resolved.Source != SourceLocal {
 		t.Fatalf("source = %v, want SourceLocal", resolved.Source)
@@ -92,7 +92,7 @@ func TestLocalResolver_TranscoderNil_NonDecodable_ReturnsRaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	defer func() { _ = resolved.Reader.Close() }()
+	defer func() { resolved.Reader.Close() }()
 
 	if resolved.Track.MimeType != mimeTypeAAC {
 		t.Fatalf("mime = %q, want audio/aac (raw passthrough)", resolved.Track.MimeType)

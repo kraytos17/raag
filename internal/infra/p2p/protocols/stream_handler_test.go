@@ -357,7 +357,7 @@ func TestServeTranscoded_CachedByteRangeSeek(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open transcode output: %v", err)
 	}
-	t.Cleanup(func() { _ = n.Close() })
+	t.Cleanup(func() { n.Close() })
 
 	at0 := make([]byte, len(resp0.Data))
 	if _, err := n.ReadAt(at0, 0); err != nil && err != io.EOF {
@@ -491,7 +491,7 @@ func TestStreamHandler_RateLimit_Upload_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_ = h.waitUpload(context.Background(), 100)
+	h.waitUpload(context.Background(), 100)
 	if err := h.waitUpload(ctx, 100000); err == nil {
 		t.Fatal("waitUpload() with tiny budget and deadline: expected error, got nil")
 	}

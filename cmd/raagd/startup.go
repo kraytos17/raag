@@ -19,12 +19,12 @@ func registerFileWatcher(lc *app.LifecycleManager, paths []string, scanner *app.
 	fw, err := app.NewFileWatcher(paths, scanner)
 	if err != nil {
 		slog.Error("failed to create file watcher", "error", err)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
 	if err := lc.Register(app.NewFileWatcherComponent(fw, "filewatcher")); err != nil {
 		slog.Error("failed to register file watcher", "error", err)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
 }

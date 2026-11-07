@@ -51,7 +51,7 @@ func TestStreamingSource_BasicRead(t *testing.T) {
 	data := bytes.Repeat([]byte("test data "), 1000)
 	source := &slowReader{data: data, delay: 10 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	if !waitForData(ss, 500*time.Millisecond) {
 		t.Fatal("timeout waiting for data")
@@ -71,7 +71,7 @@ func TestStreamingSource_FillLevel(t *testing.T) {
 	data := bytes.Repeat([]byte("x"), 50*1024)
 	source := &slowReader{data: data, delay: 10 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -88,7 +88,7 @@ func TestStreamingSource_BufferStats(t *testing.T) {
 	data := bytes.Repeat([]byte("y"), 32*1024)
 	source := &slowReader{data: data, delay: 5 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	time.Sleep(50 * time.Millisecond)
 	used := ss.BufferUsed()
@@ -121,7 +121,7 @@ func TestStreamingSource_IsBuffering(t *testing.T) {
 	data := bytes.Repeat([]byte("a"), 10*1024)
 	source := &slowReader{data: data, delay: 50 * time.Millisecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	if !ss.IsBuffering() {
 		t.Error("IsBuffering = false, want true during fill")
@@ -137,7 +137,7 @@ func TestStreamingSource_ReadAll(t *testing.T) {
 	data := bytes.Repeat([]byte("b"), 10*1024)
 	source := &slowReader{data: data, delay: 500 * time.Microsecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	var total int
 	buf := make([]byte, 1024)
@@ -176,7 +176,7 @@ func TestStreamingSource_ConcurrentReadWrite(t *testing.T) {
 	data := bytes.Repeat([]byte("c"), 100*1024)
 	source := &slowReader{data: data, delay: 50 * time.Microsecond}
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	readDone := make(chan struct{})
 	go func() {
@@ -197,7 +197,7 @@ func TestStreamingSource_ConcurrentReadWrite(t *testing.T) {
 		for {
 			select {
 			case <-ticker.C:
-				_ = ss.FillLevel()
+				ss.FillLevel()
 			case <-readDone:
 				return
 			}
@@ -211,7 +211,7 @@ func TestStreamingSource_ConcurrentReadWrite(t *testing.T) {
 func TestStreamingSource_EmptySource(t *testing.T) {
 	source := &slowReader{data: []byte{}}
 	ss := NewStreamingSource(source, 16*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	time.Sleep(50 * time.Millisecond)
 	buf := make([]byte, 1024)
@@ -258,7 +258,7 @@ func TestStreamingSource_LargeData(t *testing.T) {
 	data := bytes.Repeat([]byte("f"), 1*1024*1024)
 	source := &slowReader{data: data, delay: 10 * time.Microsecond}
 	ss := NewStreamingSource(source, 256*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	time.Sleep(200 * time.Millisecond)
 	fill := ss.FillLevel()
@@ -285,7 +285,7 @@ func TestStreamingSource_MultipleClose(t *testing.T) {
 func TestStreamingSource_ReadBlocksUntilData(t *testing.T) {
 	source := newBlockingSource()
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	readDone := make(chan struct{})
 	var got []byte
@@ -325,7 +325,7 @@ func TestStreamingSource_ReadBlocksUntilData(t *testing.T) {
 func TestStreamingSource_WaitReady(t *testing.T) {
 	source := newBlockingSource()
 	ss := NewStreamingSource(source, 256*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	ready := make(chan error, 1)
 	go func() {
@@ -356,7 +356,7 @@ func TestStreamingSource_WaitReady(t *testing.T) {
 func TestStreamingSource_WaitReady_EmptySource(t *testing.T) {
 	source := &slowReader{data: []byte{}}
 	ss := NewStreamingSource(source, 16*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	if err := ss.WaitReady(context.Background(), PreRollBytes); err == nil {
 		t.Fatal("WaitReady on empty source: expected error, got nil")
@@ -367,7 +367,7 @@ func TestStreamingSource_WaitReady_EmptySource(t *testing.T) {
 func TestStreamingSource_WaitReady_ContextCancel(t *testing.T) {
 	source := newBlockingSource()
 	ss := NewStreamingSource(source, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := make(chan error, 1)
@@ -467,7 +467,7 @@ func TestStreamingSource_Seek(t *testing.T) {
 	data := bytes.Repeat([]byte("0123456789"), 1000) // 10k bytes
 	src := &seekableSource{data: data}
 	ss := NewStreamingSource(src, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	if !waitForData(ss, 500*time.Millisecond) {
 		t.Fatal("timeout waiting for initial data")
@@ -503,7 +503,7 @@ func TestStreamingSource_Seek_FromCurrent(t *testing.T) {
 	data := bytes.Repeat([]byte("abcdefgh"), 2000) // 16k bytes
 	src := &seekableSource{data: data}
 	ss := NewStreamingSource(src, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	if !waitForData(ss, 500*time.Millisecond) {
 		t.Fatal("timeout waiting for initial data")
@@ -544,7 +544,7 @@ func TestStreamingSource_Seek_FromCurrent(t *testing.T) {
 func TestStreamingSource_Seek_NonSeekableSource(t *testing.T) {
 	src := &slowReader{data: bytes.Repeat([]byte("x"), 1024)}
 	ss := NewStreamingSource(src, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	if _, err := ss.Seek(10, io.SeekStart); err == nil {
 		t.Fatal("Seek() on non-seekable source: expected error")
@@ -554,7 +554,7 @@ func TestStreamingSource_Seek_NonSeekableSource(t *testing.T) {
 func TestStreamingSource_Seek_AfterClose(t *testing.T) {
 	src := &seekableSource{data: bytes.Repeat([]byte("x"), 1024)}
 	ss := NewStreamingSource(src, 64*1024)
-	_ = ss.Close()
+	ss.Close()
 
 	if _, err := ss.Seek(10, io.SeekStart); err != io.ErrClosedPipe {
 		t.Errorf("Seek() after Close = %v, want io.ErrClosedPipe", err)
@@ -604,7 +604,7 @@ func (s *deadlineSource) SetReadDeadline(t time.Time) error {
 func TestStreamingSource_Read_StalledPeer_TimesOut(t *testing.T) {
 	src := &deadlineSource{deadline: time.Now().Add(30 * time.Millisecond)}
 	ss := NewStreamingSource(src, 64*1024)
-	defer func() { _ = ss.Close() }()
+	defer func() { ss.Close() }()
 
 	// The fill goroutine sets a 100ms read deadline per iteration; the source
 	// blocks until the deadline fires. Give it a moment to apply the deadline,

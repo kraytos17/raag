@@ -142,7 +142,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 	for range 10 {
 		wg.Go(func() {
 			for range 100 {
-				_, _ = rb.Write(data)
+				rb.Write(data)
 				time.Sleep(time.Microsecond)
 			}
 		})
@@ -151,7 +151,7 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 		wg.Go(func() {
 			buf := make([]byte, 9)
 			for range 100 {
-				_, _ = rb.Read(buf)
+				rb.Read(buf)
 				time.Sleep(time.Microsecond)
 			}
 		})

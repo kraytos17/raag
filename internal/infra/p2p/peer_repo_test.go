@@ -120,11 +120,8 @@ func TestP2PNode_MeasureAllPeersLatency_ActivePingRecords(t *testing.T) {
 		t.Fatalf("GenPeer B: %v", err)
 	}
 
-	pingA := ping.NewPingService(hostA)
-	pingB := ping.NewPingService(hostB)
-	_ = pingA
-	_ = pingB
-
+	ping.NewPingService(hostA)
+	ping.NewPingService(hostB)
 	if err := net.LinkAll(); err != nil {
 		t.Fatalf("LinkAll: %v", err)
 	}

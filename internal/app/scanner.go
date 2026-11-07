@@ -45,7 +45,7 @@ const (
 
 func WalkAudioFiles(ctx context.Context, dirPath string) iter.Seq2[string, error] {
 	return func(yield func(string, error) bool) {
-		_ = filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+		filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				yield("", err)
 				return fs.SkipAll
@@ -117,7 +117,7 @@ func (s *LibraryScanner) HashContent(path string) string {
 	if err != nil {
 		return ""
 	}
-	defer func() { _ = file.Close() }()
+	defer func() { file.Close() }()
 
 	resultCh := s.hashWorker.Submit(file)
 	return <-resultCh
@@ -502,7 +502,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = file.Close() }()
+	defer func() { file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -547,7 +547,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 		// Best-effort loudness measurement; a failure leaves LoudnessDB at 0
 		// (unknown), which disables loudness normalization for this track.
 		track.LoudnessDB, _ = audio.EstimateLoudnessDB(lf, track.MimeType)
-		_ = lf.Close()
+		lf.Close()
 	} else {
 		slog.Debug("failed to open file for loudness scan", "path", path, "error", err)
 	}
@@ -573,7 +573,7 @@ func (s *LibraryScanner) parseFile(path string) (*domain.Track, error) {
 				if _, seekErr := fb.Seek(0, io.SeekStart); seekErr == nil {
 					track.ContentHash = computeSampleHash(fb, stat.Size())
 				}
-				_ = fb.Close()
+				fb.Close()
 			}
 		}
 	} else {

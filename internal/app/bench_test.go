@@ -17,7 +17,7 @@ func BenchmarkIndex_Index_Single(b *testing.B) {
 		Album:  benchmarkAlbum,
 	}
 	for b.Loop() {
-		_ = idx.Index(ctx, track)
+		idx.Index(ctx, track)
 	}
 }
 
@@ -34,7 +34,7 @@ func BenchmarkIndex_Index_Batch(b *testing.B) {
 		}
 	}
 	for b.Loop() {
-		_ = idx.IndexBatch(ctx, tracks)
+		idx.IndexBatch(ctx, tracks)
 	}
 }
 
@@ -48,10 +48,10 @@ func BenchmarkIndex_Search(b *testing.B) {
 			Artist: rockBand,
 			Album:  rockAlbum,
 		}
-		_ = idx.Index(ctx, track)
+		idx.Index(ctx, track)
 	}
 	for b.Loop() {
-		_, _ = idx.Search(ctx, rockQuery, 20)
+		idx.Search(ctx, rockQuery, 20)
 	}
 }
 
@@ -59,7 +59,7 @@ func BenchmarkIndex_Delete(b *testing.B) {
 	idx := NewSearchIndex(nil)
 	ctx := context.Background()
 	trackID := domain.GenerateTrackID("/music/benchmark.mp3")
-	_ = idx.Index(ctx, &domain.Track{
+	idx.Index(ctx, &domain.Track{
 		ID:     trackID,
 		Title:  benchmarkSong,
 		Artist: benchmarkArtist,
@@ -67,6 +67,6 @@ func BenchmarkIndex_Delete(b *testing.B) {
 	})
 
 	for b.Loop() {
-		_ = idx.Delete(ctx, trackID)
+		idx.Delete(ctx, trackID)
 	}
 }

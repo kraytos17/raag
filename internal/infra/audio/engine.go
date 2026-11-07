@@ -122,7 +122,7 @@ func (e *Engine) PlayStreaming(ctx context.Context, source AudioSource, mimeType
 	streamer, format, err := decode(source, mimeType)
 	if err != nil {
 		e.state = domain.PlayerStateError
-		_ = source.Close()
+		source.Close()
 		return fmt.Errorf("decode failed: %w", err)
 	}
 
@@ -169,10 +169,10 @@ func (e *Engine) startChainLocked(streamer beep.StreamSeekCloser, format beep.Fo
 		// in a fade-out and close its underlying streamer once it drains.
 		oldWithClose := beep.Seq(oldVol, beep.Callback(func() {
 			if oldStreamer != nil {
-				_ = oldStreamer.Close()
+				oldStreamer.Close()
 			}
 			if oldSource != nil {
-				_ = oldSource.Close()
+				oldSource.Close()
 			}
 		}))
 		play = crossfadeChain(oldWithClose, e.vol, e.sampleRate, e.dsp.Crossfade)
@@ -185,7 +185,7 @@ func (e *Engine) startChainLocked(streamer beep.StreamSeekCloser, format beep.Fo
 		e.mu.Lock()
 		e.fading = false
 		if e.audioSource != nil {
-			_ = e.audioSource.Close()
+			e.audioSource.Close()
 			e.audioSource = nil
 		}
 
@@ -232,7 +232,7 @@ func (e *Engine) PrepareStreaming(source AudioSource, mimeType string) error {
 
 	streamer, format, err := decode(source, mimeType)
 	if err != nil {
-		_ = source.Close()
+		source.Close()
 		return fmt.Errorf("prepare: decode failed: %w", err)
 	}
 	e.setPreparedLocked(streamer, format, source)
@@ -243,10 +243,10 @@ func (e *Engine) PrepareStreaming(source AudioSource, mimeType string) error {
 // track, closing any previous prepared streamer. Caller must hold e.mu.
 func (e *Engine) setPreparedLocked(streamer beep.StreamSeekCloser, format beep.Format, source AudioSource) {
 	if e.nextStreamer != nil {
-		_ = e.nextStreamer.Close()
+		e.nextStreamer.Close()
 	}
 	if e.nextSource != nil {
-		_ = e.nextSource.Close()
+		e.nextSource.Close()
 	}
 	e.nextStreamer = streamer
 	e.nextFormat = format
@@ -280,10 +280,10 @@ func (e *Engine) commitNextLocked() {
 
 	// Close the current streamer/source.
 	if e.streamer != nil {
-		_ = e.streamer.Close()
+		e.streamer.Close()
 	}
 	if e.audioSource != nil {
-		_ = e.audioSource.Close()
+		e.audioSource.Close()
 	}
 
 	e.streamer = e.nextStreamer
@@ -368,17 +368,17 @@ func (e *Engine) stopLocked() {
 	speaker.Clear()
 	e.fading = false
 	if e.streamer != nil {
-		_ = e.streamer.Close()
+		e.streamer.Close()
 	}
 	if e.audioSource != nil {
-		_ = e.audioSource.Close()
+		e.audioSource.Close()
 		e.audioSource = nil
 	}
 	if e.nextStreamer != nil {
-		_ = e.nextStreamer.Close()
+		e.nextStreamer.Close()
 	}
 	if e.nextSource != nil {
-		_ = e.nextSource.Close()
+		e.nextSource.Close()
 	}
 	e.nextStreamer = nil
 	e.nextFormat = beep.Format{}
@@ -551,7 +551,7 @@ func decode(rc io.ReadCloser, mimeType string) (beep.StreamSeekCloser, beep.Form
 	}
 
 	if err != nil {
-		_ = rc.Close()
+		rc.Close()
 		return nil, format, err
 	}
 	return streamer, format, err

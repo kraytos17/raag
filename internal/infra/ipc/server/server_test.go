@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/wire"
@@ -33,11 +33,11 @@ func TestServer_ConcurrentScanAndEventBroadcast_NoFrameInterleave(t *testing.T) 
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { conn.Close() }()
 
 	subReq := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
-		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: ipc.EventPlaybackState}},
+		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: ipcclient.EventPlaybackState}},
 	}
 	if err := wire.WriteMsg(conn, subReq); err != nil {
 		t.Fatalf("write subscribe: %v", err)
@@ -77,7 +77,7 @@ func TestServer_ConcurrentScanAndEventBroadcast_NoFrameInterleave(t *testing.T) 
 	go func() {
 		defer wg.Done()
 		for range iterations {
-			srv.PublishEvent(ipc.EventPlaybackState, eventPayload)
+			srv.PublishEvent(ipcclient.EventPlaybackState, eventPayload)
 		}
 	}()
 
@@ -90,7 +90,7 @@ func TestServer_ConcurrentScanAndEventBroadcast_NoFrameInterleave(t *testing.T) 
 	go func() {
 		defer close(readerDone)
 		for reads < expected {
-			_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 			frame, err := wire.ReadFrame(conn)
 			if err != nil {
 				corrupt = fmt.Sprintf("read frame %d: %v", reads, err)

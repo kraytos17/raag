@@ -247,7 +247,7 @@ func (h *SyncHandler) sendError(stream network.Stream, msg string, code pb.Error
 		},
 	}
 
-	_ = wire.WriteMsg(stream, resp)
+	wire.WriteMsg(stream, resp)
 	if err := stream.Reset(); err != nil {
 		slog.Debug("stream reset error in sendError", "err", err)
 	}

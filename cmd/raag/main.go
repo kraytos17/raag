@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/p-society/raag/internal/config"
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	"github.com/p-society/raag/internal/version"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
@@ -14,7 +14,7 @@ import (
 
 var (
 	socketPath string
-	client     *ipc.Client
+	client     *ipcclient.Client
 )
 
 func main() {
@@ -67,7 +67,7 @@ func run() int {
 	return 0
 }
 
-func getClient() (*ipc.Client, error) {
+func getClient() (*ipcclient.Client, error) {
 	if client != nil {
 		return client, nil
 	}
@@ -81,11 +81,11 @@ func getClient() (*ipc.Client, error) {
 		socket = config.ExpandHome(cfg.Daemon.SocketPath)
 	}
 
-	client = ipc.NewClient(socket)
+	client = ipcclient.NewClient(socket)
 	return client, nil
 }
 
-func call(fn func(*ipc.Client) (*pb.Response, error)) error {
+func call(fn func(*ipcclient.Client) (*pb.Response, error)) error {
 	client, err := getClient()
 	if err != nil {
 		return err

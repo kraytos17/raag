@@ -18,8 +18,8 @@ func TestOpen(t *testing.T) {
 		t.Errorf("Path() = %v, want %v", db.Path(), dir)
 	}
 
-	_ = db.Close()
-	_ = os.RemoveAll(dir)
+	db.Close()
+	os.RemoveAll(dir)
 }
 
 func TestOpen_CreatesDirectory(t *testing.T) {
@@ -32,8 +32,8 @@ func TestOpen_CreatesDirectory(t *testing.T) {
 		t.Error("Open() should create directory")
 	}
 
-	_ = db.Close()
-	_ = os.RemoveAll(dir)
+	db.Close()
+	os.RemoveAll(dir)
 }
 
 func TestOpen_EncryptionKey(t *testing.T) {
@@ -43,24 +43,24 @@ func TestOpen_EncryptionKey(t *testing.T) {
 		key[i] = byte(i)
 	}
 
-	_ = os.Setenv("RAAG_DB_KEY", string(key))
-	defer func() { _ = os.Unsetenv("RAAG_DB_KEY") }()
+	os.Setenv("RAAG_DB_KEY", string(key))
+	defer func() { os.Unsetenv("RAAG_DB_KEY") }()
 
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() with encryption key error = %v", err)
 	}
 
-	_ = db.Close()
-	_ = os.RemoveAll(dir)
+	db.Close()
+	os.RemoveAll(dir)
 }
 
 func TestOpen_InvalidEncryptionKey(t *testing.T) {
 	dir := t.TempDir()
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { os.RemoveAll(dir) }()
 
-	_ = os.Setenv("RAAG_DB_KEY", "tooshort")
-	defer func() { _ = os.Unsetenv("RAAG_DB_KEY") }()
+	os.Setenv("RAAG_DB_KEY", "tooshort")
+	defer func() { os.Unsetenv("RAAG_DB_KEY") }()
 
 	_, err := Open(dir, DefaultOptions(dir))
 	if err == nil {
@@ -78,18 +78,18 @@ func TestClose(t *testing.T) {
 		t.Errorf("Close() error = %v", err)
 	}
 
-	_ = os.RemoveAll(dir)
+	os.RemoveAll(dir)
 }
 
 func TestView(t *testing.T) {
 	dir := t.TempDir()
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { os.RemoveAll(dir) }()
 
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { db.Close() }()
 
 	err = db.View(func(txn *badger.Txn) error {
 		_, err := txn.Get([]byte("nonexistent"))
@@ -105,13 +105,13 @@ func TestView(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	dir := t.TempDir()
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { os.RemoveAll(dir) }()
 
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { db.Close() }()
 
 	err = db.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte("key"), []byte("value"))
@@ -139,13 +139,13 @@ func TestUpdate(t *testing.T) {
 
 func TestUpdate_TransactionError(t *testing.T) {
 	dir := t.TempDir()
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { os.RemoveAll(dir) }()
 
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { db.Close() }()
 
 	err = db.Update(func(txn *badger.Txn) error {
 		return badger.ErrTxnTooBig
@@ -157,13 +157,13 @@ func TestUpdate_TransactionError(t *testing.T) {
 
 func TestNewWriteBatch(t *testing.T) {
 	dir := t.TempDir()
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { os.RemoveAll(dir) }()
 
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { db.Close() }()
 
 	wb := db.NewWriteBatch()
 	if wb == nil {
@@ -174,31 +174,31 @@ func TestNewWriteBatch(t *testing.T) {
 
 func TestSize(t *testing.T) {
 	dir := t.TempDir()
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { os.RemoveAll(dir) }()
 
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { db.Close() }()
 
-	_ = db.Update(func(txn *badger.Txn) error {
+	db.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte("key"), []byte("value"))
 	})
 }
 
 func TestBackup(t *testing.T) {
 	dir := t.TempDir()
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { os.RemoveAll(dir) }()
 
 	db, err := Open(dir, DefaultOptions(dir))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { db.Close() }()
 
-	_ = db.Update(func(txn *badger.Txn) error {
-		_ = txn.Set([]byte("key1"), []byte("value1"))
+	db.Update(func(txn *badger.Txn) error {
+		txn.Set([]byte("key1"), []byte("value1"))
 		return txn.Set([]byte("key2"), []byte("value2"))
 	})
 
@@ -275,5 +275,5 @@ func TestDB_CompactionStartsOnOpen(t *testing.T) {
 		t.Errorf("Close() error = %v", err)
 	}
 
-	_ = os.RemoveAll(dir)
+	os.RemoveAll(dir)
 }

@@ -40,7 +40,7 @@ func TestSearchService_Search_LimitValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			idx.lastLimit = 0
-			_, _ = svc.Search(ctx, "test", tt.inputLimit)
+			svc.Search(ctx, "test", tt.inputLimit)
 			if idx.lastLimit != tt.wantLimit {
 				t.Errorf("Search(limit=%d) passed limit=%d to index, want %d", tt.inputLimit, idx.lastLimit, tt.wantLimit)
 			}
@@ -286,7 +286,7 @@ func TestSearchService_Search_Integration(t *testing.T) {
 	}
 
 	for _, track := range tracks {
-		_ = idx.Index(ctx, track)
+		idx.Index(ctx, track)
 		repo.AddTrack(track)
 	}
 

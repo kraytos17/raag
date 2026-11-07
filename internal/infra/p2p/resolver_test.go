@@ -430,8 +430,8 @@ func TestP2PResolver_LastPeerID_ConcurrentAccess(t *testing.T) {
 		}(i)
 		go func() {
 			defer wg.Done()
-			_ = resolver.LastPeerID()
-			_ = resolver.LastPeerIDString()
+			resolver.LastPeerID()
+			resolver.LastPeerIDString()
 		}()
 	}
 	wg.Wait()

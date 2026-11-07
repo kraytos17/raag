@@ -109,9 +109,9 @@ func TestIndex_Search_Exact(t *testing.T) {
 	id2 := domain.GenerateTrackID("/music/song2.mp3")
 	id3 := domain.GenerateTrackID("/music/song3.mp3")
 
-	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: rockSong, Artist: rockBand, Album: rockAlbum})
-	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
-	_ = idx.Index(ctx, &domain.Track{ID: id3, Title: "Classical Piece", Artist: "Orchestra", Album: "Classical"})
+	idx.Index(ctx, &domain.Track{ID: id1, Title: rockSong, Artist: rockBand, Album: rockAlbum})
+	idx.Index(ctx, &domain.Track{ID: id2, Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
+	idx.Index(ctx, &domain.Track{ID: id3, Title: "Classical Piece", Artist: "Orchestra", Album: "Classical"})
 
 	tests := []struct {
 		name    string
@@ -170,7 +170,7 @@ func TestIndex_Search_CaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 
 	id := domain.GenerateTrackID("/music/song.mp3")
-	_ = idx.Index(ctx, &domain.Track{ID: id, Title: helloWorldTitle, Artist: testArtist, Album: testAlbum})
+	idx.Index(ctx, &domain.Track{ID: id, Title: helloWorldTitle, Artist: testArtist, Album: testAlbum})
 
 	tests := []struct {
 		name  string
@@ -204,8 +204,8 @@ func TestIndex_Search_MultipleTokens(t *testing.T) {
 	id1 := domain.GenerateTrackID("/music/song1.mp3")
 	id2 := domain.GenerateTrackID("/music/song2.mp3")
 
-	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: rockSong, Artist: bandToken, Album: albumToken})
-	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: jazzSong, Artist: bandToken, Album: albumToken})
+	idx.Index(ctx, &domain.Track{ID: id1, Title: rockSong, Artist: bandToken, Album: albumToken})
+	idx.Index(ctx, &domain.Track{ID: id2, Title: jazzSong, Artist: bandToken, Album: albumToken})
 
 	got, err := idx.Search(ctx, rockQuery, 10)
 	if err != nil {
@@ -220,7 +220,7 @@ func TestIndex_Search_Limit(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)
 	ctx := context.Background()
 	for i := range 10 {
-		_ = idx.Index(ctx, &domain.Track{
+		idx.Index(ctx, &domain.Track{
 			ID:     domain.GenerateTrackID("/music/song" + string(rune('a'+i)) + ".mp3"),
 			Title:  rockSong,
 			Artist: rockBand,
@@ -258,7 +258,7 @@ func TestIndex_Search_EmptyQuery(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)
 	ctx := context.Background()
 
-	_ = idx.Index(ctx, &domain.Track{
+	idx.Index(ctx, &domain.Track{
 		ID:     domain.GenerateTrackID("/music/song.mp3"),
 		Title:  rockSong,
 		Artist: rockBand,
@@ -294,7 +294,7 @@ func TestIndex_Delete(t *testing.T) {
 	ctx := context.Background()
 
 	trackID := domain.GenerateTrackID("/music/song.mp3")
-	_ = idx.Index(ctx, &domain.Track{ID: trackID, Title: rockSong, Artist: rockBand, Album: rockAlbum})
+	idx.Index(ctx, &domain.Track{ID: trackID, Title: rockSong, Artist: rockBand, Album: rockAlbum})
 
 	if err := idx.Delete(ctx, trackID); err != nil {
 		t.Errorf("Delete() error = %v", err)
@@ -316,8 +316,8 @@ func TestIndex_Stats(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)
 	ctx := context.Background()
 
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: rockSong, Artist: rockBand, Album: rockAlbum})
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
+	idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: rockSong, Artist: rockBand, Album: rockAlbum})
+	idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
 
 	stats, err := idx.Stats(ctx)
 	if err != nil {
@@ -335,8 +335,8 @@ func TestIndex_Rebuild(t *testing.T) {
 	idx := NewSearchIndex(nil).(*inmemoryIndex)
 	ctx := context.Background()
 
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: rockSong, Artist: rockBand, Album: rockAlbum})
-	_ = idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
+	idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song1.mp3"), Title: rockSong, Artist: rockBand, Album: rockAlbum})
+	idx.Index(ctx, &domain.Track{ID: domain.GenerateTrackID("/music/song2.mp3"), Title: jazzSong, Artist: jazzBand, Album: jazzAlbum})
 
 	if err := idx.Delete(ctx, domain.GenerateTrackID("/music/song1.mp3")); err != nil {
 		t.Errorf("Delete() error = %v", err)
@@ -401,7 +401,7 @@ func TestIndex_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			_ = idx.Index(ctx, &domain.Track{
+			idx.Index(ctx, &domain.Track{
 				ID:     domain.GenerateTrackID("/music/song" + string(rune('0'+n)) + ".mp3"),
 				Title:  rockSong,
 				Artist: rockBand,
@@ -424,9 +424,9 @@ func TestIndex_Search_ScoreOrdering(t *testing.T) {
 	id2 := domain.GenerateTrackID("/music/song2.mp3")
 	id3 := domain.GenerateTrackID("/music/song3.mp3")
 
-	_ = idx.Index(ctx, &domain.Track{ID: id1, Title: "Rock", Artist: "Band A", Album: albumToken})
-	_ = idx.Index(ctx, &domain.Track{ID: id2, Title: "Rock Rock", Artist: "Band B", Album: albumToken})
-	_ = idx.Index(ctx, &domain.Track{ID: id3, Title: "Rock Rock Rock", Artist: "Band C", Album: albumToken})
+	idx.Index(ctx, &domain.Track{ID: id1, Title: "Rock", Artist: "Band A", Album: albumToken})
+	idx.Index(ctx, &domain.Track{ID: id2, Title: "Rock Rock", Artist: "Band B", Album: albumToken})
+	idx.Index(ctx, &domain.Track{ID: id3, Title: "Rock Rock Rock", Artist: "Band C", Album: albumToken})
 
 	got, err := idx.Search(ctx, rockQuery, 10)
 	if err != nil {

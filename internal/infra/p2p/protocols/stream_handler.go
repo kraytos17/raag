@@ -366,7 +366,7 @@ func (h *StreamHandler) sendError(stream network.Stream, trackID string, msg str
 		LastChunk: true,
 	}
 
-	_ = wire.WriteMsg(stream, resp)
+	wire.WriteMsg(stream, resp)
 	if err := stream.Reset(); err != nil {
 		slog.Debug("stream reset error in sendError", "err", err)
 	}

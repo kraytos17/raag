@@ -81,7 +81,7 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	if track == nil {
 		track, err = c.libraryRepo.FindByID(ctx, trackID)
 		if err != nil {
-			_ = resolved.Reader.Close()
+			resolved.Reader.Close()
 			return err
 		}
 	}
@@ -101,8 +101,8 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 		// Otherwise the decoder's first read races an empty buffer and the
 		// track fails on the very first play over the network
 		if err := src.WaitReady(ctx, audio.PreRollBytes); err != nil {
-			_ = src.Close()
-			_ = c.fsm.Send(ctx, domain.EventBufferFail)
+			src.Close()
+			c.fsm.Send(ctx, domain.EventBufferFail)
 
 			c.mu.Lock()
 			c.currentTrack = nil
@@ -115,7 +115,7 @@ func (c *PlaybackController) Play(ctx context.Context, trackID domain.TrackID) e
 	}
 
 	if playErr != nil {
-		_ = c.fsm.Send(ctx, domain.EventBufferFail)
+		c.fsm.Send(ctx, domain.EventBufferFail)
 		c.mu.Lock()
 		c.currentTrack = nil
 		c.mu.Unlock()
@@ -165,7 +165,7 @@ func (c *PlaybackController) Pause(ctx context.Context) error {
 		return err
 	}
 	if err := c.player.Pause(ctx); err != nil {
-		_ = c.fsm.Send(ctx, domain.EventResume)
+		c.fsm.Send(ctx, domain.EventResume)
 		return err
 	}
 
@@ -188,7 +188,7 @@ func (c *PlaybackController) Resume(ctx context.Context) error {
 		return err
 	}
 	if err := c.player.Resume(ctx); err != nil {
-		_ = c.fsm.Send(ctx, domain.EventPause)
+		c.fsm.Send(ctx, domain.EventPause)
 		return err
 	}
 
@@ -243,9 +243,9 @@ func (c *PlaybackController) Seek(ctx context.Context, position time.Duration) e
 	if err := c.player.Seek(ctx, position); err != nil {
 		// Roll back to the previous stable state.
 		// Currently in Seeking; SeekDone returns to Playing.
-		_ = c.fsm.Send(ctx, domain.EventSeekDone)
+		c.fsm.Send(ctx, domain.EventSeekDone)
 		if prevState == domain.PlayerStatePaused {
-			_ = c.fsm.Send(ctx, domain.EventPause)
+			c.fsm.Send(ctx, domain.EventPause)
 		}
 		return err
 	}
@@ -352,7 +352,7 @@ func (c *PlaybackController) preloadNext(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	defer func() { _ = resolved.Reader.Close() }()
+	defer func() { resolved.Reader.Close() }()
 
 	if resolved.Source != SourceLocal {
 		return
@@ -411,12 +411,12 @@ func (c *PlaybackController) startAdvanceWatcher(playCtx, sessionCtx context.Con
 		}
 		// Fallback: nothing was prepared (or commit failed). Hard-stop and
 		// play the next queue item as before.
-		_ = c.player.CommitNext() // clear any partially prepared state
+		c.player.CommitNext() // clear any partially prepared state
 		c.mu.Lock()
 		c.preparedTrack = nil
 		c.mu.Unlock()
 
-		_ = c.fsm.Send(sessionCtx, domain.EventEOF)
+		c.fsm.Send(sessionCtx, domain.EventEOF)
 		c.mu.Lock()
 		state := c.fsm.State()
 		queue := c.queue
@@ -433,7 +433,7 @@ func (c *PlaybackController) startAdvanceWatcher(playCtx, sessionCtx context.Con
 		if next == nil {
 			return
 		}
-		_ = c.Play(playCtx, next.ID)
+		c.Play(playCtx, next.ID)
 	}()
 }
 

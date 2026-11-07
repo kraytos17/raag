@@ -43,7 +43,7 @@ func genWav(t *testing.T, amp float64, samples int) []byte {
 	if err != nil {
 		t.Fatalf("create temp wav: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { f.Close() }()
 
 	sr := beep.SampleRate(44100)
 	format := beep.Format{NumChannels: 2, SampleRate: sr, Precision: 2}

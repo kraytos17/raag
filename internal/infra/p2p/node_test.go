@@ -61,7 +61,7 @@ func newLifecycleTestNode(t *testing.T, broadcastEnabled bool) *P2PNode {
 	if err != nil {
 		t.Fatalf("NewHost: %v", err)
 	}
-	t.Cleanup(func() { _ = libp2pHost.Close() })
+	t.Cleanup(func() { libp2pHost.Close() })
 
 	libraryRepo := mocks.NewMockLibraryRepository()
 	pool := NewStreamPool(libp2pHost, protocols.StreamProtocol)
@@ -93,7 +93,7 @@ func newLifecycleTestNode(t *testing.T, broadcastEnabled bool) *P2PNode {
 		peerDataTTL:      time.Hour,
 		broadcastEnabled: broadcastEnabled,
 	}
-	t.Cleanup(func() { _ = node.Stop(context.Background()) })
+	t.Cleanup(func() { node.Stop(context.Background()) })
 	return node
 }
 
@@ -428,7 +428,7 @@ func TestNewP2PNode_LANOnlyDropsBootstrapPeers(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = n.Stop(ctx)
+		n.Stop(ctx)
 	})
 	if len(n.bootstrapPeers) != 0 {
 		t.Errorf("bootstrapPeers = %v, want nil in LAN-only mode", n.bootstrapPeers)

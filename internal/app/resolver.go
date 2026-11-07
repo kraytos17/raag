@@ -65,10 +65,10 @@ func (r *LocalResolver) Resolve(ctx context.Context, trackID domain.TrackID) (*R
 	if r.transcoder != nil && !domain.CodecDecodable(track.Codec) {
 		tmpPath, err := r.transcoder.TranscodeToFile(ctx, track.Path, codecMP3, defaultLocalTranscodeBitrate)
 		if err != nil {
-			_ = file.Close()
+			file.Close()
 			return nil, fmt.Errorf("local transcode failed: %w", err)
 		}
-		_ = file.Close()
+		file.Close()
 
 		tmp, err := os.Open(tmpPath)
 		if err != nil {

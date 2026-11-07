@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
@@ -51,6 +51,7 @@ func newSearchCmd() *cobra.Command {
 			return nil
 		},
 	}
+
 	cmd.Flags().BoolVar(&includePeers, "peers", false, "also search connected peers' libraries")
 	return cmd
 }
@@ -71,7 +72,7 @@ func newLibCmd() *cobra.Command {
 				return err
 			}
 
-			_, err = client.LibScanAsync(scanIncremental, func(progress ipc.ScanProgress) {
+			_, err = client.LibScanAsync(scanIncremental, func(progress ipcclient.ScanProgress) {
 				if progress.Total > 0 {
 					fmt.Printf("\rScanning: %d/%d files (%s)", progress.Scanned, progress.Total, progress.CurrentFile)
 				}
@@ -84,6 +85,7 @@ func newLibCmd() *cobra.Command {
 			return nil
 		},
 	}
+
 	scanCmd.Flags().BoolVar(&scanIncremental, "incremental", false, "only scan new or modified files")
 	cmd.AddCommand(scanCmd)
 

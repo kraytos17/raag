@@ -31,14 +31,14 @@ func TestProbeListenAddrs_FreePorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	tcpPort := tcp.Addr().(*net.TCPAddr).Port
-	_ = tcp.Close()
+	tcp.Close()
 
 	udp, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	udpPort := udp.LocalAddr().(*net.UDPAddr).Port
-	_ = udp.Close()
+	udp.Close()
 
 	addrs := []ma.Multiaddr{
 		ma.StringCast("/ip4/127.0.0.1/tcp/" + strconv.Itoa(tcpPort)),

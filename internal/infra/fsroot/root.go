@@ -52,7 +52,7 @@ func (r *Roots) Close() {
 		return
 	}
 	for _, rt := range r.roots {
-		_ = rt.root.Close()
+		rt.root.Close()
 	}
 }
 

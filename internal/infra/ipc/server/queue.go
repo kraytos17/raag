@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
@@ -75,6 +75,7 @@ func (s *Server) handleQueueRepeat(req *pb.QueueRepeatRequest) *pb.Response {
 	default:
 		return &pb.Response{Success: false, Error: "invalid repeat mode (want \"\", \"all\", or \"one\")"}
 	}
+
 	s.publishQueueUpdated()
 	return &pb.Response{Success: true}
 }
@@ -102,5 +103,5 @@ func (s *Server) publishQueueUpdated() {
 	for i, t := range tracks {
 		qt[i] = convert.TrackToProto(t)
 	}
-	s.PublishEvent(ipc.EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
+	s.PublishEvent(ipcclient.EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
 }

@@ -53,7 +53,7 @@ func NewFileWatcher(paths []string, handler FileEventHandler) (*FileWatcher, err
 			}
 			return nil
 		}); err != nil {
-			_ = watcher.Close()
+			watcher.Close()
 			return nil, err
 		}
 	}
@@ -71,7 +71,7 @@ func (fw *FileWatcher) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			_ = fw.watcher.Close()
+			fw.watcher.Close()
 			fw.flushPending(ctx)
 			return
 		case event, ok := <-fw.watcher.Events:

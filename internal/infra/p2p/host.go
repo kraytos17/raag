@@ -50,7 +50,7 @@ func probeListenAddrs(listenAddrs []ma.Multiaddr) error {
 			if err != nil {
 				return fmt.Errorf("%w (tcp): %s: %v", ErrPortInUse, net.JoinHostPort(host, v), err)
 			}
-			_ = l.Close()
+			l.Close()
 		}
 		if v, err := a.ValueForProtocol(ma.P_UDP); err == nil {
 			port, err := strconv.Atoi(v)
@@ -62,7 +62,7 @@ func probeListenAddrs(listenAddrs []ma.Multiaddr) error {
 			if err != nil {
 				return fmt.Errorf("%w (udp): %s: %v", ErrPortInUse, net.JoinHostPort(host, v), err)
 			}
-			_ = pc.Close()
+			pc.Close()
 		}
 	}
 	return nil

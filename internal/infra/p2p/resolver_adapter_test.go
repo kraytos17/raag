@@ -30,7 +30,7 @@ func TestP2PResolverAdapter_PeersConcurrentProviderUpdates(t *testing.T) {
 			for range 100 {
 				for _, provider := range providers {
 					resolver.SetPeersProvider(provider)
-					_ = resolver.Peers()
+					resolver.Peers()
 				}
 			}
 		})

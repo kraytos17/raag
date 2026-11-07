@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/p-society/raag/internal/config"
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	"github.com/spf13/cobra"
 )
 
@@ -84,9 +84,9 @@ func findDaemonBinary(dir string) (string, bool) {
 func waitForDaemon(socketPath string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		c := ipc.NewClient(socketPath)
+		c := ipcclient.NewClient(socketPath)
 		resp, err := c.HealthCheck()
-		_ = c.Close()
+		c.Close()
 		if err == nil && resp != nil && resp.Success {
 			return nil
 		}
@@ -120,7 +120,7 @@ func runDaemonStart(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open daemon log: %w", err)
 	}
-	defer func() { _ = logFile.Close() }()
+	defer func() { logFile.Close() }()
 
 	proc := exec.Command(bin)
 	proc.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -132,9 +132,10 @@ func runDaemonStart(cmd *cobra.Command, _ []string) error {
 
 	socket := cfg.Daemon.SocketPath
 	if err := waitForDaemon(socket, 5*time.Second); err != nil {
-		_ = proc.Process.Kill()
+		proc.Process.Kill()
 		return err
 	}
+
 	fmt.Fprintf(os.Stdout, "daemon started (pid %d, socket %s)\n", proc.Process.Pid, socket)
 	return nil
 }
@@ -158,7 +159,7 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to stop daemon: %w", err)
 	}
 
-	_ = os.Remove(cfg.Daemon.PidFile)
+	os.Remove(cfg.Daemon.PidFile)
 	fmt.Fprintf(os.Stdout, "daemon stopped (pid %d)\n", pid)
 	return nil
 }
@@ -173,14 +174,15 @@ func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	if cfg.Daemon.SocketPath != "" {
-		c := ipc.NewClient(cfg.Daemon.SocketPath)
+		c := ipcclient.NewClient(cfg.Daemon.SocketPath)
 		resp, err := c.HealthCheck()
-		_ = c.Close()
+		c.Close()
 		if err == nil && resp != nil && resp.Success {
 			fmt.Fprintln(os.Stdout, "running (no pid file)")
 			return nil
 		}
 	}
+
 	fmt.Fprintln(os.Stdout, "stopped")
 	return nil
 }

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +26,7 @@ func newPlayCmd() *cobra.Command {
 				q = query
 			}
 
-			if err := call(func(c *ipc.Client) (*pb.Response, error) {
+			if err := call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.Play(trackID, q)
 			}); err != nil {
 				return err
@@ -44,7 +44,7 @@ func newPauseCmd() *cobra.Command {
 		Use:   "pause",
 		Short: "Pause playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.Pause()
 			}), "paused")
 		},
@@ -56,7 +56,7 @@ func newResumeCmd() *cobra.Command {
 		Use:   "resume",
 		Short: "Resume playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.Resume()
 			}), "resumed")
 		},
@@ -68,7 +68,7 @@ func newStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop playback",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.Stop()
 			}), "stopped")
 		},
@@ -80,7 +80,7 @@ func newNextCmd() *cobra.Command {
 		Use:   "next",
 		Short: "Skip to next track",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.Next()
 			}), "next track")
 		},
@@ -92,7 +92,7 @@ func newPrevCmd() *cobra.Command {
 		Use:   "prev",
 		Short: "Go to previous track",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.Prev()
 			}), "previous track")
 		},
@@ -158,7 +158,7 @@ func newVolumeCmd() *cobra.Command {
 			if volume < 0 || volume > 100 {
 				return fmt.Errorf("volume must be 0-100")
 			}
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.SetVolume(int32(volume))
 			}), fmt.Sprintf("volume set to %d", volume))
 		},
@@ -206,7 +206,7 @@ func newEqCmd() *cobra.Command {
 					enabled = true
 				}
 			}
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.SetEqualizer(enabled, eqBass, eqMid, eqTreble)
 			}), fmt.Sprintf("equalizer updated (enabled=%v bass=%+.1f mid=%+.1f treble=%+.1f)",
 				enabled, eqBass, eqMid, eqTreble))

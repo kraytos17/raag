@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/p-society/raag/internal/domain"
@@ -86,7 +87,6 @@ func (m *Model) renderWide() string {
 	case PanelPlaylists:
 		playlists = activePanelStyle.Render(m.Playlists.View())
 	}
-
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		library,
@@ -246,6 +246,7 @@ func (m *Model) renderEQ() string {
 	if m.EQ.Enabled {
 		state = "on"
 	}
+
 	content := fmt.Sprintf("EQ: %s (%s)\n  bass %+.1f dB   mid %+.1f dB   treble %+.1f dB",
 		name, state, m.EQ.Bass, m.EQ.Mid, m.EQ.Treble)
 	return eqStyle.Render(content)
@@ -301,5 +302,80 @@ func (m *Model) renderErrorScreen() string {
 		lipgloss.Center,
 		lipgloss.Center,
 		content,
+	)
+}
+
+func (m *Model) View() tea.View {
+	content := m.renderContent()
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+func (m *Model) renderContent() string {
+	if m.Err != nil && !m.Connected {
+		return m.renderErrorScreen()
+	}
+
+	header := m.renderHeader()
+	footer := m.renderFooter()
+
+	var searchBar string
+	if m.InSearch {
+		searchBar = searchStyle.Render(m.SearchInput.View())
+	}
+
+	var lists string
+	if m.Width >= 120 {
+		lists = m.renderWide()
+	} else {
+		lists = m.renderNarrow()
+	}
+
+	if m.ShowHelp {
+		help := m.renderHelpOverlay()
+		lists = lipgloss.JoinVertical(
+			lipgloss.Left,
+			lists,
+			help,
+		)
+	}
+	if m.ShowLyrics {
+		if lyrics := m.renderLyrics(); lyrics != "" {
+			lists = lipgloss.JoinVertical(
+				lipgloss.Left,
+				lists,
+				lyrics,
+			)
+		}
+	}
+	if m.ShowEq {
+		if eq := m.renderEQ(); eq != "" {
+			lists = lipgloss.JoinVertical(
+				lipgloss.Left,
+				lists,
+				eq,
+			)
+		}
+	}
+	if m.Reconnecting {
+		overlay := reconnectStyle.Render(" ⟳ Reconnecting... ")
+		lists = lipgloss.JoinVertical(
+			lipgloss.Left,
+			lists,
+			overlay,
+		)
+	}
+
+	parts := []string{header}
+	if searchBar != "" {
+		parts = append(parts, searchBar)
+	}
+
+	parts = append(parts, lists, footer)
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		parts...,
 	)
 }

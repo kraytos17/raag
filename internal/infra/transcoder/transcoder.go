@@ -137,14 +137,14 @@ func (t *Transcoder) TranscodeToFile(ctx context.Context, path, codec, bitrate s
 	}
 
 	tmpName := tmp.Name()
-	_ = tmp.Close()
+	tmp.Close()
 
 	ctx, cancel := transcodeCtx(ctx)
 	defer cancel()
 
 	cmd, err := t.buildCmd(ctx, path, codec, bitrate, 0)
 	if err != nil {
-		_ = os.Remove(tmpName)
+		os.Remove(tmpName)
 		return "", err
 	}
 
@@ -158,14 +158,14 @@ func (t *Transcoder) TranscodeToFile(ctx context.Context, path, codec, bitrate s
 	runErr := cmd.Run()
 	closeErr := out.Close()
 	if runErr != nil {
-		_ = os.Remove(tmpName)
+		os.Remove(tmpName)
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
 		return "", fmt.Errorf("transcoder: ffmpeg failed: %w", runErr)
 	}
 	if closeErr != nil {
-		_ = os.Remove(tmpName)
+		os.Remove(tmpName)
 		return "", closeErr
 	}
 
@@ -192,7 +192,7 @@ func (t *Transcoder) Cleanup() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for key, path := range t.cache {
-		_ = os.Remove(path)
+		os.Remove(path)
 		delete(t.cache, key)
 	}
 	slog.Debug("transcoder cache cleaned")

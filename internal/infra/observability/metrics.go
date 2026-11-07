@@ -120,7 +120,7 @@ func (m *Metrics) Start(ctx context.Context, addr, path string) error {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = m.server.Shutdown(shutdownCtx)
+		m.server.Shutdown(shutdownCtx)
 	}()
 
 	go func() {

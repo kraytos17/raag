@@ -1,4 +1,4 @@
-package ipc
+package client
 
 import (
 	"path/filepath"
@@ -10,7 +10,7 @@ func TestPersistentClient_NoServerAvailable(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "nonexistent.sock")
 
 	c := NewClient(socketPath)
-	defer func() { _ = c.Close() }()
+	defer func() { c.Close() }()
 
 	_, err := c.Status()
 	if err == nil {

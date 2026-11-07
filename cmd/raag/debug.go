@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
@@ -86,7 +86,7 @@ func runDebugPeers(cmd *cobra.Command, args []string) error {
 }
 
 // fetchDebugStats returns the daemon's aggregated debug stats, or an error.
-func fetchDebugStats(c *ipc.Client) (*pb.DebugStatsResponse, error) {
+func fetchDebugStats(c *ipcclient.Client) (*pb.DebugStatsResponse, error) {
 	resp, err := c.DebugStats()
 	if err != nil {
 		return nil, err

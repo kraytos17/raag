@@ -88,7 +88,7 @@ func TestFileWatcher_AddRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileWatcher() error = %v", err)
 	}
-	defer func() { _ = fw.Close() }()
+	defer func() { fw.Close() }()
 
 	ctx := t.Context()
 	fw.Start(ctx)
@@ -116,7 +116,7 @@ func TestFileWatcher_IgnoresNonAudio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileWatcher() error = %v", err)
 	}
-	defer func() { _ = fw.Close() }()
+	defer func() { fw.Close() }()
 
 	ctx := t.Context()
 	fw.Start(ctx)

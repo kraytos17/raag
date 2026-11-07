@@ -257,7 +257,7 @@ func (ss *StreamingSource) setTerminal(err error) {
 	}
 
 	ss.mu.Unlock()
-	_ = ss.rb.Close()
+	ss.rb.Close()
 	ss.signal()
 }
 

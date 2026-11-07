@@ -14,7 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/events"
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	"github.com/p-society/raag/internal/infra/p2p"
 	"github.com/p-society/raag/internal/infra/wire"
 	"github.com/p-society/raag/internal/testutil/mocks"
@@ -50,7 +50,7 @@ func startTestServer(t *testing.T) *testServer {
 func startTestServerAt(t *testing.T, socketPath string) *testServer {
 	t.Helper()
 
-	_ = os.Remove(socketPath)
+	os.Remove(socketPath)
 	bus := events.New()
 	config := Config{
 		Playback:     mocks.NewMockPlaybackHandler(),
@@ -86,7 +86,7 @@ func startTestServerAt(t *testing.T, socketPath string) *testServer {
 
 func (ts *testServer) Stop() {
 	ts.cancel()
-	_ = ts.Server.Stop(context.Background())
+	ts.Server.Stop(context.Background())
 }
 
 // TestPersistentClient_ReuseConn verifies that multiple requests
@@ -96,8 +96,8 @@ func TestPersistentClient_ReuseConn(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	// First request establishes connection
 	_, err := c.Status()
@@ -125,8 +125,8 @@ func TestPersistentClient_ReconnectsAfterRestart(t *testing.T) {
 	srv := startTestServer(t)
 	socketPath := srv.socketPath
 
-	c := ipc.NewClient(socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(socketPath)
+	defer func() { c.Close() }()
 
 	// First request establishes connection
 	_, err := c.Status()
@@ -152,43 +152,43 @@ func TestPersistentClient_ReconnectsAfterRestart(t *testing.T) {
 }
 
 // TestEventClient_StateTransitions verifies the subscription reports
-// ipc.ConnReconnecting when its connection drops and ipc.ConnConnected after a
+// ipcclient.ConnReconnecting when its connection drops and ipcclient.ConnConnected after a
 // successful resubscribe
 
 func TestEventClient_StateTransitions(t *testing.T) {
 	srv := startTestServer(t)
 	socketPath := srv.socketPath
 
-	c := ipc.NewClient(socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(socketPath)
+	defer func() { c.Close() }()
 
 	// First request establishes connection, then subscribe.
 	if _, err := c.Status(); err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	ec := c.SubscribeWithRetry(ipc.EventPlaybackState)
+	ec := c.SubscribeWithRetry(ipcclient.EventPlaybackState)
 	defer ec.Close()
 
-	// The initial successful subscribe should report ipc.ConnConnected.
+	// The initial successful subscribe should report ipcclient.ConnConnected.
 	select {
 	case state := <-ec.State():
-		if state != ipc.ConnConnected {
-			t.Fatalf("initial state = %v, want ipc.ConnConnected", state)
+		if state != ipcclient.ConnConnected {
+			t.Fatalf("initial state = %v, want ipcclient.ConnConnected", state)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for initial ipc.ConnConnected state")
+		t.Fatal("timed out waiting for initial ipcclient.ConnConnected state")
 	}
 
-	// Drop the server; the subscription must enter ipc.ConnReconnecting.
+	// Drop the server; the subscription must enter ipcclient.ConnReconnecting.
 	srv.Stop()
 
 	select {
 	case state := <-ec.State():
-		if state != ipc.ConnReconnecting {
-			t.Fatalf("state after server stop = %v, want ipc.ConnReconnecting", state)
+		if state != ipcclient.ConnReconnecting {
+			t.Fatalf("state after server stop = %v, want ipcclient.ConnReconnecting", state)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for ipc.ConnReconnecting state")
+		t.Fatal("timed out waiting for ipcclient.ConnReconnecting state")
 	}
 
 	// Restart the server at the same socket; the retry loop should reconnect.
@@ -197,11 +197,11 @@ func TestEventClient_StateTransitions(t *testing.T) {
 
 	select {
 	case state := <-ec.State():
-		if state != ipc.ConnConnected {
-			t.Fatalf("state after restart = %v, want ipc.ConnConnected", state)
+		if state != ipcclient.ConnConnected {
+			t.Fatalf("state after restart = %v, want ipcclient.ConnConnected", state)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for ipc.ConnConnected after restart")
+		t.Fatal("timed out waiting for ipcclient.ConnConnected after restart")
 	}
 }
 
@@ -217,11 +217,11 @@ func TestServer_SubscribeDispatch_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { conn.Close() }()
 
 	req := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
-		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: ipc.EventPlaybackState}},
+		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: ipcclient.EventPlaybackState}},
 	}
 	if err := wire.WriteMsg(conn, req); err != nil {
 		t.Fatalf("write subscribe: %v", err)
@@ -243,7 +243,7 @@ func TestPersistentClient_CloseIdempotent(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
+	c := ipcclient.NewClient(srv.socketPath)
 
 	// Establish a connection first
 	_, err := c.Status()
@@ -271,19 +271,18 @@ func TestPersistentClient_SendAfterClose(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-
+	c := ipcclient.NewClient(srv.socketPath)
 	// Establish connection and close
-	_, _ = c.Status()
-	_ = c.Close()
+	c.Status()
+	c.Close()
 
 	// Sending after close should fail
 	_, err := c.Status()
 	if err == nil {
 		t.Fatal("expected error after close, got nil")
 	}
-	if err != ipc.ErrClientClosed {
-		t.Fatalf("expected ipc.ErrClientClosed, got: %v", err)
+	if err != ipcclient.ErrClientClosed {
+		t.Fatalf("expected ipcclient.ErrClientClosed, got: %v", err)
 	}
 }
 
@@ -293,8 +292,8 @@ func TestPersistentClient_HealthCheck(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.HealthCheck()
 	if err != nil {
@@ -316,8 +315,8 @@ func TestPersistentClient_SetEqualizer_RoundTrip(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.SetEqualizer(true, 3.5, -2, 0)
 	if err != nil {
@@ -345,8 +344,8 @@ func TestPersistentClient_GetEqualizer(t *testing.T) {
 	mockPlayback, _ := srv.playback.(*mocks.MockPlaybackHandler)
 	mockPlayback.EQ = domain.EqualizerSettings{Enabled: true, Bass: 2, Mid: 0, Treble: 1}
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.GetEqualizer()
 	if err != nil {
@@ -372,8 +371,8 @@ func TestPersistentClient_DebugStats(t *testing.T) {
 
 	srv.dbStats = mocks.NewMockDBStats(1024, 2048)
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.DebugStats()
 	if err != nil {
@@ -402,8 +401,8 @@ func TestPersistentClient_MultipleRequests(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	for i := range 10 {
 		resp, err := c.Status()
@@ -422,8 +421,8 @@ func TestPersistentClient_PlayPauseResume(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	// Pause (should work even if not playing)
 	resp, err := c.Pause()
@@ -453,9 +452,6 @@ func TestPersistentClient_PlayPauseResume(t *testing.T) {
 	}
 }
 
-// TestPersistentClient_NoServerAvailable verifies proper error handling
-// when no server is available.
-
 func TestPersistentClient_ListTracks(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
@@ -471,8 +467,8 @@ func TestPersistentClient_ListTracks(t *testing.T) {
 	mock.Tracks = append(mock.Tracks, track)
 	srv.libraryRepo = mock
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.ListTracks(0, 0)
 	if err != nil {
@@ -508,8 +504,8 @@ func TestPersistentClient_GetTrack(t *testing.T) {
 	mock.Tracks = append(mock.Tracks, track)
 	srv.libraryRepo = mock
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.GetTrack("track-1")
 	if err != nil {
@@ -542,8 +538,8 @@ func TestPersistentClient_GetTrackByPath(t *testing.T) {
 	mock.Tracks = append(mock.Tracks, track)
 	srv.libraryRepo = mock
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.GetTrackByPath("/music/song.mp3")
 	if err != nil {
@@ -572,8 +568,8 @@ func TestPersistentClient_QueueList(t *testing.T) {
 	queue.Add(&domain.Track{ID: domain.TrackID("q-1"), Title: queueTrackTitle})
 	srv.queue = queue
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.GetQueue()
 	if err != nil {
@@ -609,8 +605,8 @@ func TestPersistentClient_Play_PopulatesQueue(t *testing.T) {
 
 	queue := mocks.NewMockQueueHandler()
 	srv.queue = queue
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.Play(string(track.ID), "")
 	if err != nil {
@@ -654,8 +650,8 @@ func TestPersistentClient_Status_PopulatesPositionMs(t *testing.T) {
 	mockPlayback.Position = 90 * time.Second
 	mockPlayback.BufferFill = 0.75
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.Status()
 	if err != nil {
@@ -797,14 +793,14 @@ func TestWireEventBus_DeliversToClient(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
-	ec, err := c.Subscribe(ipc.EventPeerConnected | ipc.EventQueueUpdated)
+	ec, err := c.Subscribe(ipcclient.EventPeerConnected | ipcclient.EventQueueUpdated)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
-	defer func() { _ = ec.Close() }()
+	defer func() { ec.Close() }()
 
 	srv.eventBus.Publish(context.Background(), domain.NewEvent(domain.EventQueueUpdated, nil))
 
@@ -838,8 +834,8 @@ func TestPersistentClient_ListPeers_Enriched(t *testing.T) {
 	})
 	srv.peerRepo = mock
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.ListPeers()
 	if err != nil {
@@ -898,8 +894,8 @@ func TestPersistentClient_ListPeers_IncludesDiscovered(t *testing.T) {
 	node.AddDiscovered(discovered)
 	wantID := discovered.ID.String()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.ListPeers()
 	if err != nil {
@@ -936,8 +932,8 @@ func TestPersistentClient_QueueShuffleRepeat(t *testing.T) {
 	queue := mocks.NewMockQueueHandler()
 	srv.queue = queue
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	// Toggle shuffle on.
 	resp, err := c.QueueSetShuffle(true)
@@ -999,8 +995,8 @@ func TestPersistentClient_Playlists(t *testing.T) {
 	mock.Tracks = append(mock.Tracks, &domain.Track{ID: domain.TrackID("track-1"), Title: testSongTitle, Artist: testArtist})
 	srv.libraryRepo = mock
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	// List.
 	resp, err := c.ListPlaylists()
@@ -1056,14 +1052,14 @@ func TestPersistentClient_ConcurrentRequestsWithEvents(t *testing.T) {
 	srv := startTestServer(t)
 	defer srv.Stop()
 
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
-	ec, err := c.Subscribe(ipc.EventQueueUpdated | ipc.EventTrackChanged)
+	ec, err := c.Subscribe(ipcclient.EventQueueUpdated | ipcclient.EventTrackChanged)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
-	defer func() { _ = ec.Close() }()
+	defer func() { ec.Close() }()
 
 	const workers = 8
 	const reqsPerWorker = 25
@@ -1120,7 +1116,7 @@ func TestPersistentClient_ConcurrentRequestsWithEvents(t *testing.T) {
 	}
 
 	// The subscription must have observed events. Count queue-updated events
-	// (translateEvent maps ipc.EventQueueUpdated -> EVENT_TYPE_QUEUE_UPDATED).
+	// (translateEvent maps ipcclient.EventQueueUpdated -> EVENT_TYPE_QUEUE_UPDATED).
 	var queueEvents int
 	deadline := time.After(3 * time.Second)
 collect:
@@ -1158,8 +1154,8 @@ func TestPersistentClient_SearchRemote(t *testing.T) {
 	}
 
 	srv.search = search
-	c := ipc.NewClient(srv.socketPath)
-	defer func() { _ = c.Close() }()
+	c := ipcclient.NewClient(srv.socketPath)
+	defer func() { c.Close() }()
 
 	resp, err := c.SearchRemote("song", 20)
 	if err != nil {
@@ -1261,7 +1257,7 @@ func TestServer_Broadcast_WithConcurrentResponseWrites(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				_ = srv.subMgr.WriteTo(serverConn, &pb.Response{Success: true, JobId: "resp"})
+				srv.subMgr.WriteTo(serverConn, &pb.Response{Success: true, JobId: "resp"})
 			}
 		}
 	}()

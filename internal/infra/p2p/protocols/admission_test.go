@@ -38,7 +38,7 @@ func TestAdmissionRegistry_ConcurrentUse(t *testing.T) {
 		wg.Go(func() {
 			pid := pids[i%len(pids)]
 			r.Admit(pid)
-			_ = r.IsAdmitted(pid)
+			r.IsAdmitted(pid)
 			if i%2 == 0 {
 				r.Revoke(pid)
 			}

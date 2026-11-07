@@ -314,7 +314,7 @@ func TestFSM_ConcurrentSend(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Go(func() {
-			_ = fsm.Send(context.Background(), domain.EventPlay)
+			fsm.Send(context.Background(), domain.EventPlay)
 		})
 	}
 

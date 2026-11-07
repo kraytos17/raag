@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
@@ -22,7 +22,7 @@ func newQueueCmd() *cobra.Command {
 		Short: "Add track to queue",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.QueueAdd(args[0], -1)
 			}), "added to queue")
 		},
@@ -32,7 +32,7 @@ func newQueueCmd() *cobra.Command {
 		Use:   "clear",
 		Short: "Clear queue",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.QueueClear()
 			}), "queue cleared")
 		},
@@ -50,7 +50,7 @@ func newQueueCmd() *cobra.Command {
 			if position < 0 {
 				return fmt.Errorf("position must be non-negative")
 			}
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.QueueRemove(int32(position))
 			}), fmt.Sprintf("removed position %d from queue", position))
 		},
@@ -72,7 +72,7 @@ func newQueueCmd() *cobra.Command {
 					return fmt.Errorf("invalid shuffle value %q (want on|off)", args[0])
 				}
 			}
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.QueueSetShuffle(shuffle)
 			}), "shuffle updated")
 		},
@@ -87,7 +87,7 @@ func newQueueCmd() *cobra.Command {
 			if len(args) == 1 {
 				mode = args[0]
 			}
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.QueueSetRepeat(mode)
 			}), "repeat updated")
 		},

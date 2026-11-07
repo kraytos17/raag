@@ -248,7 +248,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 	for _, conn := range n.host.Network().Conns() {
 		pid := conn.RemotePeer()
 		if n.peerMgr.IsBanned(pid) {
-			_ = conn.Close()
+			conn.Close()
 			continue
 		}
 

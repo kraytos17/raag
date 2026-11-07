@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
@@ -13,14 +13,14 @@ import (
 )
 
 func (s *Server) publishPlaybackState(state string) {
-	s.PublishEvent(ipc.EventPlaybackState, []byte(state))
+	s.PublishEvent(ipcclient.EventPlaybackState, []byte(state))
 }
 
 // publishTrackChanged broadcasts track change
 func (s *Server) publishTrackChanged(track *domain.Track) {
 	pbTrack := convert.TrackToProto(track)
 	data, _ := proto.Marshal(pbTrack)
-	s.PublishEvent(ipc.EventTrackChanged, data)
+	s.PublishEvent(ipcclient.EventTrackChanged, data)
 }
 
 // publishPlaybackProgress broadcasts playback progress (lightweight)
@@ -31,7 +31,7 @@ func (s *Server) publishPlaybackProgress(posMs, durMs int64) {
 	}
 
 	data, _ := proto.Marshal(progress)
-	s.PublishEvent(ipc.EventProgress, data)
+	s.PublishEvent(ipcclient.EventProgress, data)
 }
 
 func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Response {
@@ -138,8 +138,6 @@ func (s *Server) handleSetVolume(ctx context.Context, req *pb.SetVolumeRequest) 
 	if err := s.playback.SetVolume(ctx, int(req.Volume)); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
-	// The volume event is delivered via the bus (SetVolume publishes
-	// ipc.EventVolumeChanged, wired in wireEventBus) — no direct publish here.
 	return &pb.Response{Success: true}
 }
 

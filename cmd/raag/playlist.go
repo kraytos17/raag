@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
 	pb "github.com/p-society/raag/proto/gen"
 	"github.com/spf13/cobra"
 )
@@ -107,7 +107,7 @@ func newPlaylistCmd() *cobra.Command {
 		Short: "Add a track to a playlist",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withSuccess(call(func(c *ipc.Client) (*pb.Response, error) {
+			return withSuccess(call(func(c *ipcclient.Client) (*pb.Response, error) {
 				return c.AddToPlaylist(args[0], args[1])
 			}), "added to playlist")
 		},

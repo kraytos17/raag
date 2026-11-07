@@ -18,8 +18,8 @@ func SetupTestDB(t *testing.T) (*db.DB, func()) {
 	}
 
 	cleanup := func() {
-		_ = database.Close()
-		_ = os.RemoveAll(dir)
+		database.Close()
+		os.RemoveAll(dir)
 	}
 	return database, cleanup
 }
