@@ -2,14 +2,12 @@ package p2p
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/p-society/raag/internal/app"
@@ -17,8 +15,6 @@ import (
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/backoff"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
-	"github.com/p-society/raag/internal/infra/p2p/protocols"
-	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 	"google.golang.org/protobuf/proto"
 )
@@ -29,17 +25,12 @@ type peerManager struct {
 	library   app.LibraryRepository
 	scorer    *PeerScorer
 	repo      app.PeerRepository
+	fetcher   *peerFetcher
 	mu        sync.RWMutex
 	manifests map[peer.ID]*peerManifest
 	caps      map[peer.ID]*peerCaps
 
-	fetchCancelMu sync.RWMutex
-	fetchCancel   map[peer.ID]*fetchEntry
-	ttl           time.Duration
-}
-
-type fetchEntry struct {
-	cancel context.CancelFunc
+	ttl time.Duration
 }
 
 type peerManifest struct {
@@ -54,15 +45,15 @@ type peerCaps struct {
 
 func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.LibraryRepository, scorer *PeerScorer, ttl time.Duration, repo app.PeerRepository) *peerManager {
 	return &peerManager{
-		host:        h,
-		peerCache:   peerCache,
-		library:     library,
-		scorer:      scorer,
-		repo:        repo,
-		manifests:   make(map[peer.ID]*peerManifest),
-		caps:        make(map[peer.ID]*peerCaps),
-		fetchCancel: make(map[peer.ID]*fetchEntry),
-		ttl:         ttl,
+		host:      h,
+		peerCache: peerCache,
+		library:   library,
+		scorer:    scorer,
+		repo:      repo,
+		fetcher:   newPeerFetcher(h),
+		manifests: make(map[peer.ID]*peerManifest),
+		caps:      make(map[peer.ID]*peerCaps),
+		ttl:       ttl,
 	}
 }
 
@@ -182,97 +173,26 @@ func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
 	}
 }
 
-func resetStream(s network.Stream) {
-	if err := s.Reset(); err != nil {
-		slog.Debug("stream reset error", "err", err)
-	}
-}
-
-func closeStream(s network.Stream) {
-	if err := s.Close(); err != nil {
-		slog.Debug("stream close error", "err", err)
-	}
-}
-
 func (pm *peerManager) FetchManifest(ctx context.Context, pid peer.ID) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	stream, err := pm.host.NewStream(ctx, pid, protocols.SyncProtocol)
+	manifest, err := pm.fetcher.fetchManifest(ctx, pid)
 	if err != nil {
 		return err
 	}
-
-	req := &pb.SyncRequest{
-		Payload: &pb.SyncRequest_ManifestRequest{},
-	}
-	if err := wire.WriteMsg(stream, req); err != nil {
-		resetStream(stream)
-		return err
-	}
-
-	var resp pb.SyncResponse
-	if err := wire.ReadMsg(stream, &resp); err != nil {
-		resetStream(stream)
-		return err
-	}
-
-	switch payload := resp.GetPayload().(type) {
-	case *pb.SyncResponse_Manifest:
-		pm.mu.Lock()
-		pm.manifests[pid] = &peerManifest{data: payload.Manifest, addedAt: time.Now()}
-		pm.mu.Unlock()
-		closeStream(stream)
-		return nil
-	case *pb.SyncResponse_Error:
-		resetStream(stream)
-		return &SyncError{Code: payload.Error.Code, Message: payload.Error.Message}
-	default:
-		resetStream(stream)
-		return errors.New("unexpected sync response")
-	}
+	pm.mu.Lock()
+	pm.manifests[pid] = &peerManifest{data: manifest, addedAt: time.Now()}
+	pm.mu.Unlock()
+	return nil
 }
 
 func (pm *peerManager) FetchCapabilities(ctx context.Context, pid peer.ID) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	stream, err := pm.host.NewStream(ctx, pid, protocols.SyncProtocol)
+	caps, err := pm.fetcher.fetchCapabilities(ctx, pid)
 	if err != nil {
 		return err
 	}
-
-	req := &pb.SyncRequest{
-		Payload: &pb.SyncRequest_CapabilitiesRequest{},
-	}
-	if err := wire.WriteMsg(stream, req); err != nil {
-		resetStream(stream)
-		return err
-	}
-
-	var resp pb.SyncResponse
-	if err := wire.ReadMsg(stream, &resp); err != nil {
-		resetStream(stream)
-		return err
-	}
-
-	switch payload := resp.GetPayload().(type) {
-	case *pb.SyncResponse_Capabilities:
-		pm.mu.Lock()
-		pm.caps[pid] = &peerCaps{data: payload.Capabilities, addedAt: time.Now()}
-		pm.mu.Unlock()
-		slog.Debug("capabilities received", "peer", pid,
-			"codecs", payload.Capabilities.SupportedCodecs,
-			"transcode", payload.Capabilities.CanTranscode)
-		closeStream(stream)
-		return nil
-	case *pb.SyncResponse_Error:
-		resetStream(stream)
-		return &SyncError{Code: payload.Error.Code, Message: payload.Error.Message}
-	default:
-		resetStream(stream)
-		return errors.New("unexpected sync response")
-	}
+	pm.mu.Lock()
+	pm.caps[pid] = &peerCaps{data: caps, addedAt: time.Now()}
+	pm.mu.Unlock()
+	return nil
 }
 
 func (pm *peerManager) GetManifest(pid peer.ID) *pb.LibraryManifest {
@@ -338,15 +258,7 @@ func (pm *peerManager) pruneExpiredManifestsLocked(now time.Time) {
 }
 
 func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
-	pm.fetchCancelMu.Lock()
-	if existing, ok := pm.fetchCancel[pid]; ok {
-		existing.cancel()
-	}
-
-	baseCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	entry := &fetchEntry{cancel: cancel}
-	pm.fetchCancel[pid] = entry
-	pm.fetchCancelMu.Unlock()
+	baseCtx, entry := pm.fetcher.start(ctx, pid)
 
 	var trackCount int
 	var wg sync.WaitGroup
@@ -403,12 +315,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 	})
 
 	wg.Wait()
-	pm.fetchCancelMu.Lock()
-	if current, ok := pm.fetchCancel[pid]; ok && current == entry {
-		delete(pm.fetchCancel, pid)
-	}
-
-	pm.fetchCancelMu.Unlock()
+	pm.fetcher.finish(pid, entry)
 	if caps := pm.GetCapabilities(pid); caps != nil {
 		slog.Info("peer connected with capabilities",
 			"peer", pid,
@@ -422,13 +329,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 }
 
 func (pm *peerManager) onPeerDisconnected(pid peer.ID) {
-	pm.fetchCancelMu.Lock()
-	if entry, ok := pm.fetchCancel[pid]; ok {
-		entry.cancel()
-		delete(pm.fetchCancel, pid)
-	}
-
-	pm.fetchCancelMu.Unlock()
+	pm.fetcher.cancelFetch(pid)
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
