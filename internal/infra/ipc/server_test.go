@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -123,6 +124,59 @@ func TestServer_ConcurrentScanAndEventBroadcast_NoFrameInterleave(t *testing.T) 
 	}
 	if reads != expected {
 		t.Fatalf("received %d frames, want %d (some frames were merged/torn)", reads, expected)
+	}
+}
+
+func TestServer_Dispatch_UnknownRequest(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	req := &pb.Request{RequestId: "abc"}
+	resp := srv.dispatch(context.Background(), req)
+	if resp.Success {
+		t.Fatal("dispatch(nil payload) success = true, want false")
+	}
+	if resp.Error != "unknown request type" {
+		t.Errorf("dispatch(nil payload) error = %q, want %q", resp.Error, "unknown request type")
+	}
+	if resp.RequestId != "abc" {
+		t.Errorf("dispatch() RequestId = %q, want echoed %q", resp.RequestId, "abc")
+	}
+}
+
+func TestServer_Dispatch_RoutesKnownPayloads(t *testing.T) {
+	srv := startTestServer(t)
+	defer srv.Stop()
+
+	req := &pb.Request{
+		RequestId: "hc-1",
+		Payload:   &pb.Request_HealthCheck{HealthCheck: &pb.HealthCheckRequest{}},
+	}
+	resp := srv.dispatch(context.Background(), req)
+	if !resp.Success {
+		t.Fatalf("dispatch(healthcheck) success = false, want true (error %q)", resp.Error)
+	}
+	if resp.RequestId != "hc-1" {
+		t.Errorf("dispatch() RequestId = %q, want echoed %q", resp.RequestId, "hc-1")
+	}
+	if _, ok := resp.Payload.(*pb.Response_HealthCheck); !ok {
+		t.Errorf("dispatch(healthcheck) payload = %T, want *pb.Response_HealthCheck", resp.Payload)
+	}
+}
+
+func TestServer_Dispatch_CoversAllRequestPayloads(t *testing.T) {
+	// Every oneof member of pb.Request must have a dispatch table row, so
+	// adding a request type without wiring it fails here instead of
+	// surfacing as "unknown request type" at runtime.
+	fields := (&pb.Request{}).ProtoReflect().Descriptor().Fields()
+	want := 0
+	for i := range fields.Len() {
+		if oo := fields.Get(i).ContainingOneof(); oo != nil && !oo.IsSynthetic() {
+			want++
+		}
+	}
+	if got := len(dispatchTable); got != want {
+		t.Fatalf("dispatchTable has %d rows, want %d (one per pb.Request payload)", got, want)
 	}
 }
 

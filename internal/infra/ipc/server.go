@@ -13,13 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/observability"
-	p2p "github.com/p-society/raag/internal/infra/p2p"
+	"github.com/p-society/raag/internal/infra/p2p"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 	"golang.org/x/sync/semaphore"
@@ -61,7 +59,6 @@ type Server struct {
 
 	subMgr *SubscriptionManager
 }
-
 type ServerConfig struct {
 	Playback     PlaybackHandler
 	Scanner      ScannerHandler
@@ -100,7 +97,6 @@ func (c *ServerConfig) Validate() error {
 type DebugStatsProvider interface {
 	Size() (lsmBytes, vlogBytes int64)
 }
-
 type PlaybackHandler interface {
 	Play(ctx context.Context, trackID domain.TrackID) error
 	PlayQuery(ctx context.Context, query string) error
@@ -118,29 +114,24 @@ type PlaybackHandler interface {
 	GetEqualizer() domain.EqualizerSettings
 	OnProgress(callback func(positionMs, durationMs int64))
 }
-
 type ScannerHandler interface {
 	Scan(ctx context.Context) (int, error)
 	ScanIncremental(ctx context.Context) (added, modified, removed int, err error)
 	OnProgress(fn func(app.ScanProgress))
 	RemoveProgressHandler(fn func(app.ScanProgress))
 }
-
 type SearchHandler interface {
 	Search(ctx context.Context, query string, limit int) ([]*domain.Track, error)
 }
-
 type LibraryRepoHandler interface {
 	FindByID(ctx context.Context, trackID domain.TrackID) (*domain.Track, error)
 	FindByPath(ctx context.Context, path string) (*domain.Track, error)
 	ListAll(ctx context.Context) ([]*domain.Track, error)
 }
-
 type PeerRepoHandler interface {
 	ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, error]
 	GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.PeerInfo, error)
 }
-
 type QueueHandler interface {
 	Add(track *domain.Track)
 	Insert(pos int, track *domain.Track)
@@ -318,40 +309,10 @@ func mustMarshal(msg proto.Message) []byte {
 	return data
 }
 
-func (s *Server) SetProgressCallback(fn func(jobID string, scanned int, total int, currentFile string, phase string)) {
-	s.progressCbMu.Lock()
-	defer s.progressCbMu.Unlock()
-	s.progressCb = fn
-}
-
-// PublishEvent broadcasts an event to all subscribed clients
 func (s *Server) PublishEvent(eventType uint32, payload []byte) {
 	if s.subMgr != nil {
 		s.subMgr.Broadcast(eventType, payload)
 	}
-}
-
-func (s *Server) publishProgress(jobID string, scanned int, total int, currentFile string, phase string) {
-	s.progressCbMu.RLock()
-	cb := s.progressCb
-	s.progressCbMu.RUnlock()
-	if cb != nil {
-		cb(jobID, scanned, total, currentFile, phase)
-	}
-
-	progress := &pb.ScanProgress{
-		JobId:       jobID,
-		Scanned:     int32(scanned),
-		Total:       int32(total),
-		CurrentFile: currentFile,
-		Phase:       phase,
-	}
-	resp := &pb.Response{
-		Success: true,
-		JobId:   jobID,
-		Payload: &pb.Response_ScanProgress{ScanProgress: progress},
-	}
-	s.broadcast(resp)
 }
 
 func (s *Server) broadcast(resp *pb.Response) {
@@ -365,27 +326,6 @@ func (s *Server) broadcast(resp *pb.Response) {
 }
 
 // publishPlaybackState broadcasts playback state change
-func (s *Server) publishPlaybackState(state string) {
-	s.PublishEvent(EventPlaybackState, []byte(state))
-}
-
-// publishTrackChanged broadcasts track change
-func (s *Server) publishTrackChanged(track *domain.Track) {
-	pbTrack := convert.TrackToProto(track)
-	data, _ := proto.Marshal(pbTrack)
-	s.PublishEvent(EventTrackChanged, data)
-}
-
-// publishPlaybackProgress broadcasts playback progress (lightweight)
-func (s *Server) publishPlaybackProgress(posMs, durMs int64) {
-	progress := &pb.ProgressEvent{
-		PositionMs: posMs,
-		DurationMs: durMs,
-	}
-	data, _ := proto.Marshal(progress)
-	s.PublishEvent(EventProgress, data)
-}
-
 func (s *Server) Start(ctx context.Context) error {
 	if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
 		return err
@@ -511,766 +451,131 @@ func ipcCommandLabel(req *pb.Request) string {
 	return unknownCommand
 }
 
-//nolint:gocyclo // dispatch function has many cases for IPC requests
-func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
-	var resp *pb.Response
-	switch p := req.Payload.(type) {
-	case *pb.Request_Play:
-		resp = s.handlePlay(ctx, p.Play)
-	case *pb.Request_Pause:
-		resp = s.handlePause(ctx)
-	case *pb.Request_Resume:
-		resp = s.handleResume(ctx)
-	case *pb.Request_Stop:
-		resp = s.handleStop(ctx)
-	case *pb.Request_Next:
-		resp = s.handleNext(ctx)
-	case *pb.Request_Prev:
-		resp = s.handlePrev(ctx)
-	case *pb.Request_Seek:
-		resp = s.handleSeek(ctx, p.Seek)
-	case *pb.Request_SetVolume:
-		resp = s.handleSetVolume(ctx, p.SetVolume)
-	case *pb.Request_QueueAdd:
-		resp = s.handleQueueAdd(ctx, p.QueueAdd)
-	case *pb.Request_QueueRemove:
-		resp = s.handleQueueRemove(p.QueueRemove)
-	case *pb.Request_QueueClear:
-		resp = s.handleQueueClear()
-	case *pb.Request_Search:
-		resp = s.handleSearch(ctx, p.Search)
-	case *pb.Request_LibScan:
-		resp = s.handleLibScanAsync(p.LibScan)
-	case *pb.Request_ListPeers:
-		resp = s.handleListPeers(ctx)
-	case *pb.Request_Status:
-		resp = s.handleStatus()
-	case *pb.Request_HealthCheck:
-		resp = s.handleHealthCheck()
-	case *pb.Request_CreatePlaylist:
-		resp = s.handleCreatePlaylist(ctx, p.CreatePlaylist)
-	case *pb.Request_GetPlaylist:
-		resp = s.handleGetPlaylist(ctx, p.GetPlaylist)
-	case *pb.Request_ListPlaylists:
-		resp = s.handleListPlaylists(ctx)
-	case *pb.Request_AddToPlaylist:
-		resp = s.handleAddToPlaylist(ctx, p.AddToPlaylist)
-	case *pb.Request_GetTrack:
-		resp = s.handleGetTrack(ctx, p.GetTrack)
-	case *pb.Request_GetTrackByPath:
-		resp = s.handleGetTrackByPath(ctx, p.GetTrackByPath)
-	case *pb.Request_NetworkStatus:
-		resp = s.handleNetworkStatus()
-	case *pb.Request_BanPeer:
-		resp = s.handleBanPeer(p.BanPeer)
-	case *pb.Request_UnbanPeer:
-		resp = s.handleUnbanPeer(p.UnbanPeer)
-	case *pb.Request_ListTracks:
-		resp = s.handleListTracks(ctx, p.ListTracks)
-	case *pb.Request_QueueList:
-		resp = s.handleQueueList()
-	case *pb.Request_QueueShuffle:
-		resp = s.handleQueueShuffle(p.QueueShuffle)
-	case *pb.Request_QueueRepeat:
-		resp = s.handleQueueRepeat(p.QueueRepeat)
-	case *pb.Request_QueueMode:
-		resp = s.handleQueueMode()
-	case *pb.Request_Equalizer:
-		resp = s.handleSetEqualizer(p.Equalizer)
-	case *pb.Request_DebugStats:
-		resp = s.handleDebugStats()
-	case *pb.Request_Subscribe:
+// dispatchTable routes each request payload type to its handler. The oneof
+// wrapper types do not implement proto.Message, so the map is keyed by
+// reflection on the payload's concrete type (mirroring ipcCommandLabel).
+// Adding a request type means adding one row here plus its handler file.
+var dispatchTable = map[reflect.Type]func(s *Server, ctx context.Context, req *pb.Request) *pb.Response{
+	reflect.TypeOf(&pb.Request_Play{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handlePlay(ctx, req.Payload.(*pb.Request_Play).Play)
+	},
+	reflect.TypeOf(&pb.Request_Pause{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handlePause(ctx)
+	},
+	reflect.TypeOf(&pb.Request_Resume{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleResume(ctx)
+	},
+	reflect.TypeOf(&pb.Request_Stop{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleStop(ctx)
+	},
+	reflect.TypeOf(&pb.Request_Next{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleNext(ctx)
+	},
+	reflect.TypeOf(&pb.Request_Prev{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handlePrev(ctx)
+	},
+	reflect.TypeOf(&pb.Request_Seek{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleSeek(ctx, req.Payload.(*pb.Request_Seek).Seek)
+	},
+	reflect.TypeOf(&pb.Request_SetVolume{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleSetVolume(ctx, req.Payload.(*pb.Request_SetVolume).SetVolume)
+	},
+	reflect.TypeOf(&pb.Request_QueueAdd{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleQueueAdd(ctx, req.Payload.(*pb.Request_QueueAdd).QueueAdd)
+	},
+	reflect.TypeOf(&pb.Request_QueueRemove{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleQueueRemove(req.Payload.(*pb.Request_QueueRemove).QueueRemove)
+	},
+	reflect.TypeOf(&pb.Request_QueueClear{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleQueueClear()
+	},
+	reflect.TypeOf(&pb.Request_Search{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleSearch(ctx, req.Payload.(*pb.Request_Search).Search)
+	},
+	reflect.TypeOf(&pb.Request_LibScan{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleLibScanAsync(req.Payload.(*pb.Request_LibScan).LibScan)
+	},
+	reflect.TypeOf(&pb.Request_ListPeers{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleListPeers(ctx)
+	},
+	reflect.TypeOf(&pb.Request_Status{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleStatus()
+	},
+	reflect.TypeOf(&pb.Request_HealthCheck{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleHealthCheck()
+	},
+	reflect.TypeOf(&pb.Request_CreatePlaylist{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleCreatePlaylist(ctx, req.Payload.(*pb.Request_CreatePlaylist).CreatePlaylist)
+	},
+	reflect.TypeOf(&pb.Request_GetPlaylist{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleGetPlaylist(ctx, req.Payload.(*pb.Request_GetPlaylist).GetPlaylist)
+	},
+	reflect.TypeOf(&pb.Request_ListPlaylists{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleListPlaylists(ctx)
+	},
+	reflect.TypeOf(&pb.Request_AddToPlaylist{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleAddToPlaylist(ctx, req.Payload.(*pb.Request_AddToPlaylist).AddToPlaylist)
+	},
+	reflect.TypeOf(&pb.Request_GetTrack{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleGetTrack(ctx, req.Payload.(*pb.Request_GetTrack).GetTrack)
+	},
+	reflect.TypeOf(&pb.Request_GetTrackByPath{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleGetTrackByPath(ctx, req.Payload.(*pb.Request_GetTrackByPath).GetTrackByPath)
+	},
+	reflect.TypeOf(&pb.Request_NetworkStatus{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleNetworkStatus()
+	},
+	reflect.TypeOf(&pb.Request_BanPeer{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleBanPeer(req.Payload.(*pb.Request_BanPeer).BanPeer)
+	},
+	reflect.TypeOf(&pb.Request_UnbanPeer{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleUnbanPeer(req.Payload.(*pb.Request_UnbanPeer).UnbanPeer)
+	},
+	reflect.TypeOf(&pb.Request_ListTracks{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleListTracks(ctx, req.Payload.(*pb.Request_ListTracks).ListTracks)
+	},
+	reflect.TypeOf(&pb.Request_QueueList{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleQueueList()
+	},
+	reflect.TypeOf(&pb.Request_QueueShuffle{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleQueueShuffle(req.Payload.(*pb.Request_QueueShuffle).QueueShuffle)
+	},
+	reflect.TypeOf(&pb.Request_QueueRepeat{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleQueueRepeat(req.Payload.(*pb.Request_QueueRepeat).QueueRepeat)
+	},
+	reflect.TypeOf(&pb.Request_QueueMode{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleQueueMode()
+	},
+	reflect.TypeOf(&pb.Request_Equalizer{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleSetEqualizer(req.Payload.(*pb.Request_Equalizer).Equalizer)
+	},
+	reflect.TypeOf(&pb.Request_DebugStats{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return s.handleDebugStats()
+	},
+	reflect.TypeOf(&pb.Request_Subscribe{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		// The conn was already registered with the SubscriptionManager in
 		// handleConn before dispatch; just acknowledge so the client doesn't
 		// get a bogus "unknown request type" error.
-		resp = &pb.Response{Success: true}
-	case *pb.Request_Unsubscribe:
-		resp = &pb.Response{Success: true}
-	default:
+		return &pb.Response{Success: true}
+	},
+	reflect.TypeOf(&pb.Request_Unsubscribe{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+		return &pb.Response{Success: true}
+	},
+}
+
+func (s *Server) dispatch(ctx context.Context, req *pb.Request) *pb.Response {
+	var resp *pb.Response
+	if req.Payload != nil {
+		if handle, ok := dispatchTable[reflect.TypeOf(req.Payload)]; ok {
+			resp = handle(s, ctx, req)
+		}
+	}
+	if resp == nil {
 		resp = &pb.Response{Success: false, Error: "unknown request type"}
 	}
 
 	resp.RequestId = req.RequestId
 	return resp
-}
-
-func (s *Server) handlePlay(ctx context.Context, req *pb.PlayRequest) *pb.Response {
-	state := s.playback.GetState()
-	if state != domain.PlayerStateIdle {
-		if err := s.playback.Stop(ctx); err != nil {
-			return &pb.Response{Success: false, Error: "failed to stop current track: " + err.Error()}
-		}
-	}
-
-	switch {
-	case req.TrackId != "":
-		// Make the played track the current queue item so Next/Prev and the
-		// queue panel work during normal library playback. Resolve it first so
-		// the queued track carries full metadata.
-		if s.queue != nil {
-			if track, err := s.libraryRepo.FindByID(ctx, domain.TrackID(req.TrackId)); err == nil {
-				s.queue.MoveTo(track)
-			}
-		}
-		if err := s.playback.Play(ctx, domain.TrackID(req.TrackId)); err != nil {
-			return &pb.Response{Success: false, Error: err.Error()}
-		}
-	case req.Query != "":
-		if err := s.playback.PlayQuery(ctx, req.Query); err != nil {
-			return &pb.Response{Success: false, Error: err.Error()}
-		}
-	default:
-		return &pb.Response{Success: false, Error: "query or track_id required"}
-	}
-
-	s.publishPlaybackState(string(s.playback.GetState()))
-	s.publishTrackChanged(s.playback.GetCurrentTrack())
-	if req.TrackId != "" && s.queue != nil {
-		s.publishQueueUpdated()
-	}
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handlePause(ctx context.Context) *pb.Response {
-	if err := s.playback.Pause(ctx); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	s.publishPlaybackState(string(s.playback.GetState()))
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleResume(ctx context.Context) *pb.Response {
-	if err := s.playback.Resume(ctx); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	s.publishPlaybackState(string(s.playback.GetState()))
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleStop(ctx context.Context) *pb.Response {
-	if err := s.playback.Stop(ctx); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	s.publishPlaybackState(string(s.playback.GetState()))
-	s.publishTrackChanged(nil)
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleNext(ctx context.Context) *pb.Response {
-	next := s.queue.Next()
-	if next == nil {
-		return &pb.Response{Success: false, Error: "no next track"}
-	}
-	if err := s.playback.Play(ctx, next.ID); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	s.publishPlaybackState(string(s.playback.GetState()))
-	s.publishTrackChanged(s.playback.GetCurrentTrack())
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handlePrev(ctx context.Context) *pb.Response {
-	prev := s.queue.Previous()
-	if prev == nil {
-		return &pb.Response{Success: false, Error: "no previous track"}
-	}
-	if err := s.playback.Play(ctx, prev.ID); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	s.publishPlaybackState(string(s.playback.GetState()))
-	s.publishTrackChanged(s.playback.GetCurrentTrack())
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleSeek(ctx context.Context, req *pb.SeekRequest) *pb.Response {
-	if err := s.playback.Seek(ctx, time.Duration(req.OffsetMs)*time.Millisecond); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleSetVolume(ctx context.Context, req *pb.SetVolumeRequest) *pb.Response {
-	if err := s.playback.SetVolume(ctx, int(req.Volume)); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	// The volume event is delivered via the bus (SetVolume publishes
-	// EventVolumeChanged, wired in wireEventBus) — no direct publish here.
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleQueueAdd(ctx context.Context, req *pb.QueueAddRequest) *pb.Response {
-	track, err := s.libraryRepo.FindByID(ctx, domain.TrackID(req.TrackId))
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	if req.Position >= 0 {
-		s.queue.Insert(int(req.Position), track)
-	} else {
-		s.queue.Add(track)
-	}
-	s.publishQueueUpdated()
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleQueueRemove(req *pb.QueueRemoveRequest) *pb.Response {
-	s.queue.Remove(int(req.Position))
-	s.publishQueueUpdated()
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleQueueClear() *pb.Response {
-	s.queue.Clear()
-	s.publishQueueUpdated()
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleSearch(ctx context.Context, req *pb.SearchRequest) *pb.Response {
-	limit := int(req.Limit)
-	if limit <= 0 {
-		limit = 20
-	}
-
-	var tracks []*domain.Track
-	var err error
-	if req.IncludePeers {
-		if rs, ok := s.search.(interface {
-			SearchWithRemote(ctx context.Context, query string, limit int) ([]*domain.Track, error)
-		}); ok {
-			tracks, err = rs.SearchWithRemote(ctx, req.Query, limit)
-		} else {
-			tracks, err = s.search.Search(ctx, req.Query, limit)
-		}
-	} else {
-		tracks, err = s.search.Search(ctx, req.Query, limit)
-	}
-
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-
-	pbTracks := make([]*pb.Track, len(tracks))
-	for i, t := range tracks {
-		pbTracks[i] = convert.TrackToProto(t)
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_Search{Search: &pb.SearchResponse{Tracks: pbTracks, Total: int32(len(pbTracks))}},
-	}
-}
-
-func (s *Server) handleLibScanAsync(req *pb.LibScanRequest) *pb.Response {
-	jobID := uuid.New().String()
-	progressFn := func(p app.ScanProgress) {
-		s.publishProgress(jobID, p.Scanned, p.Total, p.CurrentFile, string(p.Phase))
-	}
-	// Register this scan's own progress handler so concurrent scans don't
-	// clobber each other's jobID closure
-	s.scanner.OnProgress(progressFn)
-
-	go func() {
-		defer s.scanner.RemoveProgressHandler(progressFn)
-		scanCtx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		if req.Incremental {
-			added, modified, removed, err := s.scanner.ScanIncremental(scanCtx)
-			if err != nil {
-				slog.Error("background scan failed", "err", err)
-				return
-			}
-			slog.Info("incremental scan complete", "added", added, "modified", modified, "removed", removed)
-		} else {
-			_, err := s.scanner.Scan(scanCtx)
-			if err != nil {
-				slog.Error("background scan failed", "err", err)
-				return
-			}
-		}
-		s.publishProgress(jobID, 0, 0, "", "complete")
-	}()
-	return &pb.Response{Success: true, JobId: jobID}
-}
-
-func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
-	if s.peerRepo == nil {
-		return &pb.Response{
-			Success: false,
-			Error:   errP2PNotEnabled,
-		}
-	}
-
-	var pbPeers []*pb.Peer
-	seen := make(map[string]struct{})
-	for p, err := range s.peerRepo.ListAll(ctx) {
-		if err != nil {
-			continue
-		}
-		seen[p.ID.String()] = struct{}{}
-		if s.p2pNode != nil {
-			if enriched := s.p2pNode.PeerStatus(p); enriched != nil {
-				pbPeers = append(pbPeers, enriched)
-				continue
-			}
-		}
-		pbPeers = append(pbPeers, convert.PeerInfoToProto(p))
-	}
-
-	// Surface live connected peers that aren't yet persisted (e.g. a
-	// brand-new broadcast discovery), so `raag peers list` is never empty
-	// right after a connect — `network` already shows them, `peers list`
-	// should be consistent.
-	if s.p2pNode != nil {
-		connected := s.p2pNode.Peers()
-		connectedSet := make(map[peer.ID]struct{}, len(connected))
-		for _, pid := range connected {
-			connectedSet[pid] = struct{}{}
-			if _, ok := seen[pid.String()]; ok {
-				continue
-			}
-
-			pi := s.p2pNode.Host().Peerstore().PeerInfo(pid)
-			addrs := make([]string, len(pi.Addrs))
-			for i, a := range pi.Addrs {
-				addrs[i] = a.String()
-			}
-
-			pbPeers = append(pbPeers, &pb.Peer{Id: pid.String(), Addrs: addrs, Connected: true})
-			seen[pid.String()] = struct{}{}
-		}
-		for _, pi := range s.p2pNode.DiscoveredPeers() {
-			if _, ok := seen[pi.ID.String()]; ok {
-				continue
-			}
-			if _, ok := connectedSet[pi.ID]; ok {
-				continue
-			}
-
-			addrs := make([]string, len(pi.Addrs))
-			for i, a := range pi.Addrs {
-				addrs[i] = a.String()
-			}
-			pbPeers = append(pbPeers, &pb.Peer{Id: pi.ID.String(), Addrs: addrs, Connected: false})
-			seen[pi.ID.String()] = struct{}{}
-		}
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_ListPeers{ListPeers: &pb.ListPeersResponse{Peers: pbPeers}},
-	}
-}
-
-func (s *Server) handleListTracks(ctx context.Context, req *pb.ListTracksRequest) *pb.Response {
-	if s.libraryRepo == nil {
-		return &pb.Response{Success: false, Error: "library is not available"}
-	}
-
-	tracks, err := s.libraryRepo.ListAll(ctx)
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-
-	offset := int(req.Offset)
-	limit := int(req.Limit)
-	if offset < 0 {
-		offset = 0
-	}
-	if limit <= 0 {
-		limit = len(tracks)
-	}
-
-	end := min(offset+limit, len(tracks))
-	if offset > len(tracks) {
-		offset = len(tracks)
-	}
-	page := tracks[offset:end]
-
-	pbTracks := make([]*pb.Track, len(page))
-	for i, t := range page {
-		pbTracks[i] = convert.TrackToProto(t)
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_ListTracks{ListTracks: &pb.ListTracksResponse{
-			Tracks: pbTracks,
-			Total:  int32(len(tracks)),
-		}},
-	}
-}
-
-func (s *Server) handleQueueList() *pb.Response {
-	if s.queue == nil {
-		return &pb.Response{Success: false, Error: errQueueUnavailable}
-	}
-
-	tracks := s.queue.Tracks()
-	pbTracks := make([]*pb.Track, len(tracks))
-	for i, t := range tracks {
-		pbTracks[i] = convert.TrackToProto(t)
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_QueueList{QueueList: &pb.QueueListResponse{Tracks: pbTracks}},
-	}
-}
-
-func (s *Server) handleQueueShuffle(req *pb.QueueShuffleRequest) *pb.Response {
-	if s.queue == nil {
-		return &pb.Response{Success: false, Error: errQueueUnavailable}
-	}
-
-	s.queue.SetShuffle(req.Shuffle)
-	s.publishQueueUpdated()
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleQueueRepeat(req *pb.QueueRepeatRequest) *pb.Response {
-	if s.queue == nil {
-		return &pb.Response{Success: false, Error: errQueueUnavailable}
-	}
-
-	mode := domain.RepeatMode(req.Mode)
-	switch mode {
-	case domain.RepeatModeNone, domain.RepeatModeAll, domain.RepeatModeOne:
-		s.queue.SetRepeat(mode)
-	default:
-		return &pb.Response{Success: false, Error: "invalid repeat mode (want \"\", \"all\", or \"one\")"}
-	}
-	s.publishQueueUpdated()
-	return &pb.Response{Success: true}
-}
-
-func (s *Server) handleQueueMode() *pb.Response {
-	if s.queue == nil {
-		return &pb.Response{Success: false, Error: errQueueUnavailable}
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_QueueMode{QueueMode: &pb.QueueModeResponse{
-			Shuffle: s.queue.GetShuffle(),
-			Repeat:  string(s.queue.GetRepeat()),
-		}},
-	}
-}
-
-func (s *Server) publishQueueUpdated() {
-	if s.queue == nil {
-		return
-	}
-
-	tracks := s.queue.Tracks()
-	qt := make([]*pb.Track, len(tracks))
-	for i, t := range tracks {
-		qt[i] = convert.TrackToProto(t)
-	}
-	s.PublishEvent(EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
-}
-
-// handleSetEqualizer applies EQ settings to the live playback engine and
-// returns the resulting state. With get=true it returns the current state
-// without mutating anything (serves `raag eq` reads).
-func (s *Server) handleSetEqualizer(req *pb.EqualizerRequest) *pb.Response {
-	if req == nil {
-		return &pb.Response{Success: false, Error: "missing equalizer request"}
-	}
-	if !req.Get {
-		s.playback.SetEqualizer(domain.EqualizerSettings{
-			Enabled: req.Enabled,
-			Bass:    float64(req.BassDb),
-			Mid:     float64(req.MidDb),
-			Treble:  float64(req.TrebleDb),
-		})
-	}
-	return s.eqResponse()
-}
-
-func (s *Server) eqResponse() *pb.Response {
-	eq := s.playback.GetEqualizer()
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_Equalizer{Equalizer: &pb.EqualizerResponse{
-			Enabled:  eq.Enabled,
-			BassDb:   float32(eq.Bass),
-			MidDb:    float32(eq.Mid),
-			TrebleDb: float32(eq.Treble),
-		}},
-	}
-}
-
-// handleDebugStats aggregates stream-pool, search-index, and DB stats for the
-// `raag debug` commands. Unavailable subsystems report zeros (not errors).
-func (s *Server) handleDebugStats() *pb.Response {
-	var streams *pb.DebugStreams
-	if s.p2pNode != nil {
-		st := s.p2pNode.StreamPool().Stats()
-		streams = &pb.DebugStreams{
-			TotalStreams: int32(st.TotalStreams),
-			PeerCount:    int32(st.PeerCount),
-		}
-	}
-
-	var index *pb.DebugIndex
-	if si, ok := s.search.(interface {
-		Stats(ctx context.Context) (app.IndexStats, error)
-	}); ok {
-		if st, err := si.Stats(context.Background()); err == nil {
-			index = &pb.DebugIndex{
-				TotalTracks:   int32(st.TotalTracks),
-				TotalTerms:    int32(st.TotalTerms),
-				TotalTrigrams: int32(st.TotalTrigrams),
-				LastUpdated:   st.LastUpdated,
-			}
-		}
-	}
-
-	var dbInfo *pb.DebugDB
-	if s.dbStats != nil {
-		lsm, vlog := s.dbStats.Size()
-		dbInfo = &pb.DebugDB{LsmBytes: lsm, VlogBytes: vlog}
-	}
-
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_DebugStats{DebugStats: &pb.DebugStatsResponse{
-			Streams: streams,
-			Index:   index,
-			Db:      dbInfo,
-		}},
-	}
-}
-
-func (s *Server) handleNetworkStatus() *pb.Response {
-	if s.p2pNode == nil {
-		return &pb.Response{
-			Success: false,
-			Error:   errP2PNotEnabled,
-		}
-	}
-	info := s.p2pNode.NetworkInfo()
-
-	var connectedPeers []*pb.ConnectedPeer
-	for _, p := range info.ConnectedPeers {
-		var addrs []string
-		for _, a := range p.Addrs {
-			addrs = append(addrs, a.String())
-		}
-		connectedPeers = append(connectedPeers, &pb.ConnectedPeer{
-			PeerId:   p.ID.String(),
-			Addrs:    addrs,
-			Dialable: true,
-		})
-	}
-
-	var discoveredPeers []*pb.ConnectedPeer
-	for _, p := range info.DiscoveredPeers {
-		ps := s.p2pNode.Host().Peerstore().PeerInfo(p.ID)
-		dialable := len(ps.Addrs) > 0
-
-		var maddrs []string
-		if dialable {
-			for _, a := range ps.Addrs {
-				maddrs = append(maddrs, a.String())
-			}
-		} else {
-			for _, a := range p.Addrs {
-				maddrs = append(maddrs, a.String())
-			}
-		}
-
-		discoveredPeers = append(discoveredPeers, &pb.ConnectedPeer{
-			PeerId:   p.ID.String(),
-			Addrs:    maddrs,
-			Dialable: dialable,
-		})
-	}
-
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_NetworkStatus{NetworkStatus: &pb.NetworkStatusResponse{
-			PeerId:          info.PeerID,
-			ListenAddrs:     info.ListenAddrs,
-			ConnectedPeers:  connectedPeers,
-			DiscoveredPeers: discoveredPeers,
-		}},
-	}
-}
-
-func (s *Server) handleBanPeer(req *pb.BanPeerRequest) *pb.Response {
-	if s.p2pNode == nil {
-		return &pb.Response{
-			Success: false,
-			Error:   errP2PNotEnabled,
-		}
-	}
-	s.p2pNode.BanPeer(peer.ID(req.PeerId))
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_BanPeer{},
-	}
-}
-
-func (s *Server) handleUnbanPeer(req *pb.UnbanPeerRequest) *pb.Response {
-	if s.p2pNode == nil {
-		return &pb.Response{
-			Success: false,
-			Error:   errP2PNotEnabled,
-		}
-	}
-	s.p2pNode.UnbanPeer(peer.ID(req.PeerId))
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_UnbanPeer{},
-	}
-}
-
-func (s *Server) handleStatus() *pb.Response {
-	state := s.playback.GetState()
-	volume := s.playback.GetVolume()
-	queueSize := s.queue.Length()
-	queuePos := s.queue.Position()
-	currentTrack := s.playback.GetCurrentTrack()
-
-	var pbTrack *pb.Track
-	if currentTrack != nil {
-		pbTrack = convert.TrackToProto(currentTrack)
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_Status{Status: &pb.StatusResponse{
-			State:         string(state),
-			CurrentTrack:  pbTrack,
-			PositionMs:    s.playback.GetPosition().Milliseconds(),
-			Volume:        int32(volume),
-			QueueLength:   int32(queueSize),
-			QueuePosition: int32(queuePos),
-			BufferFill:    float32(s.playback.GetBufferFillLevel()),
-		}},
-	}
-}
-
-func (s *Server) handleHealthCheck() *pb.Response {
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_HealthCheck{HealthCheck: &pb.HealthCheckResponse{Healthy: true}},
-	}
-}
-
-func (s *Server) handleCreatePlaylist(ctx context.Context, req *pb.CreatePlaylistRequest) *pb.Response {
-	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
-	}
-
-	playlist, err := domain.NewPlaylist(req.Name)
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	if err := s.playlistRepo.Save(ctx, playlist); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_CreatePlaylist{
-			CreatePlaylist: &pb.CreatePlaylistResponse{
-				PlaylistId: string(playlist.ID),
-				Name:       playlist.Name,
-			},
-		},
-	}
-}
-
-func (s *Server) handleGetPlaylist(ctx context.Context, req *pb.GetPlaylistRequest) *pb.Response {
-	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
-	}
-
-	playlist, err := s.playlistRepo.FindByID(ctx, domain.PlaylistID(req.PlaylistId))
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-
-	pbPlaylist := convert.PlaylistToProto(playlist)
-	resp := &pb.GetPlaylistResponse{Playlist: pbPlaylist}
-	if s.libraryRepo != nil {
-		for _, trackID := range playlist.TrackIDs {
-			track, err := s.libraryRepo.FindByID(ctx, trackID)
-			if err != nil {
-				continue
-			}
-			resp.Tracks = append(resp.Tracks, convert.TrackToProto(track))
-		}
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_GetPlaylist{GetPlaylist: resp},
-	}
-}
-
-func (s *Server) handleListPlaylists(ctx context.Context) *pb.Response {
-	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
-	}
-
-	var pbPlaylists []*pb.Playlist
-	for playlist, err := range s.playlistRepo.ListAll(ctx) {
-		if err != nil {
-			continue
-		}
-		pbPlaylists = append(pbPlaylists, convert.PlaylistToProto(playlist))
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_ListPlaylists{ListPlaylists: &pb.ListPlaylistsResponse{Playlists: pbPlaylists}},
-	}
-}
-
-func (s *Server) handleAddToPlaylist(ctx context.Context, req *pb.AddToPlaylistRequest) *pb.Response {
-	if s.playlistRepo == nil {
-		return &pb.Response{Success: false, Error: errPlaylistsUnavailable}
-	}
-
-	playlist, err := s.playlistRepo.FindByID(ctx, domain.PlaylistID(req.PlaylistId))
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-
-	playlist.AddTrack(domain.TrackID(req.TrackId))
-	if err := s.playlistRepo.Save(ctx, playlist); err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_AddToPlaylist{
-			AddToPlaylist: &pb.AddToPlaylistResponse{
-				PlaylistId: string(playlist.ID),
-				TrackCount: int32(playlist.TrackCount()),
-			},
-		},
-	}
-}
-
-func (s *Server) handleGetTrack(ctx context.Context, req *pb.GetTrackRequest) *pb.Response {
-	track, err := s.libraryRepo.FindByID(ctx, domain.TrackID(req.TrackId))
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-
-	pbTrack := convert.TrackToProto(track)
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_GetTrack{GetTrack: &pb.GetTrackResponse{Track: pbTrack}},
-	}
-}
-
-func (s *Server) handleGetTrackByPath(ctx context.Context, req *pb.GetTrackByPathRequest) *pb.Response {
-	track, err := s.libraryRepo.FindByPath(ctx, req.Path)
-	if err != nil {
-		return &pb.Response{Success: false, Error: err.Error()}
-	}
-
-	pbTrack := convert.TrackToProto(track)
-	return &pb.Response{
-		Success: true,
-		Payload: &pb.Response_GetTrack{GetTrack: &pb.GetTrackResponse{Track: pbTrack}},
-	}
 }
 
 func (s *Server) Stop(ctx context.Context) error {
@@ -1320,112 +625,4 @@ func (c *ServerComponent) Name() string {
 
 func AsComponent(server *Server) app.Component {
 	return &ServerComponent{Server: server}
-}
-
-type SubscriptionManager struct {
-	mu   sync.RWMutex
-	subs map[net.Conn]*connState
-}
-
-// connState is the per-connection record. It owns the single write mutex for
-// the connection so response writes, scan-progress broadcasts, and event
-// broadcasts all serialize on the same lock (one owner for "who may write to
-// this conn right now").
-type connState struct {
-	conn      net.Conn
-	eventMask uint32 // 0 until a Subscribe request sets it
-	writeMu   sync.Mutex
-}
-
-func NewSubscriptionManager() *SubscriptionManager {
-	return &SubscriptionManager{
-		subs: make(map[net.Conn]*connState),
-	}
-}
-
-// Register adds a newly accepted connection to the manager. Call once in the
-// accept loop; the conn now owns its write mutex even before subscribing.
-func (sm *SubscriptionManager) Register(conn net.Conn) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.subs[conn] = &connState{conn: conn}
-}
-
-// Subscribe sets the event mask on an existing connection's state. The
-// connection must already be registered.
-func (sm *SubscriptionManager) Subscribe(conn net.Conn, eventMask uint32) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if st, ok := sm.subs[conn]; ok {
-		st.eventMask = eventMask
-		return
-	}
-	sm.subs[conn] = &connState{conn: conn, eventMask: eventMask}
-}
-
-// Unsubscribe removes a connection.
-func (sm *SubscriptionManager) Unsubscribe(conn net.Conn) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	delete(sm.subs, conn)
-}
-
-// WriteTo serializes a message write to a connection under the connection's
-// single write mutex. All response, scan-progress, and event writes go
-// through this so they can never interleave frames.
-func (sm *SubscriptionManager) WriteTo(conn net.Conn, msg *pb.Response) error {
-	sm.mu.RLock()
-	st := sm.subs[conn]
-	sm.mu.RUnlock()
-	if st == nil {
-		// Unregistered conn: write without a shared owner (defensive; the
-		// accept loop registers every conn before it is used).
-		return wire.WriteMsg(conn, msg)
-	}
-
-	st.writeMu.Lock()
-	defer st.writeMu.Unlock()
-	return wire.WriteMsg(conn, msg)
-}
-
-// All returns a snapshot of all registered connections.
-func (sm *SubscriptionManager) All() []*connState {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	out := make([]*connState, 0, len(sm.subs))
-	for _, st := range sm.subs {
-		out = append(out, st)
-	}
-	return out
-}
-
-// Broadcast sends an event to all subscribers who are interested in this event type
-func (sm *SubscriptionManager) Broadcast(eventType uint32, payload []byte) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
-	event := &pb.Event{
-		EventType: pb.EventType(eventType),
-		Payload:   payload,
-		Timestamp: time.Now().UnixMilli(),
-	}
-	for _, st := range sm.subs {
-		if st.eventMask&eventType == 0 {
-			continue // Not subscribed to this event type
-		}
-
-		st.writeMu.Lock()
-		err := wire.WriteMsg(st.conn, event)
-		st.writeMu.Unlock()
-		if err != nil {
-			slog.Debug("event broadcast failed", "error", err)
-		}
-	}
-}
-
-// Count returns the number of active connections
-func (sm *SubscriptionManager) Count() int {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return len(sm.subs)
 }
