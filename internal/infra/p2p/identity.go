@@ -57,12 +57,20 @@ func (m *IdentityManager) LoadOrCreate() (crypto.PrivKey, peer.ID, error) {
 	return m.createNew()
 }
 
+// keychainGet/keychainSet wrap OS keychain access so tests can substitute a
+// fake without touching the real keychain (which also leaks dbus workers in
+// dbus-less environments and would trip the package goleak check).
+var (
+	keychainGet = keyring.Get
+	keychainSet = keyring.Set
+)
+
 func (m *IdentityManager) tryKeychain() (crypto.PrivKey, peer.ID, error) {
 	return m.readKeychain(keyringKey(m.dataDir))
 }
 
 func (m *IdentityManager) readKeychain(slot string) (crypto.PrivKey, peer.ID, error) {
-	data, err := keyring.Get(serviceName, slot)
+	data, err := keychainGet(serviceName, slot)
 	if err != nil {
 		return nil, "", err
 	}
@@ -120,8 +128,8 @@ func (m *IdentityManager) createNew() (crypto.PrivKey, peer.ID, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to marshal identity key: %w", err)
 	}
+	
 	defer wipeBytes(keyBytes)
-
 	if err := m.storeKey(keyBytes); err != nil {
 		return nil, "", err
 	}
@@ -154,7 +162,7 @@ func wipeBytes(b []byte) {
 
 func (m *IdentityManager) storeKeychain(keyBytes []byte) error {
 	encoded := base64.StdEncoding.EncodeToString(keyBytes)
-	return keyring.Set(serviceName, keyringKey(m.dataDir), encoded)
+	return keychainSet(serviceName, keyringKey(m.dataDir), encoded)
 }
 
 func (m *IdentityManager) writeFile(data []byte) error {
