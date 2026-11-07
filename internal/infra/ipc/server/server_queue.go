@@ -1,7 +1,9 @@
-package ipc
+package server
 
 import (
 	"context"
+
+	"github.com/p-society/raag/internal/infra/ipc"
 
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
@@ -99,7 +101,7 @@ func (s *Server) publishQueueUpdated() {
 	for i, t := range tracks {
 		qt[i] = convert.TrackToProto(t)
 	}
-	s.PublishEvent(EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
+	s.PublishEvent(ipc.EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
 }
 
 // handleSetEqualizer applies EQ settings to the live playback engine and

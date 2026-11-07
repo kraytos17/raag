@@ -1,4 +1,4 @@
-package ipc
+package server
 
 import (
 	"log/slog"
