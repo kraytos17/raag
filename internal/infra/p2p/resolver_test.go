@@ -46,7 +46,7 @@ func (m *mockPeerManager) FindPeersWithTrack(ctx context.Context, trackID domain
 	return m.findResults[trackID]
 }
 
-func (m *mockPeerManager) GetPeerScore(ctx context.Context, pid peer.ID) *domain.PeerScore {
+func (m *mockPeerManager) GetPeerScore(pid peer.ID) *domain.PeerScore {
 	return m.scores[pid]
 }
 

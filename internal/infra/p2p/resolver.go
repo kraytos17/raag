@@ -22,7 +22,7 @@ import (
 
 type PeerManager interface {
 	FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID
-	GetPeerScore(ctx context.Context, pid peer.ID) *domain.PeerScore
+	GetPeerScore(pid peer.ID) *domain.PeerScore
 	RecordSuccess(pid peer.ID)
 	RecordFailure(pid peer.ID)
 	IsBanned(pid peer.ID) bool
@@ -179,7 +179,7 @@ func (r *P2PResolver) scorePeers(ctx context.Context, peers []peer.ID) []scoredP
 			continue
 		}
 
-		peerScore := r.peerMgr.GetPeerScore(ctx, pid)
+		peerScore := r.peerMgr.GetPeerScore(pid)
 		caps := r.peerMgr.GetPeerCapabilities(pid)
 		score := scoredPeer{
 			pid:          pid,

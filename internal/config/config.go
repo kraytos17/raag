@@ -221,6 +221,10 @@ func promptDirectory(reader *bufio.Reader, defaultPath string) (string, error) {
 }
 
 func RunSetup() error {
+	return runSetup(bufio.NewReader(os.Stdin))
+}
+
+func runSetup(reader *bufio.Reader) error {
 	configDir := GetConfigDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
@@ -241,7 +245,6 @@ func RunSetup() error {
 		}
 	}
 
-	reader := bufio.NewReader(os.Stdin)
 	musicPath, err := promptDirectory(reader, defaultPath)
 	if err != nil {
 		return err

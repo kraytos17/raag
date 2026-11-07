@@ -88,7 +88,7 @@ func (pm *peerManager) persist(pid peer.ID) {
 	if caps := pm.GetPeerCapabilities(pid); caps != nil {
 		info.Capabilities = caps
 	}
-	if score := pm.GetPeerScore(context.Background(), pid); score != nil {
+	if score := pm.GetPeerScore(pid); score != nil {
 		info.Score = score
 	}
 	if manifest := pm.GetManifest(pid); manifest != nil {
@@ -132,7 +132,7 @@ func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.Tr
 	return owners
 }
 
-func (pm *peerManager) GetPeerScore(ctx context.Context, pid peer.ID) *domain.PeerScore {
+func (pm *peerManager) GetPeerScore(pid peer.ID) *domain.PeerScore {
 	if pm.scorer == nil {
 		return nil
 	}
