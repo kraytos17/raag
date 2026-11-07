@@ -16,7 +16,7 @@ import (
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/observability"
-	"github.com/p-society/raag/internal/infra/p2p"
+	p2pnode "github.com/p-society/raag/internal/infra/p2p/node"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 	"golang.org/x/sync/semaphore"
@@ -47,7 +47,7 @@ type Server struct {
 	peerRepo     PeerRepoHandler
 	queue        QueueHandler
 	playlistRepo app.PlaylistRepository
-	p2pNode      *p2p.P2PNode
+	p2pNode      *p2pnode.Node
 	eventBus     domain.EventBus
 	metrics      *observability.Metrics
 	dbStats      DebugStatsProvider
@@ -66,7 +66,7 @@ type Config struct {
 	PeerRepo     PeerRepoHandler
 	Queue        QueueHandler
 	PlaylistRepo app.PlaylistRepository
-	P2PNode      *p2p.P2PNode
+	P2PNode      *p2pnode.Node
 	EventBus     domain.EventBus
 	Metrics      *observability.Metrics
 	DBStats      DebugStatsProvider

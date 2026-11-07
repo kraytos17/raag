@@ -1,4 +1,4 @@
-package p2p
+package peer
 
 import (
 	"log/slog"
@@ -9,7 +9,7 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-type PeerScorer struct {
+type Scorer struct {
 	mu          sync.RWMutex
 	failures    map[peer.ID]int
 	successes   map[peer.ID]int
@@ -22,12 +22,12 @@ type PeerScorer struct {
 	cooldown    time.Duration
 }
 
-func NewPeerScorer() *PeerScorer {
-	return NewPeerScorerWithConfig(3, 5*time.Minute)
+func NewScorer() *Scorer {
+	return NewScorerWithConfig(3, 5*time.Minute)
 }
 
-func NewPeerScorerWithConfig(failLimit int, cooldown time.Duration) *PeerScorer {
-	return &PeerScorer{
+func NewScorerWithConfig(failLimit int, cooldown time.Duration) *Scorer {
+	return &Scorer{
 		failures:    make(map[peer.ID]int),
 		successes:   make(map[peer.ID]int),
 		failTotals:  make(map[peer.ID]int),
@@ -40,7 +40,7 @@ func NewPeerScorerWithConfig(failLimit int, cooldown time.Duration) *PeerScorer 
 	}
 }
 
-func (s *PeerScorer) RecordLatency(pid peer.ID, rtt time.Duration) {
+func (s *Scorer) RecordLatency(pid peer.ID, rtt time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -50,7 +50,7 @@ func (s *PeerScorer) RecordLatency(pid peer.ID, rtt time.Duration) {
 	}
 }
 
-func (s *PeerScorer) AvgLatency(pid peer.ID) time.Duration {
+func (s *Scorer) AvgLatency(pid peer.ID) time.Duration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -66,7 +66,7 @@ func (s *PeerScorer) AvgLatency(pid peer.ID) time.Duration {
 	return sum / time.Duration(len(lats))
 }
 
-func (s *PeerScorer) RecordBandwidth(pid peer.ID, bytesPerSecond int64) {
+func (s *Scorer) RecordBandwidth(pid peer.ID, bytesPerSecond int64) {
 	if bytesPerSecond <= 0 {
 		return
 	}
@@ -80,7 +80,7 @@ func (s *PeerScorer) RecordBandwidth(pid peer.ID, bytesPerSecond int64) {
 	}
 }
 
-func (s *PeerScorer) AvgBandwidth(pid peer.ID) int64 {
+func (s *Scorer) AvgBandwidth(pid peer.ID) int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -96,7 +96,7 @@ func (s *PeerScorer) AvgBandwidth(pid peer.ID) int64 {
 	return sum / int64(len(bws))
 }
 
-func (s *PeerScorer) RecordSuccess(pid peer.ID) {
+func (s *Scorer) RecordSuccess(pid peer.ID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -107,7 +107,7 @@ func (s *PeerScorer) RecordSuccess(pid peer.ID) {
 	slog.Debug("peer success recorded", "peer", pid)
 }
 
-func (s *PeerScorer) RecordFailure(pid peer.ID) {
+func (s *Scorer) RecordFailure(pid peer.ID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -126,7 +126,7 @@ func (s *PeerScorer) RecordFailure(pid peer.ID) {
 	}
 }
 
-func (s *PeerScorer) Snapshot(pid peer.ID) (avgLatency time.Duration, avgBandwidth int64, successes int, failures int, banned bool) {
+func (s *Scorer) Snapshot(pid peer.ID) (avgLatency time.Duration, avgBandwidth int64, successes int, failures int, banned bool) {
 	s.mu.RLock()
 	lats := s.latencies[pid]
 	if len(lats) > 0 {
@@ -155,7 +155,7 @@ func (s *PeerScorer) Snapshot(pid peer.ID) (avgLatency time.Duration, avgBandwid
 
 // checkBanned reports whether pid is banned, lazily expiring cooldown-passed
 // bans. Reads run under RLock; only an actual expiry takes the write lock.
-func (s *PeerScorer) checkBanned(pid peer.ID) bool {
+func (s *Scorer) checkBanned(pid peer.ID) bool {
 	s.mu.RLock()
 	banned, lastFailure := s.banned[pid], s.lastFailure[pid]
 	s.mu.RUnlock()
@@ -172,17 +172,17 @@ func (s *PeerScorer) checkBanned(pid peer.ID) bool {
 	return s.banned[pid]
 }
 
-func (s *PeerScorer) ClearLatency(pid peer.ID) {
+func (s *Scorer) ClearLatency(pid peer.ID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.latencies, pid)
 }
 
-func (s *PeerScorer) IsBanned(pid peer.ID) bool {
+func (s *Scorer) IsBanned(pid peer.ID) bool {
 	return s.checkBanned(pid)
 }
 
-func (s *PeerScorer) Reset(pid peer.ID) {
+func (s *Scorer) Reset(pid peer.ID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.failures, pid)
@@ -194,7 +194,7 @@ func (s *PeerScorer) Reset(pid peer.ID) {
 	delete(s.latencies, pid)
 }
 
-func (s *PeerScorer) Score(pid peer.ID) float64 {
+func (s *Scorer) Score(pid peer.ID) float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

@@ -1,4 +1,4 @@
-package p2p
+package peer
 
 import (
 	"errors"
@@ -20,7 +20,7 @@ func (e *SyncError) Error() string { return e.Message }
 // SyncErrorCode unwraps err and reports the peer's protocol error code.
 // Plain transport errors (EOF, resets, timeouts) report UNSPECIFIED with ok
 // set to false so callers treat them as transient and retryable.
-func SyncErrorCode(err error) (pb.ErrorCode, bool) {
+func ErrorCode(err error) (pb.ErrorCode, bool) {
 	if syncErr, ok := errors.AsType[*SyncError](err); ok {
 		return syncErr.Code, true
 	}

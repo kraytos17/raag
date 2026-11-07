@@ -14,7 +14,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/p-society/raag/internal/domain"
-	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	"github.com/p-society/raag/internal/infra/p2p/protocols"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
@@ -648,10 +647,10 @@ func TestLocalCapabilities_CanTranscode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lc := &localCapabilities{
-				libraryRepo:  newMockLibraryRepo(),
-				peerID:       peer.ID("local"),
-				canTranscode: tt.canTranscode,
+			lc := &LocalCapabilities{
+				LibraryRepo:  newMockLibraryRepo(),
+				PeerID:       peer.ID("local"),
+				CanTranscode: tt.canTranscode,
 			}
 			if got := lc.GetLocalCapabilities().CanTranscode; got != tt.want {
 				t.Errorf("GetLocalCapabilities().CanTranscode = %v, want %v", got, tt.want)
@@ -671,44 +670,15 @@ func TestLocalCapabilities_UploadBandwidth(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lc := &localCapabilities{
-				libraryRepo:     newMockLibraryRepo(),
-				peerID:          peer.ID("local"),
-				uploadBandwidth: tt.uploadBandwidth,
+			lc := &LocalCapabilities{
+				LibraryRepo:     newMockLibraryRepo(),
+				PeerID:          peer.ID("local"),
+				UploadBandwidth: tt.uploadBandwidth,
 			}
 			if got := lc.GetLocalCapabilities().UploadBandwidth; got != tt.want {
 				t.Errorf("GetLocalCapabilities().UploadBandwidth = %d, want %d", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestPeerManager_GetPeerCapabilities_PropagatesUploadBandwidth(t *testing.T) {
-	pm := newPeerManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, nil)
-	pid := peer.ID("peer")
-	pm.caps[pid] = &peerCaps{
-		data: &pb.PeerCapabilities{
-			SupportedCodecs:   []string{codecMP3},
-			SupportedBitrates: []int32{128},
-			CanTranscode:      true,
-			UploadBandwidth:   2_000_000,
-			ProtocolVersion:   peerProtocolV1,
-		},
-		addedAt: time.Now(),
-	}
-
-	caps := pm.GetPeerCapabilities(pid)
-	if caps == nil {
-		t.Fatal("GetPeerCapabilities() returned nil")
-	}
-	if caps.UploadBandwidth != 2_000_000 {
-		t.Errorf("UploadBandwidth = %d, want 2000000", caps.UploadBandwidth)
-	}
-	if !caps.CanTranscode {
-		t.Error("CanTranscode = false, want true")
-	}
-	if len(caps.SupportedCodecs) != 1 || caps.SupportedCodecs[0] != codecMP3 {
-		t.Errorf("SupportedCodecs = %v, want [mp3]", caps.SupportedCodecs)
 	}
 }
 

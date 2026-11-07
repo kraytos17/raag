@@ -1,4 +1,4 @@
-package p2p
+package peer
 
 import (
 	"context"
@@ -19,11 +19,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type peerManager struct {
+type Manager struct {
 	host      host.Host
 	peerCache *discovery.PeerCache
 	library   app.LibraryRepository
-	scorer    *PeerScorer
+	scorer    *Scorer
 	repo      app.PeerRepository
 	fetcher   *peerFetcher
 	mu        sync.RWMutex
@@ -31,6 +31,28 @@ type peerManager struct {
 	caps      map[peer.ID]*peerCaps
 
 	ttl time.Duration
+}
+
+// PeerManager is the peer-query/scoring surface used by the resolver.
+type PeerManager interface {
+	FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID
+	GetPeerScore(pid peer.ID) *domain.PeerScore
+	RecordSuccess(pid peer.ID)
+	RecordFailure(pid peer.ID)
+	IsBanned(pid peer.ID) bool
+	GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
+}
+
+// Lifecycle is the extra peer state operations owned by a node. The
+// concrete manager and its caches remain private to this package.
+type Lifecycle interface {
+	PeerManager
+	GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
+	GetManifest(pid peer.ID) *pb.LibraryManifest
+	FetchPeerData(ctx context.Context, pid peer.ID)
+	CachePeer(pi peer.AddrInfo)
+	Persist(pid peer.ID)
+	OnPeerDisconnected(pid peer.ID)
 }
 
 type peerManifest struct {
@@ -43,8 +65,8 @@ type peerCaps struct {
 	addedAt time.Time
 }
 
-func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.LibraryRepository, scorer *PeerScorer, ttl time.Duration, repo app.PeerRepository) *peerManager {
-	return &peerManager{
+func NewManager(h host.Host, peerCache *discovery.PeerCache, library app.LibraryRepository, scorer *Scorer, ttl time.Duration, repo app.PeerRepository) *Manager {
+	return &Manager{
 		host:      h,
 		peerCache: peerCache,
 		library:   library,
@@ -61,7 +83,7 @@ func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.Lib
 // IPC consumers (`raag peers`, the TUI panel) see real data instead of an
 // empty list. It is called on connect, after data fetch, on score changes,
 // and on disconnect. Best-effort: failures are logged, never fatal.
-func (pm *peerManager) persist(pid peer.ID) {
+func (pm *Manager) persist(pid peer.ID) {
 	if pm.repo == nil {
 		return
 	}
@@ -104,7 +126,11 @@ func (pm *peerManager) persist(pid peer.ID) {
 	}
 }
 
-func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID {
+func (pm *Manager) Persist(pid peer.ID) { pm.persist(pid) }
+
+func (pm *Manager) CachePeer(pi peer.AddrInfo) { pm.peerCache.Add(pi) }
+
+func (pm *Manager) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -123,7 +149,7 @@ func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.Tr
 	return owners
 }
 
-func (pm *peerManager) GetPeerScore(pid peer.ID) *domain.PeerScore {
+func (pm *Manager) GetPeerScore(pid peer.ID) *domain.PeerScore {
 	if pm.scorer == nil {
 		return nil
 	}
@@ -137,28 +163,28 @@ func (pm *peerManager) GetPeerScore(pid peer.ID) *domain.PeerScore {
 	return s
 }
 
-func (pm *peerManager) RecordFailure(pid peer.ID) {
+func (pm *Manager) RecordFailure(pid peer.ID) {
 	if pm.scorer != nil {
 		pm.scorer.RecordFailure(pid)
 	}
 	pm.persist(pid)
 }
 
-func (pm *peerManager) RecordSuccess(pid peer.ID) {
+func (pm *Manager) RecordSuccess(pid peer.ID) {
 	if pm.scorer != nil {
 		pm.scorer.RecordSuccess(pid)
 	}
 	pm.persist(pid)
 }
 
-func (pm *peerManager) IsBanned(pid peer.ID) bool {
+func (pm *Manager) IsBanned(pid peer.ID) bool {
 	if pm.scorer != nil {
 		return pm.scorer.IsBanned(pid)
 	}
 	return false
 }
 
-func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities {
+func (pm *Manager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities {
 	if pc := pm.cachedCapabilities(pid); pc != nil {
 		return &domain.PeerCapabilities{
 			SupportedCodecs:   slices.Clone(pc.data.SupportedCodecs),
@@ -173,43 +199,45 @@ func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
 	}
 }
 
-func (pm *peerManager) FetchManifest(ctx context.Context, pid peer.ID) error {
+func (pm *Manager) FetchManifest(ctx context.Context, pid peer.ID) error {
 	manifest, err := pm.fetcher.fetchManifest(ctx, pid)
 	if err != nil {
 		return err
 	}
+	
 	pm.mu.Lock()
 	pm.manifests[pid] = &peerManifest{data: manifest, addedAt: time.Now()}
 	pm.mu.Unlock()
 	return nil
 }
 
-func (pm *peerManager) FetchCapabilities(ctx context.Context, pid peer.ID) error {
+func (pm *Manager) FetchCapabilities(ctx context.Context, pid peer.ID) error {
 	caps, err := pm.fetcher.fetchCapabilities(ctx, pid)
 	if err != nil {
 		return err
 	}
+	
 	pm.mu.Lock()
 	pm.caps[pid] = &peerCaps{data: caps, addedAt: time.Now()}
 	pm.mu.Unlock()
 	return nil
 }
 
-func (pm *peerManager) GetManifest(pid peer.ID) *pb.LibraryManifest {
+func (pm *Manager) GetManifest(pid peer.ID) *pb.LibraryManifest {
 	if pmf := pm.cachedManifest(pid); pmf != nil {
 		return proto.Clone(pmf.data).(*pb.LibraryManifest)
 	}
 	return nil
 }
 
-func (pm *peerManager) GetCapabilities(pid peer.ID) *pb.PeerCapabilities {
+func (pm *Manager) GetCapabilities(pid peer.ID) *pb.PeerCapabilities {
 	if pc := pm.cachedCapabilities(pid); pc != nil {
 		return proto.Clone(pc.data).(*pb.PeerCapabilities)
 	}
 	return nil
 }
 
-func (pm *peerManager) cachedManifest(pid peer.ID) *peerManifest {
+func (pm *Manager) cachedManifest(pid peer.ID) *peerManifest {
 	pm.mu.RLock()
 	entry, ok := pm.manifests[pid]
 	if !ok || !pm.isExpired(entry.addedAt, time.Now()) {
@@ -227,7 +255,7 @@ func (pm *peerManager) cachedManifest(pid peer.ID) *peerManifest {
 	return nil
 }
 
-func (pm *peerManager) cachedCapabilities(pid peer.ID) *peerCaps {
+func (pm *Manager) cachedCapabilities(pid peer.ID) *peerCaps {
 	pm.mu.RLock()
 	entry, ok := pm.caps[pid]
 	if !ok || !pm.isExpired(entry.addedAt, time.Now()) {
@@ -245,11 +273,11 @@ func (pm *peerManager) cachedCapabilities(pid peer.ID) *peerCaps {
 	return nil
 }
 
-func (pm *peerManager) isExpired(addedAt, now time.Time) bool {
+func (pm *Manager) isExpired(addedAt, now time.Time) bool {
 	return pm.ttl <= 0 || now.Sub(addedAt) > pm.ttl
 }
 
-func (pm *peerManager) pruneExpiredManifestsLocked(now time.Time) {
+func (pm *Manager) pruneExpiredManifestsLocked(now time.Time) {
 	for pid, manifest := range pm.manifests {
 		if pm.isExpired(manifest.addedAt, now) {
 			delete(pm.manifests, pid)
@@ -257,7 +285,7 @@ func (pm *peerManager) pruneExpiredManifestsLocked(now time.Time) {
 	}
 }
 
-func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
+func (pm *Manager) FetchPeerData(ctx context.Context, pid peer.ID) {
 	baseCtx, entry := pm.fetcher.start(ctx, pid)
 
 	var trackCount int
@@ -278,7 +306,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 				// the current fetch owns the peer now.
 				return
 			}
-			if code, ok := SyncErrorCode(err); ok {
+			if code, ok := ErrorCode(err); ok {
 				if code == pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
 					slog.Debug("manifest not available", "peer", pid)
 				} else {
@@ -302,7 +330,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 			if baseCtx.Err() != nil {
 				return
 			}
-			if _, ok := SyncErrorCode(err); ok {
+			if _, ok := ErrorCode(err); ok {
 				slog.Warn("failed to fetch capabilities", "peer", pid, "err", err)
 				return
 			}
@@ -328,7 +356,7 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 	pm.persist(pid)
 }
 
-func (pm *peerManager) onPeerDisconnected(pid peer.ID) {
+func (pm *Manager) onPeerDisconnected(pid peer.ID) {
 	pm.fetcher.cancelFetch(pid)
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -341,18 +369,20 @@ func (pm *peerManager) onPeerDisconnected(pid peer.ID) {
 	}
 }
 
-func (pm *peerManager) GetBestCodec(pid peer.ID, preferredCodec string) string {
+func (pm *Manager) OnPeerDisconnected(pid peer.ID) { pm.onPeerDisconnected(pid) }
+
+func (pm *Manager) GetBestCodec(pid peer.ID, preferredCodec string) string {
 	if pc := pm.cachedCapabilities(pid); pc != nil {
-		for _, codec := range []string{preferredCodec, codecOpus, codecMP3, codecFlac} {
+		for _, codec := range []string{preferredCodec, CodecOpus, CodecMP3, CodecFlac} {
 			if slices.Contains(pc.data.SupportedCodecs, codec) {
 				return codec
 			}
 		}
 	}
-	return codecMP3
+	return CodecMP3
 }
 
-func (pm *peerManager) HasTrack(pid peer.ID, trackID string) bool {
+func (pm *Manager) HasTrack(pid peer.ID, trackID string) bool {
 	if pmf := pm.cachedManifest(pid); pmf != nil {
 		return slices.Contains(pmf.data.TrackIds, trackID)
 	}

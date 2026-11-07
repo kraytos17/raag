@@ -1,4 +1,4 @@
-package p2p
+package peer
 
 const (
 	peerProtocolV1 = "1.0.0"

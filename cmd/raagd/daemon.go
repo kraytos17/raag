@@ -17,13 +17,14 @@ import (
 	"github.com/p-society/raag/internal/infra/events"
 	ipcserver "github.com/p-society/raag/internal/infra/ipc/server"
 	"github.com/p-society/raag/internal/infra/observability"
-	"github.com/p-society/raag/internal/infra/p2p"
+	p2p "github.com/p-society/raag/internal/infra/p2p"
+	p2pnode "github.com/p-society/raag/internal/infra/p2p/node"
 	db "github.com/p-society/raag/internal/infra/storage"
 	"github.com/p-society/raag/internal/infra/transcoder"
 )
 
 func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
-	p2pNode *p2p.P2PNode, p2pEnabled bool, searchService *app.SearchService,
+	p2pNode *p2pnode.Node, p2pEnabled bool, searchService *app.SearchService,
 	skipScan bool, metrics *observability.Metrics, tr *transcoder.Transcoder,
 ) {
 	if err := checkStalePidFile(cfg.Daemon.PidFile); err != nil {
@@ -33,6 +34,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		} else {
 			slog.Error("failed to check pid file", "pid_file", cfg.Daemon.PidFile, "error", err)
 		}
+
 		database.Close()
 		os.Exit(1)
 	}
@@ -74,7 +76,6 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	player := audio.NewEngine(cfg.Playback.SampleRate, cfg.Playback.BufferSize, dspFromConfig(cfg.Playback))
 	warnUnsupportedOutputDevice(cfg.Playback.OutputDevice)
 	queue := audio.NewQueue()
-
 	// A persisted volume (from the DB) overrides the config default, which is
 	// only a fallback. The config file itself is never rewritten.
 	initialVolume := loadPersistedVolume(cfg, settings)
@@ -174,7 +175,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	slog.Info("raag daemon stopped")
 }
 
-func logDaemonReady(pidFile string, p2pNodeStarted bool, p2pNode *p2p.P2PNode) {
+func logDaemonReady(pidFile string, p2pNodeStarted bool, p2pNode *p2pnode.Node) {
 	if err := writePidFile(pidFile); err != nil {
 		slog.Warn("failed to write pid file", "path", pidFile, "error", err)
 	}

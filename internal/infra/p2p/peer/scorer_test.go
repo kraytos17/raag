@@ -1,4 +1,4 @@
-package p2p
+package peer
 
 import (
 	"sync"
@@ -9,7 +9,7 @@ import (
 )
 
 func TestPeerScorer_RecordSuccess(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("test-peer")
 
 	scorer.RecordFailure(pid)
@@ -27,7 +27,7 @@ func TestPeerScorer_RecordSuccess(t *testing.T) {
 }
 
 func TestPeerScorer_RecordFailure(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("test-peer")
 
 	scorer.RecordFailure(pid)
@@ -42,7 +42,7 @@ func TestPeerScorer_RecordFailure(t *testing.T) {
 }
 
 func TestPeerScorer_Cooldown(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(2, 100*time.Millisecond)
+	scorer := NewScorerWithConfig(2, 100*time.Millisecond)
 	pid := peer.ID("test-peer")
 	scorer.RecordFailure(pid)
 	scorer.RecordFailure(pid)
@@ -57,7 +57,7 @@ func TestPeerScorer_Cooldown(t *testing.T) {
 }
 
 func TestPeerScorer_SnapshotExpiresBan(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(1, 50*time.Millisecond)
+	scorer := NewScorerWithConfig(1, 50*time.Millisecond)
 	pid := peer.ID("snapshot-peer")
 	scorer.RecordLatency(pid, 10*time.Millisecond)
 	scorer.RecordFailure(pid)
@@ -76,24 +76,15 @@ func TestPeerScorer_SnapshotExpiresBan(t *testing.T) {
 }
 
 func TestPeerScorer_RecordFailure_NoGaterEscalation(t *testing.T) {
-	// Failure-based bans must stay cooldown-bounded and never escalate to a
-	// permanent gater ban, which RecordSuccess cannot undo.
-	scorer := NewPeerScorerWithConfig(3, 5*time.Minute)
-	gater := NewPeerGater()
+	// Failure thresholds ban within the scorer, and success clears that ban.
+	scorer := NewScorerWithConfig(3, 5*time.Minute)
 	pid := peer.ID("fail-peer")
 
 	scorer.RecordFailure(pid)
 	scorer.RecordFailure(pid)
-	if gater.IsBanned(pid) {
-		t.Fatal("gater banned peer before failLimit reached")
-	}
-
-	scorer.RecordFailure(pid) // reaches failLimit -> scorer ban only
+	scorer.RecordFailure(pid) // reaches failLimit
 	if !scorer.IsBanned(pid) {
 		t.Error("IsBanned() = false, want true after failLimit failures")
-	}
-	if gater.IsBanned(pid) {
-		t.Error("gater.IsBanned() = true, want false (no permanent ban on failure)")
 	}
 
 	// A success must clear the scorer ban.
@@ -104,7 +95,7 @@ func TestPeerScorer_RecordFailure_NoGaterEscalation(t *testing.T) {
 }
 
 func TestPeerScorer_Score(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("test-peer")
 	scorer.RecordLatency(pid, 100*time.Millisecond)
 	scorer.RecordBandwidth(pid, 1000000)
@@ -115,7 +106,7 @@ func TestPeerScorer_Score(t *testing.T) {
 }
 
 func TestPeerScorer_ScoreComponents(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	// Zero latency, zero bandwidth, zero success
 	baseline := peer.ID("baseline")
 	s1 := scorer.Score(baseline)
@@ -147,7 +138,7 @@ func TestPeerScorer_ScoreComponents(t *testing.T) {
 }
 
 func TestPeerScorer_RecordLatency(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("test-peer")
 	if lat := scorer.AvgLatency(pid); lat != 0 {
 		t.Fatalf("AvgLatency() = %v, want 0 for unknown peer", lat)
@@ -162,7 +153,7 @@ func TestPeerScorer_RecordLatency(t *testing.T) {
 }
 
 func TestPeerScorer_RecordLatency_SlidingWindow(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("p")
 	// Record 7 latencies, window is 5
 	for i := range 7 {
@@ -184,7 +175,7 @@ func TestPeerScorer_RecordLatency_SlidingWindow(t *testing.T) {
 }
 
 func TestPeerScorer_ClearLatency(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("p")
 
 	scorer.RecordLatency(pid, 100*time.Millisecond)
@@ -195,7 +186,7 @@ func TestPeerScorer_ClearLatency(t *testing.T) {
 }
 
 func TestPeerScorer_RecordBandwidth(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("p")
 	if bw := scorer.AvgBandwidth(pid); bw != 0 {
 		t.Fatalf("AvgBandwidth() = %d, want 0 for unknown peer", bw)
@@ -209,7 +200,7 @@ func TestPeerScorer_RecordBandwidth(t *testing.T) {
 }
 
 func TestPeerScorer_RecordBandwidth_IgnoresNonPositive(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("p")
 
 	scorer.RecordBandwidth(pid, 0)
@@ -220,7 +211,7 @@ func TestPeerScorer_RecordBandwidth_IgnoresNonPositive(t *testing.T) {
 }
 
 func TestPeerScorer_RecordBandwidth_SlidingWindow(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("p")
 	for i := range 7 {
 		scorer.RecordBandwidth(pid, int64((i+1)*1000))
@@ -235,7 +226,7 @@ func TestPeerScorer_RecordBandwidth_SlidingWindow(t *testing.T) {
 }
 
 func TestPeerScorer_Snapshot(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(5, time.Minute)
+	scorer := NewScorerWithConfig(5, time.Minute)
 	pid := peer.ID("p")
 
 	scorer.RecordLatency(pid, 100*time.Millisecond)
@@ -263,7 +254,7 @@ func TestPeerScorer_Snapshot(t *testing.T) {
 }
 
 func TestPeerScorer_Snapshot_BannedExpires(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(1, 50*time.Millisecond)
+	scorer := NewScorerWithConfig(1, 50*time.Millisecond)
 	pid := peer.ID("p")
 	scorer.RecordFailure(pid)
 	snap := func() bool {
@@ -282,7 +273,7 @@ func TestPeerScorer_Snapshot_BannedExpires(t *testing.T) {
 }
 
 func TestPeerScorer_Reset(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("p")
 
 	scorer.RecordLatency(pid, 100*time.Millisecond)
@@ -303,7 +294,7 @@ func TestPeerScorer_Reset(t *testing.T) {
 }
 
 func TestPeerScorer_ConcurrentAccess(t *testing.T) {
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	pid := peer.ID("p")
 
 	var wg sync.WaitGroup
@@ -330,8 +321,8 @@ func TestPeerScorer_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-func TestNewPeerScorerWithConfig(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(10, 2*time.Minute)
+func TestNewScorerWithConfig(t *testing.T) {
+	scorer := NewScorerWithConfig(10, 2*time.Minute)
 	pid := peer.ID("p")
 	// Need 10 failures to ban
 	for range 9 {

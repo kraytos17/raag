@@ -15,7 +15,7 @@ import (
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/events"
 	ipcclient "github.com/p-society/raag/internal/infra/ipc/client"
-	"github.com/p-society/raag/internal/infra/p2p"
+	p2pnode "github.com/p-society/raag/internal/infra/p2p/node"
 	"github.com/p-society/raag/internal/infra/wire"
 	"github.com/p-society/raag/internal/testutil/mocks"
 	pb "github.com/p-society/raag/proto/gen"
@@ -876,7 +876,7 @@ func TestPersistentClient_ListPeers_IncludesDiscovered(t *testing.T) {
 
 	// Build a real (listener-free) p2p node so handleListPeers can report
 	// discovered peers. The node is never started, so a nil library repo is fine.
-	node, err := p2p.NewP2PNode(p2p.P2PNodeConfig{
+	node, err := p2pnode.New(p2pnode.Config{
 		DataDir:            t.TempDir(),
 		LANOnly:            true,
 		MaxKnownPeers:      100,

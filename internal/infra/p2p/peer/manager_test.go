@@ -1,4 +1,4 @@
-package p2p
+package peer
 
 import (
 	"bytes"
@@ -23,6 +23,27 @@ import (
 	pb "github.com/p-society/raag/proto/gen"
 	"google.golang.org/protobuf/proto"
 )
+
+const track1ID = "track-1"
+
+type mockStream struct{ id string }
+
+func (m *mockStream) Close() error                                 { return nil }
+func (m *mockStream) Reset() error                                 { return nil }
+func (m *mockStream) CloseRead() error                             { return nil }
+func (m *mockStream) CloseWrite() error                            { return nil }
+func (m *mockStream) SetDeadline(time.Time) error                  { return nil }
+func (m *mockStream) SetReadDeadline(time.Time) error              { return nil }
+func (m *mockStream) SetWriteDeadline(time.Time) error             { return nil }
+func (m *mockStream) Conn() network.Conn                           { return nil }
+func (m *mockStream) ID() string                                   { return m.id }
+func (m *mockStream) Protocol() protocol.ID                        { return "/test/1.0.0" }
+func (m *mockStream) SetProtocol(protocol.ID) error                { return nil }
+func (m *mockStream) Read([]byte) (int, error)                     { return 0, io.EOF }
+func (m *mockStream) Write(b []byte) (int, error)                  { return len(b), nil }
+func (m *mockStream) ResetWithError(network.StreamErrorCode) error { return nil }
+func (m *mockStream) Scope() network.StreamScope                   { return nil }
+func (m *mockStream) Stat() network.Stats                          { return network.Stats{} }
 
 type peerFetchStreamHost struct {
 	host.Host
@@ -189,7 +210,7 @@ func TestPeerManager_FetchPeerDataRetriesTransientFailures(t *testing.T) {
 	}}
 	h := newFlakySyncHost(manifest, caps, 2)
 	pid := peer.ID("flaky-fetch-peer")
-	pm := newPeerManager(h, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
+	pm := NewManager(h, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
 
 	pm.FetchPeerData(context.Background(), pid)
 
@@ -210,7 +231,7 @@ func TestPeerManager_FetchManifestPermissionDeniedDoesNotRetry(t *testing.T) {
 	}}
 	h := newFlakySyncHost(denied, denied, 0)
 	pid := peer.ID("denied-fetch-peer")
-	pm := newPeerManager(h, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
+	pm := NewManager(h, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
 
 	err := pm.FetchManifest(context.Background(), pid)
 	var syncErr *SyncError
@@ -305,7 +326,7 @@ func (m *memPeerRepo) ListAll(_ context.Context) iter.Seq2[*domain.PeerInfo, err
 // score, and manifest through the repository.
 func TestPeerManager_PersistRoundTrip(t *testing.T) {
 	repo := newMemPeerRepo()
-	pm := newPeerManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, repo)
+	pm := NewManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, repo)
 
 	pid := domain.PeerID("peer-1")
 	score := domain.NewPeerScore(pid)
@@ -313,7 +334,7 @@ func TestPeerManager_PersistRoundTrip(t *testing.T) {
 	score.AvgLatency = 10 * time.Millisecond
 
 	// Seed the scorer with a real score so persist() snapshots it.
-	scorer := NewPeerScorer()
+	scorer := NewScorer()
 	scorer.RecordSuccess(pid)
 	scorer.RecordSuccess(pid)
 	scorer.RecordBandwidth(pid, 1_000_000)
@@ -358,7 +379,7 @@ func TestPeerManager_PersistRoundTrip(t *testing.T) {
 func TestPeerManager_RecordSuccessPersistsScore(t *testing.T) {
 	repo := newMemPeerRepo()
 	pid := peer.ID("scored-peer")
-	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, NewPeerScorer(), time.Hour, repo)
+	pm := NewManager(nil, discovery.NewPeerCache(10), nil, NewScorer(), time.Hour, repo)
 
 	pm.RecordSuccess(pid)
 	pm.RecordSuccess(pid)
@@ -389,7 +410,7 @@ func TestPeerManager_RecordSuccessPersistsScore(t *testing.T) {
 func TestPeerManager_RecordWithoutScorerPersistsInfo(t *testing.T) {
 	repo := newMemPeerRepo()
 	pid := peer.ID("unscored-peer")
-	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, nil, time.Hour, repo)
+	pm := NewManager(nil, discovery.NewPeerCache(10), nil, nil, time.Hour, repo)
 
 	pm.RecordSuccess(pid) // must not panic with nil scorer
 	if _, err := repo.GetPeerInfo(context.Background(), pid); err != nil {
@@ -401,14 +422,14 @@ func TestPeerManager_RecordWithoutScorerPersistsInfo(t *testing.T) {
 }
 
 func TestPeerManager_PersistNoRepo(t *testing.T) {
-	pm := newPeerManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, nil)
+	pm := NewManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, nil)
 	pm.persist(domain.PeerID("peer-1")) // must not panic
 }
 
 // TestPeerManager_PersistNilScorer verifies persist() handles a nil scorer.
 func TestPeerManager_PersistNilScorer(t *testing.T) {
 	repo := newMemPeerRepo()
-	pm := newPeerManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, repo)
+	pm := NewManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, repo)
 	pm.persist(domain.PeerID("peer-1"))
 
 	if _, err := repo.GetPeerInfo(context.Background(), domain.PeerID("peer-1")); err != nil {
@@ -424,7 +445,7 @@ func TestPeerManager_OlderFetchCannotClearNewerCancellation(t *testing.T) {
 		started: started, finished: finished,
 	}
 	peerID := peer.ID("overlapping-fetch-peer")
-	pm := newPeerManager(host, discovery.NewPeerCache(10), nil, nil, 50*time.Millisecond, nil)
+	pm := NewManager(host, discovery.NewPeerCache(10), nil, nil, 50*time.Millisecond, nil)
 
 	queueFetchStreams := func(group int) {
 		for range 2 { // FetchPeerData starts one manifest and one capabilities request.
@@ -467,7 +488,7 @@ func TestPeerManager_OlderFetchCannotClearNewerCancellation(t *testing.T) {
 
 func TestPeerManager_ExpiredCacheReadsAreConcurrentSafe(t *testing.T) {
 	pid := peer.ID("expired-cache-peer")
-	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, nil, -time.Second, nil)
+	pm := NewManager(nil, discovery.NewPeerCache(10), nil, nil, -time.Second, nil)
 	pm.manifests[pid] = &peerManifest{
 		data:    &pb.LibraryManifest{TrackIds: []string{track1ID}},
 		addedAt: time.Now().Add(-time.Hour),
@@ -498,8 +519,8 @@ func TestPeerManager_ExpiredCacheReadsAreConcurrentSafe(t *testing.T) {
 			if got := pm.FindPeersWithTrack(context.Background(), domain.TrackID(track1ID)); len(got) != 0 {
 				t.Errorf("FindPeersWithTrack() = %v, want no expired peers", got)
 			}
-			if got := pm.GetBestCodec(pid, peerTestOpus); got != codecMP3 {
-				t.Errorf("GetBestCodec() = %q, want fallback %q", got, codecMP3)
+			if got := pm.GetBestCodec(pid, peerTestOpus); got != CodecMP3 {
+				t.Errorf("GetBestCodec() = %q, want fallback %q", got, CodecMP3)
 			}
 		})
 	}
@@ -509,7 +530,7 @@ func TestPeerManager_ExpiredCacheReadsAreConcurrentSafe(t *testing.T) {
 
 func TestPeerManager_CacheGettersReturnIndependentSnapshots(t *testing.T) {
 	pid := peer.ID("snapshot-cache-peer")
-	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
+	pm := NewManager(nil, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
 	pm.manifests[pid] = &peerManifest{
 		data: &pb.LibraryManifest{
 			PeerId:   "original-peer",
@@ -561,3 +582,32 @@ func TestPeerManager_CacheGettersReturnIndependentSnapshots(t *testing.T) {
 
 // compile-time check that memPeerRepo satisfies app.PeerRepository.
 var _ app.PeerRepository = (*memPeerRepo)(nil)
+
+func TestPeerManager_GetPeerCapabilities_PropagatesUploadBandwidth(t *testing.T) {
+	pm := NewManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, nil)
+	pid := peer.ID("peer")
+	pm.caps[pid] = &peerCaps{
+		data: &pb.PeerCapabilities{
+			SupportedCodecs:   []string{CodecMP3},
+			SupportedBitrates: []int32{128},
+			CanTranscode:      true,
+			UploadBandwidth:   2_000_000,
+			ProtocolVersion:   peerProtocolV1,
+		},
+		addedAt: time.Now(),
+	}
+
+	caps := pm.GetPeerCapabilities(pid)
+	if caps == nil {
+		t.Fatal("GetPeerCapabilities() returned nil")
+	}
+	if caps.UploadBandwidth != 2_000_000 {
+		t.Errorf("UploadBandwidth = %d, want 2000000", caps.UploadBandwidth)
+	}
+	if !caps.CanTranscode {
+		t.Error("CanTranscode = false, want true")
+	}
+	if len(caps.SupportedCodecs) != 1 || caps.SupportedCodecs[0] != CodecMP3 {
+		t.Errorf("SupportedCodecs = %v, want [mp3]", caps.SupportedCodecs)
+	}
+}

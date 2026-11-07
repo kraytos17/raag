@@ -15,31 +15,23 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
 	"github.com/p-society/raag/internal/domain"
+	peerpkg "github.com/p-society/raag/internal/infra/p2p/peer"
 	"github.com/p-society/raag/internal/infra/p2p/protocols"
 	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
 
-type PeerManager interface {
-	FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID
-	GetPeerScore(pid peer.ID) *domain.PeerScore
-	RecordSuccess(pid peer.ID)
-	RecordFailure(pid peer.ID)
-	IsBanned(pid peer.ID) bool
-	GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
-}
-
 type P2PResolver struct {
 	libraryRepo app.LibraryRepository
 	pool        *StreamPool
-	peerMgr     PeerManager
+	peerMgr     peerpkg.PeerManager
 	scorer      *PeerScorer
 	host        StreamOpener
 	lastPeerID  peer.ID
 	lastPeerMu  sync.RWMutex
 }
 
-func NewP2PResolver(libraryRepo app.LibraryRepository, pool *StreamPool, peerMgr PeerManager, scorer *PeerScorer, host StreamOpener) *P2PResolver {
+func NewP2PResolver(libraryRepo app.LibraryRepository, pool *StreamPool, peerMgr peerpkg.PeerManager, scorer *PeerScorer, host StreamOpener) *P2PResolver {
 	return &P2PResolver{
 		libraryRepo: libraryRepo,
 		pool:        pool,

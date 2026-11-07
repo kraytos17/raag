@@ -1,4 +1,4 @@
-package p2p
+package node
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/p-society/raag/internal/domain"
-	"github.com/p-society/raag/internal/infra/p2p/discovery"
+	p2p "github.com/p-society/raag/internal/infra/p2p"
 	protocols "github.com/p-society/raag/internal/infra/p2p/protocols"
 )
 
@@ -40,19 +40,20 @@ func TestP2PNode_RefreshAllManifests(t *testing.T) {
 	sh.SetAnnounceLibrary(true)
 	hostB.SetStreamHandler(protocols.SyncProtocol, sh.Handle)
 
-	// Node A's peer manager, wired to its host, fetches from B.
-	pm := newPeerManager(hostA, discovery.NewPeerCache(100), nil, nil, time.Hour, nil)
-	node := &P2PNode{host: hostA, peerMgr: pm}
+	// Node A fetches B's manifest through its public refresh operation.
+	node, err := NewWithHost(Config{MaxKnownPeers: 100, PeerDataTTL: time.Hour}, nil, p2p.NewPeerGater(), hostA)
+	if err != nil {
+		t.Fatalf("NewWithHost: %v", err)
+	}
+	t.Cleanup(func() { _ = node.Stop(context.Background()) })
 
 	node.refreshAllManifests()
 
 	// The manifest must now be cached for peer B.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		pm.mu.RLock()
-		manifest, ok := pm.manifests[hostB.ID()]
-		pm.mu.RUnlock()
-		if ok && manifest != nil && slices.Contains(manifest.data.TrackIds, string(track.ID)) {
+		manifest := node.peerMgr.GetManifest(hostB.ID())
+		if manifest != nil && slices.Contains(manifest.TrackIds, string(track.ID)) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -62,7 +63,7 @@ func TestP2PNode_RefreshAllManifests(t *testing.T) {
 	}
 }
 
-// TestP2PNode_OverlayLiveScore_MergesScorerSnapshot verifies PeerStatus
+// TestP2PNode_OverlayLiveScore_MergesScorerSnapshot verifies p2p.PeerStatus
 // overlays the live scorer latency/bandwidth/score onto the persisted peer.
 func TestP2PNode_OverlayLiveScore_MergesScorerSnapshot(t *testing.T) {
 	net := mocknet.New()
@@ -72,19 +73,22 @@ func TestP2PNode_OverlayLiveScore_MergesScorerSnapshot(t *testing.T) {
 		t.Fatalf("GenPeer: %v", err)
 	}
 
-	scorer := NewPeerScorer()
-	node := &P2PNode{host: host, scorer: scorer}
+	node, err := NewWithHost(Config{}, nil, p2p.NewPeerGater(), host)
+	if err != nil {
+		t.Fatalf("NewWithHost: %v", err)
+	}
+	t.Cleanup(func() { _ = node.Stop(context.Background()) })
 
 	pid := peer.ID("live-peer")
 	info := domain.NewPeerInfo(pid, []string{"/ip4/10.0.0.1/tcp/7844"})
-	scorer.RecordLatency(pid, 12*time.Millisecond)
-	scorer.RecordBandwidth(pid, 1_200_000)
-	scorer.RecordSuccess(pid)
-	scorer.RecordSuccess(pid)
+	node.scorer.RecordLatency(pid, 12*time.Millisecond)
+	node.scorer.RecordBandwidth(pid, 1_200_000)
+	node.scorer.RecordSuccess(pid)
+	node.scorer.RecordSuccess(pid)
 
 	pbPeer := node.PeerStatus(info)
 	if pbPeer == nil {
-		t.Fatal("PeerStatus() = nil")
+		t.Fatal("p2p.PeerStatus() = nil")
 	}
 	if pbPeer.Score == nil {
 		t.Fatal("expected live score to be attached")
@@ -129,18 +133,15 @@ func TestP2PNode_MeasureAllPeersLatency_ActivePingRecords(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 
-	scorer := NewPeerScorer()
-	pm := newPeerManager(hostA, discovery.NewPeerCache(100), nil, scorer, time.Hour, nil)
-	pm.peerCache.Add(hostB.Peerstore().PeerInfo(hostB.ID()))
-	node := &P2PNode{
-		host:      hostA,
-		peerMgr:   pm,
-		peerCache: pm.peerCache,
-		scorer:    scorer,
+	node, err := NewWithHost(Config{MaxKnownPeers: 100, PeerDataTTL: time.Hour}, nil, p2p.NewPeerGater(), hostA)
+	if err != nil {
+		t.Fatalf("NewWithHost: %v", err)
 	}
+	t.Cleanup(func() { _ = node.Stop(context.Background()) })
+	node.peerCache.Add(hostB.Peerstore().PeerInfo(hostB.ID()))
 
 	node.measureAllPeersLatency()
-	if got := scorer.AvgLatency(hostB.ID()); got <= 0 {
+	if got := node.scorer.AvgLatency(hostB.ID()); got <= 0 {
 		t.Fatalf("AvgLatency(peer) = %v, want > 0 after active probe", got)
 	}
 }
@@ -194,11 +195,11 @@ func TestP2PNode_DiscoveredPeers(t *testing.T) {
 		t.Fatalf("GenPeer A: %v", err)
 	}
 
-	node := &P2PNode{
-		host:           hostA,
-		mdnsDiscovered: discovery.NewTTLPeerCache(100, time.Hour),
+	node, err := NewWithHost(Config{MaxKnownPeers: 100}, nil, p2p.NewPeerGater(), hostA)
+	if err != nil {
+		t.Fatalf("NewWithHost: %v", err)
 	}
-	defer node.mdnsDiscovered.Close()
+	t.Cleanup(func() { _ = node.Stop(context.Background()) })
 
 	if got := len(node.DiscoveredPeers()); got != 0 {
 		t.Fatalf("DiscoveredPeers() len = %d, want 0 initially", got)

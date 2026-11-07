@@ -1,4 +1,4 @@
-package p2p
+package node
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/events"
+	p2p "github.com/p-society/raag/internal/infra/p2p"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	"github.com/p-society/raag/internal/infra/p2p/protocols"
 	"github.com/p-society/raag/internal/testutil/mocks"
@@ -45,55 +46,28 @@ func (d *lifecycleTestDiscovery) Close() error {
 	return nil
 }
 
-func newLifecycleTestNode(t *testing.T, broadcastEnabled bool) *P2PNode {
+func newLifecycleTestNode(t *testing.T, broadcastEnabled bool) *Node {
 	t.Helper()
 	privateKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateEd25519Key: %v", err)
 	}
-	gater := NewPeerGater()
+	gater := p2p.NewPeerGater()
 	gater.SetLANOnly(true)
-	libp2pHost, err := NewHost(privateKey, P2PConfig{
-		ListenAddrs:     []string{"/ip4/127.0.0.1/tcp/0"},
-		LANOnly:         true,
-		ConnectionGater: gater,
+	libp2pHost, err := p2p.NewHost(privateKey, p2p.P2PConfig{
+		ListenAddrs: []string{testLoopbackListenAddr}, LANOnly: true, ConnectionGater: gater,
 	})
 	if err != nil {
-		t.Fatalf("NewHost: %v", err)
+		t.Fatalf("p2p.NewHost: %v", err)
 	}
-	t.Cleanup(func() { libp2pHost.Close() })
-
-	libraryRepo := mocks.NewMockLibraryRepository()
-	pool := NewStreamPool(libp2pHost, protocols.StreamProtocol)
-	peerCache := discovery.NewPeerCache(10)
-	discovered := discovery.NewTTLPeerCache(10, discovery.MdnsDiscoveryTTL)
-	scorer := NewPeerScorer()
-	peerMgr := newPeerManager(libp2pHost, peerCache, libraryRepo, scorer, time.Hour, nil)
-	syncHandler := protocols.NewSyncHandler(libraryRepo, nil, libp2pHost.ID())
-	streamHandler := protocols.NewStreamHandler(libraryRepo, nil)
-	admission := protocols.NewAdmissionRegistry()
-	syncHandler.SetAdmissionRegistry(admission)
-	streamHandler.SetAdmissionRegistry(admission)
-	resolver := NewP2PResolver(libraryRepo, pool, peerMgr, scorer, libp2pHost)
-	node := &P2PNode{
-		host:             libp2pHost,
-		gater:            gater,
-		streamPool:       pool,
-		streamHandler:    streamHandler,
-		syncHandler:      syncHandler,
-		resolver:         resolver,
-		scorer:           scorer,
-		peerCache:        peerCache,
-		mdnsDiscovered:   discovered,
-		peerMgr:          peerMgr,
-		mdnsServiceName:  "raag-test",
-		admission:        admission,
-		lanOnly:          true,
-		maxPeers:         10,
-		peerDataTTL:      time.Hour,
-		broadcastEnabled: broadcastEnabled,
+	node, err := NewWithHost(Config{
+		MaxKnownPeers: 10, PeerDataTTL: time.Hour, MdnsServiceName: testMdnsServiceName, LANOnly: true, BroadcastEnabled: broadcastEnabled,
+	}, mocks.NewMockLibraryRepository(), gater, libp2pHost)
+	if err != nil {
+		_ = libp2pHost.Close()
+		t.Fatalf("NewWithHost: %v", err)
 	}
-	t.Cleanup(func() { node.Stop(context.Background()) })
+	t.Cleanup(func() { _ = node.Stop(context.Background()) })
 	return node
 }
 
@@ -125,8 +99,8 @@ func TestP2PNode_StartFailureStopsNodeAndRejectsRetry(t *testing.T) {
 	if err := node.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop after failed Start: %v", err)
 	}
-	if err := node.Start(context.Background(), nil); !errors.Is(err, ErrP2PNodeStopped) {
-		t.Fatalf("Start after failed startup error = %v, want ErrP2PNodeStopped", err)
+	if err := node.Start(context.Background(), nil); !errors.Is(err, ErrNodeStopped) {
+		t.Fatalf("Start after failed startup error = %v, want ErrNodeStopped", err)
 	}
 }
 
@@ -190,8 +164,8 @@ func TestP2PNode_StopIsIdempotentAndPreventsRestart(t *testing.T) {
 	default:
 		t.Fatal("mDNS lifecycle context was not canceled after Stop")
 	}
-	if err := node.Start(context.Background(), bus); !errors.Is(err, ErrP2PNodeStopped) {
-		t.Fatalf("Start after Stop error = %v, want ErrP2PNodeStopped", err)
+	if err := node.Start(context.Background(), bus); !errors.Is(err, ErrNodeStopped) {
+		t.Fatalf("Start after Stop error = %v, want ErrNodeStopped", err)
 	}
 	bus.Close()
 }
@@ -217,8 +191,8 @@ func TestP2PNode_StopHonorsContextWhileCleanupContinues(t *testing.T) {
 	if err := node.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop error = %v, want context deadline exceeded", err)
 	}
-	if err := node.Start(context.Background(), events.New()); !errors.Is(err, ErrP2PNodeStopped) {
-		t.Fatalf("Start during cleanup error = %v, want ErrP2PNodeStopped", err)
+	if err := node.Start(context.Background(), events.New()); !errors.Is(err, ErrNodeStopped) {
+		t.Fatalf("Start during cleanup error = %v, want ErrNodeStopped", err)
 	}
 
 	close(releaseWork)
@@ -237,7 +211,7 @@ func TestConnNotifier_MultipleConnectionsShareOneAdmissionSlot(t *testing.T) {
 	peerA := peer.ID("admission-peer-a")
 	peerB := peer.ID("admission-peer-b")
 
-	peerMgr := newPeerManager(target, discovery.NewPeerCache(10), nil, NewPeerScorer(), time.Hour, newMemPeerRepo())
+	peerMgr := newPeerLifecycle(t, target)
 	notifier := &connNotifier{
 		host:      target,
 		peerMgr:   peerMgr,
@@ -370,20 +344,30 @@ const testLoopbackListenAddr = "/ip4/127.0.0.1/tcp/0"
 // testMdnsServiceName is the mDNS service name used in constructor tests.
 const testMdnsServiceName = "raag-test"
 
-func TestNewP2PNode_WiresComponents(t *testing.T) {
-	fakeKeychain(t, true) // file backend: hermetic, no dbus workers
-	dir := t.TempDir()
-	cfg := P2PNodeConfig{
-		DataDir:         dir,
-		ListenAddrs:     []string{testLoopbackListenAddr},
-		MaxPeers:        5,
-		MaxKnownPeers:   10,
-		PeerDataTTL:     time.Hour,
-		MdnsServiceName: testMdnsServiceName,
-	}
-	n, err := NewP2PNode(cfg, nil)
+func makeTestHost(t *testing.T) host.Host {
+	t.Helper()
+	privateKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
-		t.Fatalf("NewP2PNode() error = %v", err)
+		t.Fatalf("GenerateEd25519Key: %v", err)
+	}
+	h, err := p2p.NewHost(privateKey, p2p.P2PConfig{ListenAddrs: []string{testLoopbackListenAddr}})
+	if err != nil {
+		t.Fatalf("NewHost: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	return h
+}
+
+func newPeerLifecycle(t *testing.T, h host.Host) p2p.PeerLifecycle {
+	t.Helper()
+	return p2p.NewPeerLifecycle(h, discovery.NewPeerCache(10), nil, p2p.NewPeerScorer(), time.Hour, nil)
+}
+
+func TestNewWithHost_WiresComponents(t *testing.T) {
+	gater := p2p.NewPeerGater()
+	n, err := NewWithHost(Config{MaxPeers: 5, MaxKnownPeers: 10, PeerDataTTL: time.Hour, MdnsServiceName: testMdnsServiceName}, nil, gater, makeTestHost(t))
+	if err != nil {
+		t.Fatalf("NewWithHost() error = %v", err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -392,7 +376,6 @@ func TestNewP2PNode_WiresComponents(t *testing.T) {
 			t.Errorf("Stop() error = %v", err)
 		}
 	})
-
 	for name, got := range map[string]any{
 		"host": n.Host(), "gater": n.PeerGater(), "streamPool": n.StreamPool(),
 		"streamHandler": n.StreamHandler(), "syncHandler": n.SyncHandler(),
@@ -406,30 +389,15 @@ func TestNewP2PNode_WiresComponents(t *testing.T) {
 	if n.ID() != n.Host().ID() {
 		t.Errorf("ID() = %s, want host ID %s", n.ID(), n.Host().ID())
 	}
-	if n.PeerGater() == nil {
-		t.Fatal("PeerGater() = nil")
-	}
 }
 
-func TestNewP2PNode_LANOnlyDropsBootstrapPeers(t *testing.T) {
-	fakeKeychain(t, true)
-	dir := t.TempDir()
-	n, err := NewP2PNode(P2PNodeConfig{
-		DataDir:         dir,
-		ListenAddrs:     []string{testLoopbackListenAddr},
-		LANOnly:         true,
-		BootstrapPeers:  []string{"/ip4/10.0.0.1/tcp/7844/p2p/QmFoo"},
-		MaxKnownPeers:   10,
-		MdnsServiceName: testMdnsServiceName,
-	}, nil)
+func TestNewWithHost_LANOnlyDropsBootstrapPeers(t *testing.T) {
+	gater := p2p.NewPeerGater()
+	n, err := NewWithHost(Config{LANOnly: true, BootstrapPeers: []string{"/ip4/10.0.0.1/tcp/7844/p2p/QmFoo"}, MaxKnownPeers: 10, MdnsServiceName: testMdnsServiceName}, nil, gater, makeTestHost(t))
 	if err != nil {
-		t.Fatalf("NewP2PNode() error = %v", err)
+		t.Fatalf("NewWithHost() error = %v", err)
 	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		n.Stop(ctx)
-	})
+	t.Cleanup(func() { _ = n.Stop(context.Background()) })
 	if len(n.bootstrapPeers) != 0 {
 		t.Errorf("bootstrapPeers = %v, want nil in LAN-only mode", n.bootstrapPeers)
 	}
@@ -456,7 +424,7 @@ func TestConnNotifier_ConcurrentConnectionsRespectMaxPeers(t *testing.T) {
 		t.Fatalf("LinkAll: %v", err)
 	}
 
-	peerMgr := newPeerManager(target, discovery.NewPeerCache(10), nil, NewPeerScorer(), time.Hour, newMemPeerRepo())
+	peerMgr := newPeerLifecycle(t, target)
 	notifier := &connNotifier{
 		host:      target,
 		peerMgr:   peerMgr,

@@ -8,12 +8,13 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/config"
 	"github.com/p-society/raag/internal/infra/observability"
-	"github.com/p-society/raag/internal/infra/p2p"
+	p2p "github.com/p-society/raag/internal/infra/p2p"
+	p2pnode "github.com/p-society/raag/internal/infra/p2p/node"
 	db "github.com/p-society/raag/internal/infra/storage"
 	"github.com/p-society/raag/internal/infra/transcoder"
 )
 
-func initializeServices(cfg *config.Config, tr *transcoder.Transcoder) (*db.DB, db.LibraryRepo, *p2p.P2PNode, bool, *app.SearchService, *observability.Metrics) {
+func initializeServices(cfg *config.Config, tr *transcoder.Transcoder) (*db.DB, db.LibraryRepo, *p2pnode.Node, bool, *app.SearchService, *observability.Metrics) {
 	dbOpts := db.DefaultOptions(cfg.Daemon.DataDir)
 	database, err := db.Open(cfg.Daemon.DataDir, dbOpts)
 	if err != nil {
@@ -37,7 +38,7 @@ func initializeServices(cfg *config.Config, tr *transcoder.Transcoder) (*db.DB, 
 	}
 
 	peerRepo := db.NewPeerRepo(database)
-	p2pNode, err := p2p.NewP2PNode(p2p.P2PNodeConfig{
+	p2pNode, err := p2pnode.New(p2pnode.Config{
 		DataDir:            cfg.Daemon.DataDir,
 		ListenAddrs:        cfg.P2P.ListenAddrs,
 		AnnounceAddrs:      cfg.P2P.AnnounceAddrs,
@@ -73,6 +74,7 @@ func initializeServices(cfg *config.Config, tr *transcoder.Transcoder) (*db.DB, 
 			database.Close()
 			os.Exit(1)
 		}
+
 		slog.Error("failed to create P2P node", "error", err)
 		return database, libraryRepo, nil, false, searchService, metrics
 	}
