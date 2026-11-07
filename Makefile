@@ -1,4 +1,4 @@
-.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-format lint-go lint-golangci lint-fix lint-fix-format lint-fix-golangci lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-buildx docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify smoke-test
+.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-coverage-check test-bench lint lint-format lint-go lint-golangci lint-fix lint-fix-format lint-fix-golangci lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-buildx docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify smoke-test
 
 BIN := bin
 RAAG := $(BIN)/raag
@@ -35,6 +35,7 @@ help:
 	@echo "  test               - Run tests with race detector"
 	@echo "  test-short         - Run tests (no race detector)"
 	@echo "  test-coverage      - Run tests with coverage report"
+	@echo "  test-coverage-check - Enforce per-package coverage floors"
 	@echo "  test-bench         - Run benchmarks"
 	@echo "  docs-verify        - Verify README CLI docs match the real binary"
 	@echo "  smoke-test         - Run the two-daemon LAN P2P smoke test"
@@ -97,6 +98,9 @@ smoke-test: build
 test-coverage:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
+
+test-coverage-check:
+	bash scripts/coverage-check.sh
 
 test-bench:
 	go test -bench=. -benchmem ./...

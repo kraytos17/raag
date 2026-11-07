@@ -363,6 +363,81 @@ func assertNoDisconnectEvent(t *testing.T, events <-chan peer.ID, pid peer.ID) {
 	}
 }
 
+// testLoopbackListenAddr is the loopback wildcard used for constructing real
+// hosts in constructor tests.
+const testLoopbackListenAddr = "/ip4/127.0.0.1/tcp/0"
+
+// testMdnsServiceName is the mDNS service name used in constructor tests.
+const testMdnsServiceName = "raag-test"
+
+func TestNewP2PNode_WiresComponents(t *testing.T) {
+	fakeKeychain(t, true) // file backend: hermetic, no dbus workers
+	dir := t.TempDir()
+	cfg := P2PNodeConfig{
+		DataDir:         dir,
+		ListenAddrs:     []string{testLoopbackListenAddr},
+		MaxPeers:        5,
+		MaxKnownPeers:   10,
+		PeerDataTTL:     time.Hour,
+		MdnsServiceName: testMdnsServiceName,
+	}
+	n, err := NewP2PNode(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewP2PNode() error = %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := n.Stop(ctx); err != nil {
+			t.Errorf("Stop() error = %v", err)
+		}
+	})
+
+	for name, got := range map[string]any{
+		"host": n.Host(), "gater": n.PeerGater(), "streamPool": n.StreamPool(),
+		"streamHandler": n.StreamHandler(), "syncHandler": n.SyncHandler(),
+		"resolver": n.Resolver(), "scorer": n.scorer, "peerCache": n.PeerCache(),
+		"peerMgr": n.peerMgr, "admission": n.admission,
+	} {
+		if got == nil {
+			t.Errorf("%s = nil, want wired component", name)
+		}
+	}
+	if n.ID() != n.Host().ID() {
+		t.Errorf("ID() = %s, want host ID %s", n.ID(), n.Host().ID())
+	}
+	if n.PeerGater() == nil {
+		t.Fatal("PeerGater() = nil")
+	}
+}
+
+func TestNewP2PNode_LANOnlyDropsBootstrapPeers(t *testing.T) {
+	fakeKeychain(t, true)
+	dir := t.TempDir()
+	n, err := NewP2PNode(P2PNodeConfig{
+		DataDir:         dir,
+		ListenAddrs:     []string{testLoopbackListenAddr},
+		LANOnly:         true,
+		BootstrapPeers:  []string{"/ip4/10.0.0.1/tcp/7844/p2p/QmFoo"},
+		MaxKnownPeers:   10,
+		MdnsServiceName: testMdnsServiceName,
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewP2PNode() error = %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = n.Stop(ctx)
+	})
+	if len(n.bootstrapPeers) != 0 {
+		t.Errorf("bootstrapPeers = %v, want nil in LAN-only mode", n.bootstrapPeers)
+	}
+	if !n.lanOnly {
+		t.Error("lanOnly = false, want true")
+	}
+}
+
 func TestConnNotifier_ConcurrentConnectionsRespectMaxPeers(t *testing.T) {
 	mn := mocknet.New()
 	defer mn.Close()
