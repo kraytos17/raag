@@ -115,46 +115,6 @@ func ScorePeer(avgLatency time.Duration, avgBandwidth int64, successes, failures
 	return latencyScore*0.5 + reliabilityScore*0.4 + bandwidthScore*0.1
 }
 
-func (s *PeerScore) RecordLatency(latency time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	const latencyAlpha = 0.2
-	if s.AvgLatency == 0 {
-		s.AvgLatency = latency
-	} else {
-		s.AvgLatency = time.Duration(float64(s.AvgLatency)*(1-latencyAlpha) + float64(latency)*latencyAlpha)
-	}
-}
-
-func (s *PeerScore) RecordBandwidth(bytes int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	const bandwidthAlpha = 0.2
-	if s.AvgBandwidth == 0 {
-		s.AvgBandwidth = bytes
-	} else {
-		s.AvgBandwidth = int64(float64(s.AvgBandwidth)*(1-bandwidthAlpha) + float64(bytes)*bandwidthAlpha)
-	}
-}
-
-func (s *PeerScore) RecordSuccess() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.SuccessCount++
-	s.LastSeen = time.Now()
-}
-
-func (s *PeerScore) RecordFailure() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.FailureCount++
-	s.LastSeen = time.Now()
-}
-
 type FileStat struct {
 	Path  string
 	Mtime int64
