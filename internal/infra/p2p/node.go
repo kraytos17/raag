@@ -237,11 +237,9 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 		admission:       n.admission,
 		maxPeers:        n.maxPeers,
 		startBackground: n.startBackground,
-		admittedPeers:   make(map[peer.ID]struct{}),
 		peerConnections: make(map[peer.ID]int),
 	}
 	for _, pid := range n.host.Network().Peers() {
-		notifier.admittedPeers[pid] = struct{}{}
 		notifier.peerConnections[pid] = len(n.host.Network().ConnsToPeer(pid))
 	}
 
@@ -582,8 +580,7 @@ type connNotifier struct {
 	admission       *protocols.AdmissionRegistry
 	maxPeers        int
 	startBackground func(func()) bool
-	admissionMu     sync.Mutex
-	admittedPeers   map[peer.ID]struct{}
+	connsMu         sync.Mutex
 	peerConnections map[peer.ID]int
 }
 
@@ -597,28 +594,24 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 		return
 	}
 
-	cn.admissionMu.Lock()
-	if cn.admittedPeers == nil {
-		cn.admittedPeers = make(map[peer.ID]struct{})
-	}
+	cn.connsMu.Lock()
 	if cn.peerConnections == nil {
 		cn.peerConnections = make(map[peer.ID]int)
 	}
 	if cn.peerConnections[pid] == 0 {
-		if cn.maxPeers > 0 && len(cn.admittedPeers) >= cn.maxPeers {
-			cn.admissionMu.Unlock()
+		if cn.maxPeers > 0 && len(cn.peerConnections) >= cn.maxPeers {
+			cn.connsMu.Unlock()
 			slog.Warn("peer connection rejected: max peers reached", "peer", pid, "max_peers", cn.maxPeers)
 			if err := conn.Close(); err != nil {
 				slog.Debug("failed to close excess peer connection", "peer", pid, "err", err)
 			}
 			return
 		}
-		cn.admittedPeers[pid] = struct{}{}
 	}
 
 	cn.peerConnections[pid]++
 	duplicateConnection := cn.peerConnections[pid] > 1
-	cn.admissionMu.Unlock()
+	cn.connsMu.Unlock()
 	if duplicateConnection {
 		return
 	}
@@ -647,25 +640,24 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 
 func (cn *connNotifier) Disconnected(_ network.Network, conn network.Conn) {
 	pid := conn.RemotePeer()
-	cn.admissionMu.Lock()
+	cn.connsMu.Lock()
 	remaining, ok := cn.peerConnections[pid]
 	if !ok {
 		// Untracked connection: rejected, banned, or never counted. Nothing
 		// was started for it, so there is nothing to tear down and no event
 		// to publish.
-		cn.admissionMu.Unlock()
+		cn.connsMu.Unlock()
 		return
 	}
 
 	remaining--
 	if remaining <= 0 {
 		delete(cn.peerConnections, pid)
-		delete(cn.admittedPeers, pid)
 	} else {
 		cn.peerConnections[pid] = remaining
 	}
 
-	cn.admissionMu.Unlock()
+	cn.connsMu.Unlock()
 	if remaining > 0 {
 		return
 	}

@@ -261,8 +261,8 @@ func TestConnNotifier_MultipleConnectionsShareOneAdmissionSlot(t *testing.T) {
 	if got := notifier.peerConnections[peerA]; got != 2 {
 		t.Fatalf("peerConnections[%s] = %d, want 2", peerA, got)
 	}
-	if _, ok := notifier.admittedPeers[peerA]; !ok {
-		t.Fatalf("peer %s not admitted after first connection", peerA)
+	if got := len(notifier.peerConnections); got != 1 {
+		t.Fatalf("connected peers = %d, want 1 (one slot held)", got)
 	}
 
 	// The single admission slot is taken: a second peer must be rejected
@@ -276,14 +276,14 @@ func TestConnNotifier_MultipleConnectionsShareOneAdmissionSlot(t *testing.T) {
 	notifier.Disconnected(nil, connB)
 	assertNoDisconnectEvent(t, disconnectedEvents, peerB)
 
-	// Dropping one of peerA's connections keeps the peer admitted: no
-	// disconnect event, slot still held.
+	// Dropping one of peerA's connections keeps the slot held: no
+	// disconnect event, still one connected peer.
 	notifier.Disconnected(nil, connA1)
 	if got := notifier.peerConnections[peerA]; got != 1 {
 		t.Fatalf("peerConnections[%s] = %d, want 1 after first disconnect", peerA, got)
 	}
-	if _, ok := notifier.admittedPeers[peerA]; !ok {
-		t.Fatalf("peer %s must stay admitted while one connection remains", peerA)
+	if got := len(notifier.peerConnections); got != 1 {
+		t.Fatalf("connected peers = %d, want 1 (slot still held)", got)
 	}
 	assertNoDisconnectEvent(t, disconnectedEvents, peerA)
 
@@ -291,11 +291,11 @@ func TestConnNotifier_MultipleConnectionsShareOneAdmissionSlot(t *testing.T) {
 	// disconnect event.
 	notifier.Disconnected(nil, connA2)
 	waitForPeerEvent(t, disconnectedEvents, peerA)
-	if _, ok := notifier.admittedPeers[peerA]; ok {
-		t.Fatalf("peer %s must be released after its last disconnect", peerA)
-	}
 	if _, ok := notifier.peerConnections[peerA]; ok {
 		t.Fatalf("peer %s must have no connection count after its last disconnect", peerA)
+	}
+	if got := len(notifier.peerConnections); got != 0 {
+		t.Fatalf("connected peers = %d, want 0 (slot released)", got)
 	}
 }
 
