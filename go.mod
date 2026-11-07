@@ -61,7 +61,7 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
-	github.com/pion/dtls/v3 v3.1.2 // indirect
+	github.com/pion/dtls/v3 v3.1.4 // indirect
 	github.com/pion/ice/v4 v4.2.1 // indirect
 	github.com/pion/mdns/v2 v2.1.0 // indirect
 	github.com/pion/srtp/v3 v3.0.10 // indirect
