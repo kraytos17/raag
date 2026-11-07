@@ -1,7 +1,11 @@
 package p2p
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
+	"io"
 	"iter"
 	"slices"
 	"sync"
@@ -15,7 +19,9 @@ import (
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
+	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
+	"google.golang.org/protobuf/proto"
 )
 
 type peerFetchStreamHost struct {
@@ -79,6 +85,143 @@ func waitForPeerFetchGroup(t *testing.T, ch <-chan int, group, count int) {
 		case <-timer.C:
 			t.Fatalf("timed out waiting for %d events for fetch group %d; got %d", count, group, seen)
 		}
+	}
+}
+
+// flakySyncHost serves canned sync responses, failing the first failReads
+// response reads with EOF to simulate transient transport failures. The
+// canned response is armed from the request payload, so manifest and
+// capabilities fetches can share one host deterministically.
+type flakySyncHost struct {
+	host.Host
+	mu            sync.Mutex
+	newStreams    int
+	failReads     int
+	manifestFrame []byte
+	capsFrame     []byte
+}
+
+func newFlakySyncHost(manifest, caps *pb.SyncResponse, failReads int) *flakySyncHost {
+	return &flakySyncHost{
+		failReads:     failReads,
+		manifestFrame: mustFrameSyncResponse(manifest),
+		capsFrame:     mustFrameSyncResponse(caps),
+	}
+}
+
+func mustFrameSyncResponse(resp *pb.SyncResponse) []byte {
+	var buf bytes.Buffer
+	if err := wire.WriteMsg(&buf, resp); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+func (h *flakySyncHost) NewStream(ctx context.Context, _ peer.ID, _ ...protocol.ID) (network.Stream, error) {
+	h.mu.Lock()
+	h.newStreams++
+	h.mu.Unlock()
+	return &flakySyncStream{mockStream: &mockStream{id: "flaky-sync"}, host: h, ctx: ctx}, nil
+}
+
+func (h *flakySyncHost) takeFailure() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failReads > 0 {
+		h.failReads--
+		return true
+	}
+	return false
+}
+
+func (h *flakySyncHost) streamCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.newStreams
+}
+
+type flakySyncStream struct {
+	*mockStream
+	host   *flakySyncHost
+	ctx    context.Context
+	reqBuf []byte
+	resp   []byte
+	pos    int
+}
+
+func (s *flakySyncStream) Write(p []byte) (int, error) {
+	s.reqBuf = append(s.reqBuf, p...)
+	if len(s.reqBuf) >= 4 {
+		size := binary.BigEndian.Uint32(s.reqBuf[:4])
+		if len(s.reqBuf) >= 4+int(size) {
+			var req pb.SyncRequest
+			if err := proto.Unmarshal(s.reqBuf[4:4+size], &req); err == nil {
+				switch req.Payload.(type) {
+				case *pb.SyncRequest_ManifestRequest:
+					s.resp = s.host.manifestFrame
+				case *pb.SyncRequest_CapabilitiesRequest:
+					s.resp = s.host.capsFrame
+				}
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func (s *flakySyncStream) Read(p []byte) (int, error) {
+	if s.host.takeFailure() {
+		return 0, io.EOF
+	}
+	if s.pos >= len(s.resp) {
+		return 0, io.EOF
+	}
+	n := copy(p, s.resp[s.pos:])
+	s.pos += n
+	return n, nil
+}
+
+func TestPeerManager_FetchPeerDataRetriesTransientFailures(t *testing.T) {
+	manifest := &pb.SyncResponse{Payload: &pb.SyncResponse_Manifest{
+		Manifest: &pb.LibraryManifest{TrackIds: []string{"t1"}},
+	}}
+	caps := &pb.SyncResponse{Payload: &pb.SyncResponse_Capabilities{
+		Capabilities: &pb.PeerCapabilities{SupportedCodecs: []string{"opus"}},
+	}}
+	h := newFlakySyncHost(manifest, caps, 2)
+	pid := peer.ID("flaky-fetch-peer")
+	pm := newPeerManager(h, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
+
+	pm.FetchPeerData(context.Background(), pid)
+
+	if got := h.streamCount(); got != 4 {
+		t.Fatalf("NewStream calls = %d, want 4 (2 transient failures retried)", got)
+	}
+	if got := pm.GetManifest(pid); got == nil || len(got.TrackIds) != 1 {
+		t.Errorf("GetManifest() = %v, want manifest stored after retry", got)
+	}
+	if got := pm.GetCapabilities(pid); got == nil {
+		t.Error("GetCapabilities() = nil, want capabilities stored after retry")
+	}
+}
+
+func TestPeerManager_FetchManifestPermissionDeniedDoesNotRetry(t *testing.T) {
+	denied := &pb.SyncResponse{Payload: &pb.SyncResponse_Error{
+		Error: &pb.ErrorResponse{Message: "library sharing disabled", Code: pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED},
+	}}
+	h := newFlakySyncHost(denied, denied, 0)
+	pid := peer.ID("denied-fetch-peer")
+	pm := newPeerManager(h, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
+
+	err := pm.FetchManifest(context.Background(), pid)
+	var syncErr *SyncError
+	if !errors.As(err, &syncErr) {
+		t.Fatalf("FetchManifest() error = %v, want *SyncError", err)
+	}
+	if syncErr.Code != pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
+		t.Errorf("SyncError.Code = %v, want PERMISSION_DENIED", syncErr.Code)
+	}
+	if got := h.streamCount(); got != 1 {
+		t.Errorf("NewStream calls = %d, want 1 (protocol errors must not retry)", got)
 	}
 }
 

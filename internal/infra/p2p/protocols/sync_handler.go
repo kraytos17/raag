@@ -128,8 +128,8 @@ func (h *SyncHandler) handleManifestRequest(ctx context.Context, stream network.
 	if !announce {
 		// Return a real error so the requesting peer's FetchPeerData can
 		// distinguish "sharing disabled" from a legitimately empty library
-		// (which returns a manifest with no track IDs). This makes the client's
-		// "library sharing disabled" branch reachable
+		// (which returns a manifest with no track IDs). The PERMISSION_DENIED
+		// code makes the client's typed no-retry branch reachable.
 		h.sendError(stream, "library sharing disabled", pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED)
 		slog.Debug("manifest request refused (sharing disabled)")
 		return

@@ -143,7 +143,6 @@ func (pm *peerManager) GetPeerScore(ctx context.Context, pid peer.ID) *domain.Pe
 	s.AvgBandwidth = avgBW
 	s.SuccessCount = successes
 	s.FailureCount = failures
-
 	return s
 }
 
@@ -227,7 +226,7 @@ func (pm *peerManager) FetchManifest(ctx context.Context, pid peer.ID) error {
 		return nil
 	case *pb.SyncResponse_Error:
 		resetStream(stream)
-		return errors.New(payload.Error.Message)
+		return &SyncError{Code: payload.Error.Code, Message: payload.Error.Message}
 	default:
 		resetStream(stream)
 		return errors.New("unexpected sync response")
@@ -269,7 +268,7 @@ func (pm *peerManager) FetchCapabilities(ctx context.Context, pid peer.ID) error
 		return nil
 	case *pb.SyncResponse_Error:
 		resetStream(stream)
-		return errors.New(payload.Error.Message)
+		return &SyncError{Code: payload.Error.Code, Message: payload.Error.Message}
 	default:
 		resetStream(stream)
 		return errors.New("unexpected sync response")
@@ -362,14 +361,21 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 				}
 				return
 			}
-			if err.Error() == "library sharing disabled" {
-				slog.Debug("manifest not available", "peer", pid)
+			if baseCtx.Err() != nil {
+				// Superseded by a newer fetch or torn down by disconnect;
+				// the current fetch owns the peer now.
 				return
 			}
-			if err.Error() != "permission denied" {
-				slog.Warn("failed to fetch manifest", "peer", pid, "err", err)
+			if code, ok := SyncErrorCode(err); ok {
+				if code == pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
+					slog.Debug("manifest not available", "peer", pid)
+				} else {
+					slog.Warn("failed to fetch manifest", "peer", pid, "err", err)
+				}
 				return
 			}
+
+			slog.Warn("failed to fetch manifest", "peer", pid, "err", err)
 			if backoff.Wait(baseCtx.Done(), backoff.Linear(attempt+1, 100*time.Millisecond)) {
 				return
 			}
@@ -381,10 +387,15 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 			if err == nil {
 				return
 			}
-			if err.Error() != "permission denied" {
+			if baseCtx.Err() != nil {
+				return
+			}
+			if _, ok := SyncErrorCode(err); ok {
 				slog.Warn("failed to fetch capabilities", "peer", pid, "err", err)
 				return
 			}
+
+			slog.Warn("failed to fetch capabilities", "peer", pid, "err", err)
 			if backoff.Wait(baseCtx.Done(), backoff.Linear(attempt+1, 100*time.Millisecond)) {
 				return
 			}
@@ -396,8 +407,8 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 	if current, ok := pm.fetchCancel[pid]; ok && current == entry {
 		delete(pm.fetchCancel, pid)
 	}
-	pm.fetchCancelMu.Unlock()
 
+	pm.fetchCancelMu.Unlock()
 	if caps := pm.GetCapabilities(pid); caps != nil {
 		slog.Info("peer connected with capabilities",
 			"peer", pid,

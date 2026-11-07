@@ -97,16 +97,22 @@ func NewPeerScore(peerID PeerID) *PeerScore {
 func (s *PeerScore) Score() float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return ScorePeer(s.AvgLatency, s.AvgBandwidth, s.SuccessCount, s.FailureCount)
+}
 
-	latencyScore := 1.0 / (1.0 + s.AvgLatency.Seconds())
-	totalAttempts := s.SuccessCount + s.FailureCount
-	if totalAttempts == 0 {
-		totalAttempts = 1
+// ScorePeer combines latency, bandwidth, and success history into a single
+// ranking score. It is the canonical formula shared by the persistent
+// PeerScore and the in-memory PeerScorer so resolver ranking and reported
+// scores agree.
+func ScorePeer(avgLatency time.Duration, avgBandwidth int64, successes, failures int) float64 {
+	latencyScore := 1.0 / (1.0 + avgLatency.Seconds())
+	reliabilityScore := 0.0
+	if totalAttempts := successes + failures; totalAttempts > 0 {
+		reliabilityScore = float64(successes) / float64(totalAttempts)
 	}
 
-	reliabilityScore := float64(s.SuccessCount) / float64(totalAttempts)
-	bandwidthScore := float64(s.AvgBandwidth) / 1e6 * 0.1
-	return latencyScore*0.5 + reliabilityScore*0.5 + bandwidthScore
+	bandwidthScore := float64(avgBandwidth) / 1e6 * 0.1
+	return latencyScore*0.5 + reliabilityScore*0.4 + bandwidthScore*0.1
 }
 
 func (s *PeerScore) RecordLatency(latency time.Duration) {
@@ -147,23 +153,6 @@ func (s *PeerScore) RecordFailure() {
 
 	s.FailureCount++
 	s.LastSeen = time.Now()
-}
-
-func (s *PeerScore) SuccessRate() float64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	total := s.SuccessCount + s.FailureCount
-	if total == 0 {
-		return 1.0
-	}
-	return float64(s.SuccessCount) / float64(total)
-}
-
-func (s *PeerScore) IsHealthy() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.SuccessRate() > 0.5 && s.AvgLatency < 5*time.Second
 }
 
 type FileStat struct {

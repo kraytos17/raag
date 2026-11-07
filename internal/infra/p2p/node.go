@@ -498,12 +498,7 @@ func (n *P2PNode) PeerStatus(info *domain.PeerInfo) *pb.Peer {
 // proto, filling latency/bandwidth/failure/success and recomputing the score.
 func (n *P2PNode) overlayLiveScore(peer *pb.Peer, pid peer.ID) {
 	latency, bandwidth, successes, failures, _ := n.scorer.Snapshot(pid)
-	successRate := 0.0
-	if successes+failures > 0 {
-		successRate = float64(successes) / float64(successes+failures)
-	}
-
-	score := n.scorer.Score(pid, latency, bandwidth, successRate)
+	score := n.scorer.Score(pid)
 	if peer.Score == nil {
 		peer.Score = &pb.PeerScore{PeerId: pid.String()}
 	}
@@ -661,6 +656,7 @@ func (cn *connNotifier) Disconnected(_ network.Network, conn network.Conn) {
 		cn.admissionMu.Unlock()
 		return
 	}
+
 	remaining--
 	if remaining <= 0 {
 		delete(cn.peerConnections, pid)
@@ -764,13 +760,7 @@ func (n *P2PNode) measureAllPeersLatency() {
 		return
 	}
 	for _, pid := range n.Peers() {
-		latency, bandwidth, successes, failures, _ := n.scorer.Snapshot(pid)
-		successRate := 0.0
-		if successes+failures > 0 {
-			successRate = float64(successes) / float64(successes+failures)
-		}
-
-		score := n.scorer.Score(pid, latency, bandwidth, successRate)
+		score := n.scorer.Score(pid)
 		n.bus.Publish(context.Background(), domain.NewEvent(
 			domain.EventPeerScoreUpdated,
 			domain.PeerScoreUpdatedPayload{PeerID: pid, Score: score},

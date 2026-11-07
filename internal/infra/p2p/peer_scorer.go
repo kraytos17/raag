@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/p-society/raag/internal/domain"
 )
 
 type PeerScorer struct {
@@ -191,11 +192,30 @@ func (s *PeerScorer) Reset(pid peer.ID) {
 	delete(s.latencies, pid)
 }
 
-func (s *PeerScorer) Score(pid peer.ID, latency time.Duration, bandwidth int64, successRate float64) float64 {
+func (s *PeerScorer) Score(pid peer.ID) float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	latencyScore := 1.0 / (1.0 + latency.Seconds())
-	bandwidthScore := float64(bandwidth) / 1e6 * 0.1
-	return latencyScore*0.5 + successRate*0.4 + bandwidthScore*0.1
+	lats := s.latencies[pid]
+	var totalLatency time.Duration
+	for _, l := range lats {
+		totalLatency += l
+	}
+
+	var avgLatency time.Duration
+	if len(lats) > 0 {
+		avgLatency = totalLatency / time.Duration(len(lats))
+	}
+
+	bws := s.bandwidths[pid]
+	var totalBW int64
+	for _, bw := range bws {
+		totalBW += bw
+	}
+
+	var avgBandwidth int64
+	if len(bws) > 0 {
+		avgBandwidth = totalBW / int64(len(bws))
+	}
+	return domain.ScorePeer(avgLatency, avgBandwidth, s.successes[pid], s.failTotals[pid])
 }

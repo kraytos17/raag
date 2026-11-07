@@ -87,28 +87,43 @@ func TestPeerScorer_RecordFailure_NoGaterEscalation(t *testing.T) {
 func TestPeerScorer_Score(t *testing.T) {
 	scorer := NewPeerScorer()
 	pid := peer.ID("test-peer")
-	score := scorer.Score(pid, 100*time.Millisecond, 1000000, 0.9)
-	if score <= 0 {
+	scorer.RecordLatency(pid, 100*time.Millisecond)
+	scorer.RecordBandwidth(pid, 1000000)
+	scorer.RecordSuccess(pid)
+	if score := scorer.Score(pid); score <= 0 {
 		t.Errorf("Score() = %f, want > 0", score)
 	}
 }
 
 func TestPeerScorer_ScoreComponents(t *testing.T) {
 	scorer := NewPeerScorer()
-	pid := peer.ID("p")
 	// Zero latency, zero bandwidth, zero success
-	s1 := scorer.Score(pid, 0, 0, 0)
+	baseline := peer.ID("baseline")
+	s1 := scorer.Score(baseline)
+	if s1 != 0.5 {
+		t.Errorf("Score() with no data = %f, want 0.5 (idle latency term only)", s1)
+	}
+
 	// High latency should reduce score
-	s2 := scorer.Score(pid, 10*time.Second, 0, 0)
-	if s2 >= s1 {
+	slow := peer.ID("slow")
+	scorer.RecordLatency(slow, 10*time.Second)
+	if s2 := scorer.Score(slow); s2 >= s1 {
 		t.Errorf("higher latency should reduce score: s1=%f, s2=%f", s1, s2)
 	}
 
 	// Higher bandwidth should increase score
-	s3 := scorer.Score(pid, 0, 10_000_000, 0.9)
-	s4 := scorer.Score(pid, 0, 100_000_000, 0.9)
+	lowBW := peer.ID("low-bw")
+	scorer.RecordBandwidth(lowBW, 10_000_000)
+	scorer.RecordSuccess(lowBW)
+	highBW := peer.ID("high-bw")
+	scorer.RecordBandwidth(highBW, 100_000_000)
+	scorer.RecordSuccess(highBW)
+	s3, s4 := scorer.Score(lowBW), scorer.Score(highBW)
 	if s4 <= s3 {
 		t.Errorf("higher bandwidth should increase score: s3=%f, s4=%f", s3, s4)
+	}
+	if s3 <= s1 {
+		t.Errorf("recorded bandwidth and success should beat baseline: s1=%f, s3=%f", s1, s3)
 	}
 }
 
@@ -289,7 +304,7 @@ func TestPeerScorer_ConcurrentAccess(t *testing.T) {
 			case 4:
 				scorer.IsBanned(pid)
 			case 5:
-				scorer.Score(pid, time.Millisecond, 1000, 0.5)
+				scorer.Score(pid)
 			}
 		}(i)
 	}
