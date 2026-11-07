@@ -1,4 +1,4 @@
-package ipc
+package server
 
 import (
 	"bytes"
@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/p-society/raag/internal/infra/ipc"
 
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/wire"
@@ -35,7 +37,7 @@ func TestServer_ConcurrentScanAndEventBroadcast_NoFrameInterleave(t *testing.T) 
 
 	subReq := &pb.Request{
 		ProtocolVersion: domain.IPCProtocolVersion,
-		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: EventPlaybackState}},
+		Payload:         &pb.Request_Subscribe{Subscribe: &pb.SubscribeRequest{EventMask: ipc.EventPlaybackState}},
 	}
 	if err := wire.WriteMsg(conn, subReq); err != nil {
 		t.Fatalf("write subscribe: %v", err)
@@ -75,7 +77,7 @@ func TestServer_ConcurrentScanAndEventBroadcast_NoFrameInterleave(t *testing.T) 
 	go func() {
 		defer wg.Done()
 		for range iterations {
-			srv.PublishEvent(EventPlaybackState, eventPayload)
+			srv.PublishEvent(ipc.EventPlaybackState, eventPayload)
 		}
 	}()
 

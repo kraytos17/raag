@@ -15,7 +15,7 @@ import (
 	"github.com/p-society/raag/internal/infra/audio"
 	"github.com/p-society/raag/internal/infra/duplicate"
 	"github.com/p-society/raag/internal/infra/events"
-	"github.com/p-society/raag/internal/infra/ipc"
+	ipcserver "github.com/p-society/raag/internal/infra/ipc/server"
 	"github.com/p-society/raag/internal/infra/observability"
 	"github.com/p-society/raag/internal/infra/p2p"
 	db "github.com/p-society/raag/internal/infra/storage"
@@ -83,7 +83,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	playback.SetQueue(queue)
 	applyConfiguredVolume(playback, initialVolume)
 	persistVolumeChanges(settings, bus)
-	ipcServer, err := ipc.NewServer(cfg.Daemon.SocketPath, ipc.ServerConfig{
+	ipcServer, err := ipcserver.NewServer(cfg.Daemon.SocketPath, ipcserver.Config{
 		Playback:     playback,
 		Scanner:      scanner,
 		Search:       searchService,
@@ -120,7 +120,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 			os.Exit(1)
 		}
 	}
-	if err := lc.Register(ipc.AsComponent(ipcServer)); err != nil {
+	if err := lc.Register(ipcserver.AsComponent(ipcServer)); err != nil {
 		slog.Error("failed to register ipc server", "error", err)
 		database.Close()
 		os.Exit(1)

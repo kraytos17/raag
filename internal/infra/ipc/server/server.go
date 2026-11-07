@@ -181,6 +181,7 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 		if err != nil {
 			return pb.EventType_EVENT_TYPE_PEER_CONNECTED, []byte(pid.String())
 		}
+
 		peer := convert.PeerInfoToProto(info)
 		return pb.EventType_EVENT_TYPE_PEER_CONNECTED, mustMarshal(peer)
 	case domain.EventPeerScoreUpdated:
@@ -198,6 +199,7 @@ func translateEvent(s *Server, e domain.Event) (pb.EventType, []byte) {
 		if err != nil {
 			return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, []byte(pid.String())
 		}
+
 		peer := convert.PeerInfoToProto(info)
 		return pb.EventType_EVENT_TYPE_PEER_SCORE_UPDATED, mustMarshal(peer)
 	case domain.EventPeerDisconnected:
@@ -279,7 +281,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.listener = lis
 	if err := os.Chmod(s.socketPath, 0o600); err != nil {
-		_ = s.listener.Close()
+		s.listener.Close()
 		return err
 	}
 
@@ -307,7 +309,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			continue
 		}
 		if err := s.maxConns.Acquire(ctx, 1); err != nil {
-			_ = conn.Close()
+			conn.Close()
 			continue
 		}
 
@@ -321,7 +323,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer func() {
-		_ = conn.Close()
+		conn.Close()
 		s.subMgr.Unsubscribe(conn)
 	}()
 
@@ -397,109 +399,109 @@ func ipcCommandLabel(req *pb.Request) string {
 // reflection on the payload's concrete type (mirroring ipcCommandLabel).
 // Adding a request type means adding one row here plus its handler file.
 var dispatchTable = map[reflect.Type]func(s *Server, ctx context.Context, req *pb.Request) *pb.Response{
-	reflect.TypeOf(&pb.Request_Play{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Play](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handlePlay(ctx, req.Payload.(*pb.Request_Play).Play)
 	},
-	reflect.TypeOf(&pb.Request_Pause{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Pause](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handlePause(ctx)
 	},
-	reflect.TypeOf(&pb.Request_Resume{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Resume](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleResume(ctx)
 	},
-	reflect.TypeOf(&pb.Request_Stop{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Stop](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleStop(ctx)
 	},
-	reflect.TypeOf(&pb.Request_Next{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Next](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleNext(ctx)
 	},
-	reflect.TypeOf(&pb.Request_Prev{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Prev](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handlePrev(ctx)
 	},
-	reflect.TypeOf(&pb.Request_Seek{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Seek](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleSeek(ctx, req.Payload.(*pb.Request_Seek).Seek)
 	},
-	reflect.TypeOf(&pb.Request_SetVolume{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_SetVolume](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleSetVolume(ctx, req.Payload.(*pb.Request_SetVolume).SetVolume)
 	},
-	reflect.TypeOf(&pb.Request_QueueAdd{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_QueueAdd](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleQueueAdd(ctx, req.Payload.(*pb.Request_QueueAdd).QueueAdd)
 	},
-	reflect.TypeOf(&pb.Request_QueueRemove{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_QueueRemove](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleQueueRemove(req.Payload.(*pb.Request_QueueRemove).QueueRemove)
 	},
-	reflect.TypeOf(&pb.Request_QueueClear{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_QueueClear](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleQueueClear()
 	},
-	reflect.TypeOf(&pb.Request_Search{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Search](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleSearch(ctx, req.Payload.(*pb.Request_Search).Search)
 	},
-	reflect.TypeOf(&pb.Request_LibScan{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_LibScan](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleLibScanAsync(req.Payload.(*pb.Request_LibScan).LibScan)
 	},
-	reflect.TypeOf(&pb.Request_ListPeers{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_ListPeers](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleListPeers(ctx)
 	},
-	reflect.TypeOf(&pb.Request_Status{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Status](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleStatus()
 	},
-	reflect.TypeOf(&pb.Request_HealthCheck{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_HealthCheck](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleHealthCheck()
 	},
-	reflect.TypeOf(&pb.Request_CreatePlaylist{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_CreatePlaylist](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleCreatePlaylist(ctx, req.Payload.(*pb.Request_CreatePlaylist).CreatePlaylist)
 	},
-	reflect.TypeOf(&pb.Request_GetPlaylist{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_GetPlaylist](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleGetPlaylist(ctx, req.Payload.(*pb.Request_GetPlaylist).GetPlaylist)
 	},
-	reflect.TypeOf(&pb.Request_ListPlaylists{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_ListPlaylists](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleListPlaylists(ctx)
 	},
-	reflect.TypeOf(&pb.Request_AddToPlaylist{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_AddToPlaylist](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleAddToPlaylist(ctx, req.Payload.(*pb.Request_AddToPlaylist).AddToPlaylist)
 	},
-	reflect.TypeOf(&pb.Request_GetTrack{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_GetTrack](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleGetTrack(ctx, req.Payload.(*pb.Request_GetTrack).GetTrack)
 	},
-	reflect.TypeOf(&pb.Request_GetTrackByPath{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_GetTrackByPath](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleGetTrackByPath(ctx, req.Payload.(*pb.Request_GetTrackByPath).GetTrackByPath)
 	},
-	reflect.TypeOf(&pb.Request_NetworkStatus{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_NetworkStatus](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleNetworkStatus()
 	},
-	reflect.TypeOf(&pb.Request_BanPeer{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_BanPeer](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleBanPeer(req.Payload.(*pb.Request_BanPeer).BanPeer)
 	},
-	reflect.TypeOf(&pb.Request_UnbanPeer{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_UnbanPeer](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleUnbanPeer(req.Payload.(*pb.Request_UnbanPeer).UnbanPeer)
 	},
-	reflect.TypeOf(&pb.Request_ListTracks{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_ListTracks](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleListTracks(ctx, req.Payload.(*pb.Request_ListTracks).ListTracks)
 	},
-	reflect.TypeOf(&pb.Request_QueueList{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_QueueList](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleQueueList()
 	},
-	reflect.TypeOf(&pb.Request_QueueShuffle{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_QueueShuffle](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleQueueShuffle(req.Payload.(*pb.Request_QueueShuffle).QueueShuffle)
 	},
-	reflect.TypeOf(&pb.Request_QueueRepeat{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_QueueRepeat](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleQueueRepeat(req.Payload.(*pb.Request_QueueRepeat).QueueRepeat)
 	},
-	reflect.TypeOf(&pb.Request_QueueMode{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_QueueMode](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleQueueMode()
 	},
-	reflect.TypeOf(&pb.Request_Equalizer{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Equalizer](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleSetEqualizer(req.Payload.(*pb.Request_Equalizer).Equalizer)
 	},
-	reflect.TypeOf(&pb.Request_DebugStats{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_DebugStats](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return s.handleDebugStats()
 	},
-	reflect.TypeOf(&pb.Request_Subscribe{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Subscribe](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		// The conn was already registered with the SubscriptionManager in
 		// handleConn before dispatch; just acknowledge so the client doesn't
 		// get a bogus "unknown request type" error.
 		return &pb.Response{Success: true}
 	},
-	reflect.TypeOf(&pb.Request_Unsubscribe{}): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
+	reflect.TypeFor[*pb.Request_Unsubscribe](): func(s *Server, ctx context.Context, req *pb.Request) *pb.Response {
 		return &pb.Response{Success: true}
 	},
 }
@@ -525,10 +527,10 @@ func (s *Server) Stop(ctx context.Context) error {
 	})
 
 	if s.listener != nil {
-		_ = s.listener.Close()
+		s.listener.Close()
 	}
 	for _, st := range s.subMgr.All() {
-		_ = st.conn.Close()
+		st.conn.Close()
 	}
 
 	s.wg.Wait()

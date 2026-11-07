@@ -1,4 +1,4 @@
-package ipc
+package server
 
 const (
 	testPeerID = "peer-1"

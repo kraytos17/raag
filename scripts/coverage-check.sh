@@ -8,6 +8,8 @@ MIN_P2P="${MIN_P2P:-75}"
 MIN_PROTOCOLS="${MIN_PROTOCOLS:-70}"
 MIN_DOMAIN="${MIN_DOMAIN:-40}"
 MIN_CONFIG="${MIN_CONFIG:-80}"
+MIN_IPC="${MIN_IPC:-10}"
+MIN_IPC_SERVER="${MIN_IPC_SERVER:-60}"
 
 fail=0
 check() {
@@ -38,5 +40,7 @@ check ./internal/infra/p2p/ "$MIN_P2P"
 check ./internal/infra/p2p/protocols/ "$MIN_PROTOCOLS"
 check ./internal/domain/ "$MIN_DOMAIN"
 check ./internal/config/ "$MIN_CONFIG"
+check ./internal/infra/ipc/ "$MIN_IPC"
+check ./internal/infra/ipc/server/ "$MIN_IPC_SERVER"
 
 exit "$fail"

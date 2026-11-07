@@ -20,6 +20,7 @@ func (s *Server) handleQueueAdd(ctx context.Context, req *pb.QueueAddRequest) *p
 	} else {
 		s.queue.Add(track)
 	}
+
 	s.publishQueueUpdated()
 	return &pb.Response{Success: true}
 }
@@ -103,7 +104,3 @@ func (s *Server) publishQueueUpdated() {
 	}
 	s.PublishEvent(ipc.EventQueueUpdated, mustMarshal(&pb.QueueResponse{Tracks: qt}))
 }
-
-// handleSetEqualizer applies EQ settings to the live playback engine and
-// returns the resulting state. With get=true it returns the current state
-// without mutating anything (serves `raag eq` reads).

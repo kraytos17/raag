@@ -36,7 +36,6 @@ func (s *Server) handleDebugStats() *pb.Response {
 		lsm, vlog := s.dbStats.Size()
 		dbInfo = &pb.DebugDB{LsmBytes: lsm, VlogBytes: vlog}
 	}
-
 	return &pb.Response{
 		Success: true,
 		Payload: &pb.Response_DebugStats{DebugStats: &pb.DebugStatsResponse{

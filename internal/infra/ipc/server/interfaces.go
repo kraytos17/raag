@@ -14,6 +14,7 @@ import (
 type DebugStatsProvider interface {
 	Size() (lsmBytes, vlogBytes int64)
 }
+
 type PlaybackHandler interface {
 	Play(ctx context.Context, trackID domain.TrackID) error
 	PlayQuery(ctx context.Context, query string) error
@@ -31,24 +32,29 @@ type PlaybackHandler interface {
 	GetEqualizer() domain.EqualizerSettings
 	OnProgress(callback func(positionMs, durationMs int64))
 }
+
 type ScannerHandler interface {
 	Scan(ctx context.Context) (int, error)
 	ScanIncremental(ctx context.Context) (added, modified, removed int, err error)
 	OnProgress(fn func(app.ScanProgress))
 	RemoveProgressHandler(fn func(app.ScanProgress))
 }
+
 type SearchHandler interface {
 	Search(ctx context.Context, query string, limit int) ([]*domain.Track, error)
 }
+
 type LibraryRepoHandler interface {
 	FindByID(ctx context.Context, trackID domain.TrackID) (*domain.Track, error)
 	FindByPath(ctx context.Context, path string) (*domain.Track, error)
 	ListAll(ctx context.Context) ([]*domain.Track, error)
 }
+
 type PeerRepoHandler interface {
 	ListAll(ctx context.Context) iter.Seq2[*domain.PeerInfo, error]
 	GetPeerInfo(ctx context.Context, id domain.PeerID) (*domain.PeerInfo, error)
 }
+
 type QueueHandler interface {
 	Add(track *domain.Track)
 	Insert(pos int, track *domain.Track)

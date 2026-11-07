@@ -22,6 +22,7 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 		if err != nil {
 			continue
 		}
+
 		seen[p.ID.String()] = struct{}{}
 		if s.p2pNode != nil {
 			if enriched := s.p2pNode.PeerStatus(p); enriched != nil {
@@ -66,6 +67,7 @@ func (s *Server) handleListPeers(ctx context.Context) *pb.Response {
 			for i, a := range pi.Addrs {
 				addrs[i] = a.String()
 			}
+
 			pbPeers = append(pbPeers, &pb.Peer{Id: pi.ID.String(), Addrs: addrs, Connected: false})
 			seen[pi.ID.String()] = struct{}{}
 		}
@@ -120,7 +122,6 @@ func (s *Server) handleNetworkStatus() *pb.Response {
 			Dialable: dialable,
 		})
 	}
-
 	return &pb.Response{
 		Success: true,
 		Payload: &pb.Response_NetworkStatus{NetworkStatus: &pb.NetworkStatusResponse{
@@ -139,6 +140,7 @@ func (s *Server) handleBanPeer(req *pb.BanPeerRequest) *pb.Response {
 			Error:   errP2PNotEnabled,
 		}
 	}
+
 	s.p2pNode.BanPeer(peer.ID(req.PeerId))
 	return &pb.Response{
 		Success: true,
@@ -153,6 +155,7 @@ func (s *Server) handleUnbanPeer(req *pb.UnbanPeerRequest) *pb.Response {
 			Error:   errP2PNotEnabled,
 		}
 	}
+
 	s.p2pNode.UnbanPeer(peer.ID(req.PeerId))
 	return &pb.Response{
 		Success: true,

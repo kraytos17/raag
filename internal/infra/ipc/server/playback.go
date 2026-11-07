@@ -29,6 +29,7 @@ func (s *Server) publishPlaybackProgress(posMs, durMs int64) {
 		PositionMs: posMs,
 		DurationMs: durMs,
 	}
+
 	data, _ := proto.Marshal(progress)
 	s.PublishEvent(ipc.EventProgress, data)
 }
@@ -74,6 +75,7 @@ func (s *Server) handlePause(ctx context.Context) *pb.Response {
 	if err := s.playback.Pause(ctx); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+
 	s.publishPlaybackState(string(s.playback.GetState()))
 	return &pb.Response{Success: true}
 }
@@ -82,6 +84,7 @@ func (s *Server) handleResume(ctx context.Context) *pb.Response {
 	if err := s.playback.Resume(ctx); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+
 	s.publishPlaybackState(string(s.playback.GetState()))
 	return &pb.Response{Success: true}
 }
@@ -90,6 +93,7 @@ func (s *Server) handleStop(ctx context.Context) *pb.Response {
 	if err := s.playback.Stop(ctx); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+
 	s.publishPlaybackState(string(s.playback.GetState()))
 	s.publishTrackChanged(nil)
 	return &pb.Response{Success: true}
@@ -103,6 +107,7 @@ func (s *Server) handleNext(ctx context.Context) *pb.Response {
 	if err := s.playback.Play(ctx, next.ID); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+
 	s.publishPlaybackState(string(s.playback.GetState()))
 	s.publishTrackChanged(s.playback.GetCurrentTrack())
 	return &pb.Response{Success: true}
@@ -116,6 +121,7 @@ func (s *Server) handlePrev(ctx context.Context) *pb.Response {
 	if err := s.playback.Play(ctx, prev.ID); err != nil {
 		return &pb.Response{Success: false, Error: err.Error()}
 	}
+
 	s.publishPlaybackState(string(s.playback.GetState()))
 	s.publishTrackChanged(s.playback.GetCurrentTrack())
 	return &pb.Response{Success: true}

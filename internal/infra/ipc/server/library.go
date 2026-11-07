@@ -83,7 +83,6 @@ func (s *Server) handleLibScanAsync(req *pb.LibScanRequest) *pb.Response {
 	// Register this scan's own progress handler so concurrent scans don't
 	// clobber each other's jobID closure
 	s.scanner.OnProgress(progressFn)
-
 	go func() {
 		defer s.scanner.RemoveProgressHandler(progressFn)
 		scanCtx, cancel := context.WithCancel(context.Background())
@@ -131,8 +130,8 @@ func (s *Server) handleListTracks(ctx context.Context, req *pb.ListTracksRequest
 	if offset > len(tracks) {
 		offset = len(tracks)
 	}
-	page := tracks[offset:end]
 
+	page := tracks[offset:end]
 	pbTracks := make([]*pb.Track, len(page))
 	for i, t := range page {
 		pbTracks[i] = convert.TrackToProto(t)
