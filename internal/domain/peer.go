@@ -8,6 +8,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
+const PeerProtocolVersion = "1.0.0"
+
 type PeerID = peer.ID
 
 type PeerInfo struct {
@@ -69,7 +71,7 @@ func NewPeerCapabilities() *PeerCapabilities {
 		SupportedBitrates: SupportedBitrates,
 		CanTranscode:      false,
 		UploadBandwidth:   0,
-		ProtocolVersion:   "1.0.0",
+		ProtocolVersion:   PeerProtocolVersion,
 	}
 }
 

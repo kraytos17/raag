@@ -223,7 +223,7 @@ func (h *SyncHandler) handleCapabilitiesRequest(_ context.Context, stream networ
 		caps = &pb.PeerCapabilities{
 			SupportedCodecs:   domain.PlayableCodecs,
 			SupportedBitrates: domain.SupportedBitrates,
-			ProtocolVersion:   "1.0.0",
+			ProtocolVersion:   domain.PeerProtocolVersion,
 		}
 	}
 

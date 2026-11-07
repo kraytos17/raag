@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -13,21 +14,28 @@ import (
 	"github.com/p-society/raag/internal/domain"
 )
 
-var ErrConnectionFailed = errors.New("connection failed")
+var (
+	ErrConnectionFailed = errors.New("connection failed")
+	ErrPoolClosed       = errors.New("stream pool is closed")
+)
 
 type StreamOpener interface {
 	NewStream(ctx context.Context, pid peer.ID, protos ...protocol.ID) (network.Stream, error)
 }
 
 type StreamPool struct {
-	host         StreamOpener
-	protocolID   protocol.ID
-	mu           sync.Mutex
-	pools        map[peer.ID][]*PooledStream
-	pending      map[peer.ID][]chan *PooledStream
-	totalStreams int
-	done         chan struct{}
-	closeOnce    sync.Once
+	host           StreamOpener
+	protocolID     protocol.ID
+	mu             sync.Mutex
+	pools          map[peer.ID][]*PooledStream
+	pending        map[peer.ID][]chan *PooledStream
+	creating       map[peer.ID]int
+	peerGeneration map[peer.ID]uint64
+	creatingTotal  int
+	totalStreams   int
+	done           chan struct{}
+	closeOnce      sync.Once
+	closed         bool
 }
 
 type PooledStream struct {
@@ -39,11 +47,13 @@ type PooledStream struct {
 
 func NewStreamPool(h StreamOpener, protoID protocol.ID) *StreamPool {
 	sp := &StreamPool{
-		host:       h,
-		protocolID: protoID,
-		pools:      make(map[peer.ID][]*PooledStream),
-		pending:    make(map[peer.ID][]chan *PooledStream),
-		done:       make(chan struct{}),
+		host:           h,
+		protocolID:     protoID,
+		pools:          make(map[peer.ID][]*PooledStream),
+		pending:        make(map[peer.ID][]chan *PooledStream),
+		creating:       make(map[peer.ID]int),
+		peerGeneration: make(map[peer.ID]uint64),
+		done:           make(chan struct{}),
 	}
 
 	go sp.reaper()
@@ -52,10 +62,14 @@ func NewStreamPool(h StreamOpener, protoID protocol.ID) *StreamPool {
 
 func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, error) {
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil, ErrPoolClosed
+	}
+
 	pool := p.pools[pid]
 	now := time.Now()
-	for i := len(pool) - 1; i >= 0; i-- {
-		s := pool[i]
+	for i, s := range slices.Backward(pool) {
 		if s.refCnt > 0 {
 			continue
 		}
@@ -63,6 +77,7 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 			if err := s.stream.Reset(); err != nil {
 				slog.Debug("idle stream reset error", "peer", pid, "err", err)
 			}
+
 			p.removeStreamLocked(pid, i)
 			continue
 		}
@@ -71,9 +86,13 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 		p.mu.Unlock()
 		return s.stream, nil
 	}
-	if len(pool) < domain.MaxStreamsPerPeer {
+	if len(pool)+p.creating[pid] < domain.MaxStreamsPerPeer &&
+		p.totalStreams+p.creatingTotal < domain.MaxPoolSize {
+		p.creating[pid]++
+		p.creatingTotal++
+		generation := p.peerGeneration[pid]
 		p.mu.Unlock()
-		return p.createStream(ctx, pid)
+		return p.createStream(ctx, pid, generation)
 	}
 
 	ch := make(chan *PooledStream, 1)
@@ -98,13 +117,26 @@ func (p *StreamPool) Acquire(ctx context.Context, pid peer.ID) (network.Stream, 
 		if s != nil {
 			return s.stream, nil
 		}
+
+		p.mu.Lock()
+		closed := p.closed
+		p.mu.Unlock()
+		if closed {
+			return nil, ErrPoolClosed
+		}
 		return nil, ErrConnectionFailed
 	}
 }
 
-func (p *StreamPool) createStream(ctx context.Context, pid peer.ID) (network.Stream, error) {
+func (p *StreamPool) createStream(ctx context.Context, pid peer.ID, generation uint64) (network.Stream, error) {
 	p.mu.Lock()
-	if p.totalStreams >= domain.MaxPoolSize {
+	if p.closed {
+		p.releaseCreationLocked(pid)
+		p.mu.Unlock()
+		return nil, ErrPoolClosed
+	}
+	if p.peerGeneration[pid] != generation {
+		p.releaseCreationLocked(pid)
 		p.mu.Unlock()
 		return nil, ErrConnectionFailed
 	}
@@ -112,6 +144,9 @@ func (p *StreamPool) createStream(ctx context.Context, pid peer.ID) (network.Str
 	p.mu.Unlock()
 	stream, err := p.host.NewStream(ctx, pid, p.protocolID)
 	if err != nil {
+		p.mu.Lock()
+		p.releaseCreationLocked(pid)
+		p.mu.Unlock()
 		return nil, err
 	}
 	ps := &PooledStream{
@@ -122,8 +157,22 @@ func (p *StreamPool) createStream(ctx context.Context, pid peer.ID) (network.Str
 	}
 
 	p.mu.Lock()
+	p.releaseCreationLocked(pid)
+	closed := p.closed
+	stale := p.peerGeneration[pid] != generation
+	if closed || stale {
+		if err := stream.Close(); err != nil {
+			slog.Debug("stream close error for rejected stream", "peer", pid, "err", err)
+		}
+
+		p.mu.Unlock()
+		if closed {
+			return nil, ErrPoolClosed
+		}
+		return nil, ErrConnectionFailed
+	}
 	if p.totalStreams >= domain.MaxPoolSize {
-		_ = stream.Close()
+		stream.Close()
 		p.mu.Unlock()
 		return nil, ErrConnectionFailed
 	}
@@ -132,6 +181,17 @@ func (p *StreamPool) createStream(ctx context.Context, pid peer.ID) (network.Str
 	p.totalStreams++
 	p.mu.Unlock()
 	return stream, nil
+}
+
+// releaseCreationLocked releases a per-peer slot reserved for an in-flight
+// NewStream dial. The caller must hold p.mu.
+func (p *StreamPool) releaseCreationLocked(pid peer.ID) {
+	p.creatingTotal--
+	if p.creating[pid] <= 1 {
+		delete(p.creating, pid)
+		return
+	}
+	p.creating[pid]--
 }
 
 func (p *StreamPool) Release(pid peer.ID, stream network.Stream) {
@@ -175,7 +235,7 @@ func (p *StreamPool) removeStreamLocked(pid peer.ID, idx int) {
 	pool := p.pools[pid]
 	ps := pool[idx]
 
-	_ = ps.stream.Close()
+	ps.stream.Close()
 	p.pools[pid] = append(pool[:idx], pool[idx+1:]...)
 	p.totalStreams--
 	if len(p.pools[pid]) == 0 {
@@ -196,6 +256,7 @@ func (p *StreamPool) removePendingLocked(pid peer.ID, ch chan *PooledStream) {
 func (p *StreamPool) DrainPeer(pid peer.ID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.peerGeneration[pid]++
 
 	pool := p.pools[pid]
 	for _, ps := range pool {
@@ -217,9 +278,9 @@ func (p *StreamPool) DrainPeer(pid peer.ID) {
 // Start may close the pool, and Stop later closes it again).
 func (p *StreamPool) Close() {
 	p.closeOnce.Do(func() {
-		close(p.done)
 		p.mu.Lock()
-		defer p.mu.Unlock()
+		p.closed = true
+		close(p.done)
 
 		for pid, pool := range p.pools {
 			for _, ps := range pool {
@@ -237,6 +298,7 @@ func (p *StreamPool) Close() {
 			}
 			delete(p.pending, pid)
 		}
+		p.mu.Unlock()
 	})
 }
 
@@ -250,8 +312,7 @@ func (p *StreamPool) reaper() {
 			p.mu.Lock()
 			now := time.Now()
 			for pid, pool := range p.pools {
-				for i := len(pool) - 1; i >= 0; i-- {
-					ps := pool[i]
+				for i, ps := range slices.Backward(pool) {
 					if ps.refCnt == 0 && now.Sub(ps.lastUsed) > domain.StreamIdleTimeout {
 						if err := ps.stream.Reset(); err != nil {
 							slog.Debug("reaper stream reset error", "peer", pid, "err", err)

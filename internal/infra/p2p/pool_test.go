@@ -68,6 +68,30 @@ type mockHost struct {
 	failFor  map[peer.ID]bool
 }
 
+type blockingMockHost struct {
+	stream  network.Stream
+	entered chan struct{}
+	release chan struct{}
+}
+
+type blockingPeerMockHost struct {
+	streams map[peer.ID]network.Stream
+	entered chan peer.ID
+	release chan struct{}
+}
+
+func (h *blockingPeerMockHost) NewStream(_ context.Context, pid peer.ID, _ ...protocol.ID) (network.Stream, error) {
+	h.entered <- pid
+	<-h.release
+	return h.streams[pid], nil
+}
+
+func (h *blockingMockHost) NewStream(context.Context, peer.ID, ...protocol.ID) (network.Stream, error) {
+	close(h.entered)
+	<-h.release
+	return h.stream, nil
+}
+
 func newMockHost() *mockHost {
 	return &mockHost{
 		streams: make(map[peer.ID][]*mockStream),
@@ -491,6 +515,41 @@ func TestStreamPool_ConcurrentAcquire(t *testing.T) {
 	}
 }
 
+func TestStreamPool_ConcurrentAcquireRespectsPerPeerLimit(t *testing.T) {
+	host := newMockHost()
+	pool := NewStreamPool(host, "/test/1.0.0")
+	defer pool.Close()
+
+	pid := peer.ID("test-peer")
+	const acquireCount = 12
+	start := make(chan struct{})
+	results := make(chan network.Stream, acquireCount)
+	var wg sync.WaitGroup
+	for range acquireCount {
+		wg.Go(func() {
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			stream, _ := pool.Acquire(ctx, pid)
+			results <- stream
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var acquired int
+	for stream := range results {
+		if stream != nil {
+			acquired++
+			pool.Release(pid, stream)
+		}
+	}
+	if got := pool.GetPoolSize(pid); got > domain.MaxStreamsPerPeer {
+		t.Fatalf("per-peer pool size = %d, exceeds limit %d (acquired %d)", got, domain.MaxStreamsPerPeer, acquired)
+	}
+}
+
 func TestStreamPool_ConcurrentAcquireRelease(t *testing.T) {
 	host := newMockHost()
 	pool := NewStreamPool(host, "/test/1.0.0")
@@ -687,16 +746,89 @@ func TestStreamPool_AcquireAfterClose(t *testing.T) {
 	pool.Close()
 
 	pid := peer.ID("test-peer")
-	// After close, the reaper goroutine is stopped but Acquire still works
-	// because it creates a new stream via host.NewStream.
-	// This is existing behavior - the pool doesn't prevent new acquires after Close.
 	s, err := pool.Acquire(context.Background(), pid)
-	if err != nil && s == nil {
-		// Expected when pool is at capacity or drained
-		return
-	}
-	// If it succeeds, that's also fine (pool doesn't block after close)
 	if s != nil {
-		pool.Release(pid, s)
+		t.Fatal("Acquire() returned a stream after Close")
+	}
+	if !errors.Is(err, ErrPoolClosed) {
+		t.Fatalf("Acquire() error = %v, want ErrPoolClosed", err)
+	}
+}
+
+func TestStreamPool_CloseDuringStreamCreationDiscardsStream(t *testing.T) {
+	stream := &mockStream{id: "in-flight"}
+	host := &blockingMockHost{
+		stream:  stream,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	pool := NewStreamPool(host, "/test/1.0.0")
+
+	result := make(chan error, 1)
+	go func() {
+		got, err := pool.Acquire(context.Background(), peer.ID("test-peer"))
+		if got != nil {
+			result <- errors.New("Acquire returned stream after concurrent Close")
+			return
+		}
+		result <- err
+	}()
+
+	<-host.entered
+	pool.Close()
+	close(host.release)
+
+	if err := <-result; !errors.Is(err, ErrPoolClosed) {
+		t.Fatalf("Acquire() error = %v, want ErrPoolClosed", err)
+	}
+	stream.closeMu.Lock()
+	closed := stream.closed
+	stream.closeMu.Unlock()
+	if !closed {
+		t.Fatal("stream created concurrently with Close was not closed")
+	}
+	if got := pool.Stats().TotalStreams; got != 0 {
+		t.Fatalf("TotalStreams after Close = %d, want 0", got)
+	}
+}
+
+func TestStreamPool_DrainPeerDuringStreamCreationDiscardsStream(t *testing.T) {
+	pid := peer.ID("draining-peer")
+	stream := &mockStream{id: "in-flight"}
+	host := &blockingPeerMockHost{
+		streams: map[peer.ID]network.Stream{pid: stream},
+		entered: make(chan peer.ID, 1),
+		release: make(chan struct{}),
+	}
+	pool := NewStreamPool(host, "/test/1.0.0")
+	defer pool.Close()
+
+	result := make(chan error, 1)
+	go func() {
+		got, err := pool.Acquire(context.Background(), pid)
+		if got != nil {
+			result <- errors.New("Acquire returned stream after peer was drained")
+			return
+		}
+		result <- err
+	}()
+
+	if got := <-host.entered; got != pid {
+		t.Fatalf("stream dial peer = %s, want %s", got, pid)
+	}
+	pool.DrainPeer(pid)
+	close(host.release)
+
+	if err := <-result; !errors.Is(err, ErrConnectionFailed) {
+		t.Fatalf("Acquire() error = %v, want ErrConnectionFailed after peer drain", err)
+	}
+	stream.closeMu.Lock()
+	closed := stream.closed
+	stream.closeMu.Unlock()
+	if !closed {
+		t.Fatal("stream created after peer drain was not closed")
+	}
+	if got := pool.GetPoolSize(pid); got != 0 {
+		t.Fatalf("drained peer pool size = %d, want 0", got)
 	}
 }

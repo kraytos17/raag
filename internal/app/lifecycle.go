@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 )
 
@@ -55,8 +56,7 @@ func (m *LifecycleManager) StartAll(ctx context.Context) error {
 		slog.Info("starting component", "name", c.Name())
 		if err := c.Start(ctx); err != nil {
 			slog.Error("component start failed", "name", c.Name(), "error", err)
-			for i := len(started) - 1; i >= 0; i-- {
-				comp := started[i]
+			for _, comp := range slices.Backward(started) {
 				slog.Info("stopping component", "name", comp.Name(), "reason", "rollback")
 				if stopErr := comp.Stop(ctx); stopErr != nil {
 					slog.Error("component stop failed", "name", comp.Name(), "error", stopErr)
@@ -78,8 +78,7 @@ func (m *LifecycleManager) StopAll(ctx context.Context) error {
 	m.mu.Unlock()
 
 	var errs []error
-	for i := len(comps) - 1; i >= 0; i-- {
-		c := comps[i]
+	for _, c := range slices.Backward(comps) {
 		slog.Info("stopping component", "name", c.Name())
 		if err := c.Stop(ctx); err != nil {
 			slog.Error("component stop failed", "name", c.Name(), "error", err)

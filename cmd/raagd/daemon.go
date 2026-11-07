@@ -33,7 +33,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		} else {
 			slog.Error("failed to check pid file", "pid_file", cfg.Daemon.PidFile, "error", err)
 		}
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
 
@@ -49,7 +49,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		}
 
 		removePidFile(cfg.Daemon.PidFile)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	})
 
@@ -98,31 +98,31 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	})
 	if err != nil {
 		slog.Error("failed to create IPC server", "error", err)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
 
 	lc := app.NewLifecycleManager()
 	if err := lc.Register(scanner); err != nil {
 		slog.Error("failed to register scanner", "error", err)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
 	if err := lc.Register(app.NewPlayerComponent(player, "player")); err != nil {
 		slog.Error("failed to register player", "error", err)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
 	if p2pNodeStarted && p2pNode != nil {
 		if err := lc.Register(app.NewP2PComponent(p2pNode, bus, "p2p")); err != nil {
 			slog.Error("failed to register p2p", "error", err)
-			_ = database.Close()
+			database.Close()
 			os.Exit(1)
 		}
 	}
 	if err := lc.Register(ipc.AsComponent(ipcServer)); err != nil {
 		slog.Error("failed to register ipc server", "error", err)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
 	if cfg.Library.Watch {
@@ -130,16 +130,11 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 	}
 	if err := lc.StartAll(context.Background()); err != nil {
 		slog.Error("failed to start components", "error", err)
-		_ = database.Close()
+		database.Close()
 		os.Exit(1)
 	}
-	if err := writePidFile(cfg.Daemon.PidFile); err != nil {
-		slog.Warn("failed to write pid file", "path", cfg.Daemon.PidFile, "error", err)
-	}
-	if p2pNodeStarted && p2pNode != nil {
-		slog.Info("P2P streaming enabled", "peer_id", p2pNode.ID())
-	}
 
+	logDaemonReady(cfg.Daemon.PidFile, p2pNodeStarted, p2pNode)
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	if cfg.Metrics.Enabled {
 		startMetricsServer(sigCtx, cfg.Metrics, metrics)
@@ -153,14 +148,7 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		"volume", cfg.Playback.Volume,
 	)
 
-	if cfg.P2P.Enabled {
-		slog.Info(
-			"P2P networking enabled",
-			"ports", "7844/TCP+UDP, 7845/UDP",
-			"note", "ensure firewall allows inbound connections on these ports for LAN discovery",
-		)
-	}
-
+	logNetworkReady(cfg.P2P.Enabled)
 	<-sigCtx.Done()
 	slog.Info("shutting down", "reason", context.Cause(sigCtx))
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -184,4 +172,24 @@ func runDaemon(cfg *config.Config, database *db.DB, libraryRepo db.LibraryRepo,
 		slog.Info("database closed")
 	}
 	slog.Info("raag daemon stopped")
+}
+
+func logDaemonReady(pidFile string, p2pNodeStarted bool, p2pNode *p2p.P2PNode) {
+	if err := writePidFile(pidFile); err != nil {
+		slog.Warn("failed to write pid file", "path", pidFile, "error", err)
+	}
+	if p2pNodeStarted && p2pNode != nil {
+		slog.Info("P2P streaming enabled", "peer_id", p2pNode.ID())
+	}
+}
+
+func logNetworkReady(p2pEnabled bool) {
+	if !p2pEnabled {
+		return
+	}
+	slog.Info(
+		"P2P networking enabled",
+		"ports", "7844/TCP+UDP, 7845/UDP",
+		"note", "ensure firewall allows inbound connections on these ports for LAN discovery",
+	)
 }

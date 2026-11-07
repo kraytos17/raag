@@ -952,7 +952,7 @@ func TestPeerManager_GetPeerCapabilities_PropagatesUploadBandwidth(t *testing.T)
 			SupportedBitrates: []int32{128},
 			CanTranscode:      true,
 			UploadBandwidth:   2_000_000,
-			ProtocolVersion:   "1.0.0",
+			ProtocolVersion:   peerProtocolV1,
 		},
 		addedAt: time.Now(),
 	}
