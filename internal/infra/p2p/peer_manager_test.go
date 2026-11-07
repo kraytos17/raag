@@ -355,6 +355,51 @@ func TestPeerManager_PersistRoundTrip(t *testing.T) {
 
 // TestPeerManager_PersistNoRepo verifies persist() is a safe no-op when no
 // repository is configured (unit tests / P2P-disabled builds).
+func TestPeerManager_RecordSuccessPersistsScore(t *testing.T) {
+	repo := newMemPeerRepo()
+	pid := peer.ID("scored-peer")
+	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, NewPeerScorer(), time.Hour, repo)
+
+	pm.RecordSuccess(pid)
+	pm.RecordSuccess(pid)
+	pm.RecordFailure(pid)
+
+	info, err := repo.GetPeerInfo(context.Background(), pid)
+	if err != nil {
+		t.Fatalf("GetPeerInfo() error = %v, want persisted info", err)
+	}
+	if info.Score == nil {
+		t.Fatal("persisted info has nil Score, want scorer snapshot")
+	}
+	if info.Score.SuccessCount != 2 || info.Score.FailureCount != 1 {
+		t.Errorf("persisted score = %+v, want 2 successes and 1 failure", info.Score)
+	}
+	score, err := repo.GetPeerScore(context.Background(), pid)
+	if err != nil {
+		t.Fatalf("GetPeerScore() error = %v", err)
+	}
+	if score == nil || score.SuccessCount != 2 || score.FailureCount != 1 {
+		t.Errorf("persisted peer score = %+v, want 2 successes and 1 failure", score)
+	}
+	if pm.IsBanned(pid) {
+		t.Error("IsBanned() = true after 2 successes and 1 failure, want false")
+	}
+}
+
+func TestPeerManager_RecordWithoutScorerPersistsInfo(t *testing.T) {
+	repo := newMemPeerRepo()
+	pid := peer.ID("unscored-peer")
+	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, nil, time.Hour, repo)
+
+	pm.RecordSuccess(pid) // must not panic with nil scorer
+	if _, err := repo.GetPeerInfo(context.Background(), pid); err != nil {
+		t.Fatalf("GetPeerInfo() error = %v, want persisted info", err)
+	}
+	if pm.IsBanned(pid) {
+		t.Error("IsBanned() = true with nil scorer, want false")
+	}
+}
+
 func TestPeerManager_PersistNoRepo(t *testing.T) {
 	pm := newPeerManager(nil, discovery.NewPeerCache(100), nil, nil, time.Hour, nil)
 	pm.persist(domain.PeerID("peer-1")) // must not panic

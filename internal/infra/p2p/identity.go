@@ -128,7 +128,7 @@ func (m *IdentityManager) createNew() (crypto.PrivKey, peer.ID, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to marshal identity key: %w", err)
 	}
-	
+
 	defer wipeBytes(keyBytes)
 	if err := m.storeKey(keyBytes); err != nil {
 		return nil, "", err

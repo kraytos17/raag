@@ -55,6 +55,9 @@ func (s *chunkRequestStream) Conn() network.Conn { return s.conn }
 // testCodec is the codec requested for transcoding in tests.
 const testCodec = "mp3"
 
+// testTrackID is the track used by the admission chunk tests.
+const testTrackID = "track-1"
+
 // recordingStream captures written bytes so wire.WriteMsg output can be decoded.
 type recordingStream struct {
 	buf bytes.Buffer
@@ -193,7 +196,7 @@ func TestStreamHandler_Handle_RejectsUnadmittedPeer(t *testing.T) {
 	h := &StreamHandler{library: &testLibrary{}, admission: registry}
 	remote := peer.ID("unadmitted-peer")
 
-	stream := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1"}, remote)
+	stream := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: testTrackID}, remote)
 	h.Handle(stream)
 	resp, err := stream.readResponse()
 	if err != nil {
@@ -211,7 +214,7 @@ func TestStreamHandler_Handle_AdmitsAfterManifestExchange(t *testing.T) {
 		t.Fatalf("write track file: %v", err)
 	}
 	lib := &syncTestLibrary{track: &domain.Track{
-		ID:        domain.TrackID("track-1"),
+		ID:        domain.TrackID(testTrackID),
 		Path:      filepath.Join(dir, "track.bin"),
 		SizeBytes: uint64(len(content)),
 		MimeType:  "application/octet-stream",
@@ -222,7 +225,7 @@ func TestStreamHandler_Handle_AdmitsAfterManifestExchange(t *testing.T) {
 	remote := peer.ID("admitted-peer")
 
 	// Unadmitted chunk requests are rejected before any admission.
-	denied := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1", Length: 16}, remote)
+	denied := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: testTrackID, Length: 16}, remote)
 	h.Handle(denied)
 	if resp, err := denied.readResponse(); err != nil {
 		t.Fatalf("read denial: %v", err)
@@ -233,7 +236,7 @@ func TestStreamHandler_Handle_AdmitsAfterManifestExchange(t *testing.T) {
 	// Manifest exchange (simulated by the registry grant) admits the peer;
 	// revoking it re-blocks chunks, mirroring disconnect cleanup.
 	registry.Admit(remote)
-	served := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1", Length: 16}, remote)
+	served := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: testTrackID, Length: 16}, remote)
 	h.Handle(served)
 	resp, err := served.readResponse()
 	if err != nil {
@@ -247,7 +250,7 @@ func TestStreamHandler_Handle_AdmitsAfterManifestExchange(t *testing.T) {
 	}
 
 	registry.Revoke(remote)
-	blocked := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: "track-1", Length: 16}, remote)
+	blocked := newChunkRequestStream(t, &pb.ChunkRequest{TrackId: testTrackID, Length: 16}, remote)
 	h.Handle(blocked)
 	if resp, err := blocked.readResponse(); err != nil {
 		t.Fatalf("read denial: %v", err)
