@@ -226,7 +226,7 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 	n.bus = bus
 	n.host.SetStreamHandler(protocols.StreamProtocol, n.streamHandler.Handle)
 	n.host.SetStreamHandler(protocols.SyncProtocol, n.syncHandler.Handle)
-	n.notifier = &connNotifier{
+	notifier := &connNotifier{
 		ctx:             n.ctx,
 		host:            n.host,
 		streamHandler:   n.streamHandler,
@@ -237,8 +237,15 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 		admission:       n.admission,
 		maxPeers:        n.maxPeers,
 		startBackground: n.startBackground,
+		admittedPeers:   make(map[peer.ID]struct{}),
+		peerConnections: make(map[peer.ID]int),
+	}
+	for _, pid := range n.host.Network().Peers() {
+		notifier.admittedPeers[pid] = struct{}{}
+		notifier.peerConnections[pid] = len(n.host.Network().ConnsToPeer(pid))
 	}
 
+	n.notifier = notifier
 	n.host.Network().Notify(n.notifier)
 	for _, conn := range n.host.Network().Conns() {
 		pid := conn.RemotePeer()
@@ -461,19 +468,6 @@ func (n *P2PNode) AddDiscovered(pi peer.AddrInfo) {
 	n.mdnsDiscovered.Add(pi)
 }
 
-// connectedPeerCount returns the number of distinct connected peers, excluding
-// self. Used to enforce the MaxPeers connection cap.
-func (cn *connNotifier) connectedPeerCount() int {
-	self := cn.host.ID()
-	count := 0
-	for _, p := range cn.host.Network().Peers() {
-		if p != self {
-			count++
-		}
-	}
-	return count
-}
-
 // PeerStatus enriches a peer with live connection state and capabilities.
 // The peer's score (if any) is preserved from the supplied info.
 func (n *P2PNode) PeerStatus(info *domain.PeerInfo) *pb.Peer {
@@ -574,7 +568,6 @@ func (n *P2PNode) NetworkInfo() NetworkInfo {
 		addrInfo := n.host.Peerstore().PeerInfo(p)
 		peerInfos = append(peerInfos, addrInfo)
 	}
-
 	return NetworkInfo{
 		PeerID:          n.host.ID().String(),
 		ListenAddrs:     addrs,
@@ -594,6 +587,9 @@ type connNotifier struct {
 	admission       *protocols.AdmissionRegistry
 	maxPeers        int
 	startBackground func(func()) bool
+	admissionMu     sync.Mutex
+	admittedPeers   map[peer.ID]struct{}
+	peerConnections map[peer.ID]int
 }
 
 func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
@@ -605,14 +601,30 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 		}
 		return
 	}
-	if len(cn.host.Network().ConnsToPeer(pid)) > 1 {
-		return
+
+	cn.admissionMu.Lock()
+	if cn.admittedPeers == nil {
+		cn.admittedPeers = make(map[peer.ID]struct{})
 	}
-	if cn.maxPeers > 0 && cn.connectedPeerCount() >= cn.maxPeers {
-		slog.Warn("peer connection rejected: max peers reached", "peer", pid, "max_peers", cn.maxPeers)
-		if err := conn.Close(); err != nil {
-			slog.Debug("failed to close excess peer connection", "peer", pid, "err", err)
+	if cn.peerConnections == nil {
+		cn.peerConnections = make(map[peer.ID]int)
+	}
+	if cn.peerConnections[pid] == 0 {
+		if cn.maxPeers > 0 && len(cn.admittedPeers) >= cn.maxPeers {
+			cn.admissionMu.Unlock()
+			slog.Warn("peer connection rejected: max peers reached", "peer", pid, "max_peers", cn.maxPeers)
+			if err := conn.Close(); err != nil {
+				slog.Debug("failed to close excess peer connection", "peer", pid, "err", err)
+			}
+			return
 		}
+		cn.admittedPeers[pid] = struct{}{}
+	}
+
+	cn.peerConnections[pid]++
+	duplicateConnection := cn.peerConnections[pid] > 1
+	cn.admissionMu.Unlock()
+	if duplicateConnection {
 		return
 	}
 
@@ -640,6 +652,28 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 
 func (cn *connNotifier) Disconnected(_ network.Network, conn network.Conn) {
 	pid := conn.RemotePeer()
+	cn.admissionMu.Lock()
+	remaining, ok := cn.peerConnections[pid]
+	if !ok {
+		// Untracked connection: rejected, banned, or never counted. Nothing
+		// was started for it, so there is nothing to tear down and no event
+		// to publish.
+		cn.admissionMu.Unlock()
+		return
+	}
+	remaining--
+	if remaining <= 0 {
+		delete(cn.peerConnections, pid)
+		delete(cn.admittedPeers, pid)
+	} else {
+		cn.peerConnections[pid] = remaining
+	}
+
+	cn.admissionMu.Unlock()
+	if remaining > 0 {
+		return
+	}
+
 	slog.Debug("peer disconnected", "peer", pid)
 	cn.admission.Revoke(pid)
 	cn.peerMgr.onPeerDisconnected(pid)

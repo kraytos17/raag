@@ -8,12 +8,79 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	pb "github.com/p-society/raag/proto/gen"
 )
+
+type peerFetchStreamHost struct {
+	host.Host
+	streams  chan *peerFetchBlockingStream
+	started  chan int
+	finished chan int
+}
+
+func (h *peerFetchStreamHost) NewStream(ctx context.Context, _ peer.ID, _ ...protocol.ID) (network.Stream, error) {
+	select {
+	case stream := <-h.streams:
+		stream.ctx = ctx
+		return stream, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+type peerFetchBlockingStream struct {
+	*mockStream
+	group     int
+	ctx       context.Context
+	started   chan<- int
+	finished  chan<- int
+	startOne  sync.Once
+	finishOne sync.Once
+}
+
+func (s *peerFetchBlockingStream) Read([]byte) (int, error) {
+	s.startOne.Do(func() { s.started <- s.group })
+	<-s.ctx.Done()
+	s.finishOne.Do(func() { s.finished <- s.group })
+	return 0, s.ctx.Err()
+}
+
+func (s *peerFetchBlockingStream) Write(p []byte) (int, error) {
+	return s.mockStream.Write(p)
+}
+
+func newPeerFetchBlockingStream(group int, started, finished chan<- int) *peerFetchBlockingStream {
+	return &peerFetchBlockingStream{
+		mockStream: &mockStream{id: "peer-fetch"},
+		group:      group,
+		started:    started,
+		finished:   finished,
+	}
+}
+
+func waitForPeerFetchGroup(t *testing.T, ch <-chan int, group, count int) {
+	t.Helper()
+	seen := 0
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for seen < count {
+		select {
+		case got := <-ch:
+			if got == group {
+				seen++
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %d events for fetch group %d; got %d", count, group, seen)
+		}
+	}
+}
 
 // memPeerRepo is an in-memory app.PeerRepository for testing persistence.
 type memPeerRepo struct {
@@ -161,6 +228,55 @@ func TestPeerManager_PersistNilScorer(t *testing.T) {
 	}
 }
 
+func TestPeerManager_OlderFetchCannotClearNewerCancellation(t *testing.T) {
+	started := make(chan int, 8)
+	finished := make(chan int, 8)
+	host := &peerFetchStreamHost{
+		streams: make(chan *peerFetchBlockingStream, 8),
+		started: started, finished: finished,
+	}
+	peerID := peer.ID("overlapping-fetch-peer")
+	pm := newPeerManager(host, discovery.NewPeerCache(10), nil, nil, 50*time.Millisecond, nil)
+
+	queueFetchStreams := func(group int) {
+		for range 2 { // FetchPeerData starts one manifest and one capabilities request.
+			host.streams <- newPeerFetchBlockingStream(group, started, finished)
+		}
+	}
+	queueFetchStreams(1)
+	fetch1Done := make(chan struct{})
+	go func() {
+		defer close(fetch1Done)
+		pm.FetchPeerData(context.Background(), peerID)
+	}()
+	waitForPeerFetchGroup(t, started, 1, 2)
+
+	queueFetchStreams(2)
+	fetch2Done := make(chan struct{})
+	go func() {
+		defer close(fetch2Done)
+		pm.FetchPeerData(context.Background(), peerID)
+	}()
+	waitForPeerFetchGroup(t, started, 2, 2)
+
+	// Starting fetch 2 cancels fetch 1. Wait for fetch 1 to fully exit so its
+	// cleanup (which must not clear fetch 2's entry) has run.
+	waitForPeerFetchGroup(t, finished, 1, 2)
+	select {
+	case <-fetch1Done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for older fetch to exit")
+	}
+
+	pm.onPeerDisconnected(peerID)
+	waitForPeerFetchGroup(t, finished, 2, 2)
+	select {
+	case <-fetch2Done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("newer fetch was not canceled by disconnect: older fetch cleared its cancellation entry")
+	}
+}
+
 func TestPeerManager_ExpiredCacheReadsAreConcurrentSafe(t *testing.T) {
 	pid := peer.ID("expired-cache-peer")
 	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, nil, -time.Second, nil)
@@ -193,9 +309,6 @@ func TestPeerManager_ExpiredCacheReadsAreConcurrentSafe(t *testing.T) {
 			}
 			if got := pm.FindPeersWithTrack(context.Background(), domain.TrackID(track1ID)); len(got) != 0 {
 				t.Errorf("FindPeersWithTrack() = %v, want no expired peers", got)
-			}
-			if got := pm.GetTrackOwners(track1ID); len(got) != 0 {
-				t.Errorf("GetTrackOwners() = %v, want no expired peers", got)
 			}
 			if got := pm.GetBestCodec(pid, peerTestOpus); got != codecMP3 {
 				t.Errorf("GetBestCodec() = %q, want fallback %q", got, codecMP3)

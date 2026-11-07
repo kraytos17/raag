@@ -12,6 +12,11 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
+	"github.com/multiformats/go-multiaddr"
+	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/events"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
 	"github.com/p-society/raag/internal/infra/p2p/protocols"
@@ -219,6 +224,259 @@ func TestP2PNode_StopHonorsContextWhileCleanupContinues(t *testing.T) {
 	close(releaseWork)
 	if err := node.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop after background work exits: %v", err)
+	}
+}
+
+func TestConnNotifier_MultipleConnectionsShareOneAdmissionSlot(t *testing.T) {
+	mn := mocknet.New()
+	defer mn.Close()
+	target, err := mn.GenPeer()
+	if err != nil {
+		t.Fatalf("GenPeer target: %v", err)
+	}
+	peerA := peer.ID("admission-peer-a")
+	peerB := peer.ID("admission-peer-b")
+
+	peerMgr := newPeerManager(target, discovery.NewPeerCache(10), nil, NewPeerScorer(), time.Hour, newMemPeerRepo())
+	notifier := &connNotifier{
+		host:      target,
+		peerMgr:   peerMgr,
+		bus:       events.New(),
+		admission: protocols.NewAdmissionRegistry(),
+		maxPeers:  1,
+	}
+	defer notifier.bus.Close()
+	disconnectedEvents := make(chan peer.ID, 16)
+	unsubscribe := notifier.bus.Subscribe(domain.EventPeerDisconnected, func(event domain.Event) {
+		if payload, ok := event.Payload.(domain.PeerDisconnectedPayload); ok {
+			disconnectedEvents <- payload.PeerID
+		}
+	})
+	defer unsubscribe()
+
+	connA1 := newNotifierTestConn(peerA)
+	connA2 := newNotifierTestConn(peerA)
+	notifier.Connected(nil, connA1)
+	notifier.Connected(nil, connA2)
+	if got := notifier.peerConnections[peerA]; got != 2 {
+		t.Fatalf("peerConnections[%s] = %d, want 2", peerA, got)
+	}
+	if _, ok := notifier.admittedPeers[peerA]; !ok {
+		t.Fatalf("peer %s not admitted after first connection", peerA)
+	}
+
+	// The single admission slot is taken: a second peer must be rejected
+	// without tracking it, and its (rejected) connection teardown must not
+	// publish a disconnect event for a peer that was never admitted.
+	connB := newNotifierTestConn(peerB)
+	notifier.Connected(nil, connB)
+	if _, ok := notifier.peerConnections[peerB]; ok {
+		t.Fatalf("rejected peer %s must not consume a connection count", peerB)
+	}
+	notifier.Disconnected(nil, connB)
+	assertNoDisconnectEvent(t, disconnectedEvents, peerB)
+
+	// Dropping one of peerA's connections keeps the peer admitted: no
+	// disconnect event, slot still held.
+	notifier.Disconnected(nil, connA1)
+	if got := notifier.peerConnections[peerA]; got != 1 {
+		t.Fatalf("peerConnections[%s] = %d, want 1 after first disconnect", peerA, got)
+	}
+	if _, ok := notifier.admittedPeers[peerA]; !ok {
+		t.Fatalf("peer %s must stay admitted while one connection remains", peerA)
+	}
+	assertNoDisconnectEvent(t, disconnectedEvents, peerA)
+
+	// Dropping the last connection releases the slot with exactly one
+	// disconnect event.
+	notifier.Disconnected(nil, connA2)
+	waitForPeerEvent(t, disconnectedEvents, peerA)
+	if _, ok := notifier.admittedPeers[peerA]; ok {
+		t.Fatalf("peer %s must be released after its last disconnect", peerA)
+	}
+	if _, ok := notifier.peerConnections[peerA]; ok {
+		t.Fatalf("peer %s must have no connection count after its last disconnect", peerA)
+	}
+}
+
+// notifierTestConn is a minimal network.Conn carrying a remote peer ID and a
+// dialable multiaddr for tests that drive connNotifier directly.
+type notifierTestConn struct {
+	remote peer.ID
+	closed atomic.Bool
+}
+
+func newNotifierTestConn(remote peer.ID) *notifierTestConn {
+	return &notifierTestConn{remote: remote}
+}
+
+func (c *notifierTestConn) Close() error { c.closed.Store(true); return nil }
+func (c *notifierTestConn) CloseWithError(_ network.ConnErrorCode) error {
+	c.closed.Store(true)
+	return nil
+}
+func (c *notifierTestConn) ID() string { return "notifier-test-conn" }
+func (c *notifierTestConn) NewStream(context.Context) (network.Stream, error) {
+	return nil, errNotifierTestConnNoStream
+}
+func (c *notifierTestConn) GetStreams() []network.Stream { return nil }
+func (c *notifierTestConn) IsClosed() bool               { return c.closed.Load() }
+func (c *notifierTestConn) As(any) bool                  { return false }
+func (c *notifierTestConn) LocalPeer() peer.ID           { return peer.ID("local") }
+func (c *notifierTestConn) RemotePeer() peer.ID          { return c.remote }
+func (c *notifierTestConn) RemotePublicKey() crypto.PubKey {
+	return nil
+}
+
+func (c *notifierTestConn) ConnState() network.ConnectionState {
+	return network.ConnectionState{}
+}
+
+func (c *notifierTestConn) LocalMultiaddr() multiaddr.Multiaddr {
+	return notifierTestAddr
+}
+
+func (c *notifierTestConn) RemoteMultiaddr() multiaddr.Multiaddr {
+	return notifierTestAddr
+}
+func (c *notifierTestConn) Stat() network.ConnStats  { return network.ConnStats{} }
+func (c *notifierTestConn) Scope() network.ConnScope { return nil }
+
+var (
+	notifierTestAddr            = multiaddr.StringCast("/ip4/127.0.0.1/tcp/4001")
+	errNotifierTestConnNoStream = errors.New("notifierTestConn: no streams")
+)
+
+func assertNoDisconnectEvent(t *testing.T, events <-chan peer.ID, pid peer.ID) {
+	t.Helper()
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	for {
+		select {
+		case got := <-events:
+			if got == pid {
+				t.Fatalf("unexpected disconnect event for %s", pid)
+			}
+		case <-timer.C:
+			return
+		}
+	}
+}
+
+func TestConnNotifier_ConcurrentConnectionsRespectMaxPeers(t *testing.T) {
+	mn := mocknet.New()
+	defer mn.Close()
+	target, err := mn.GenPeer()
+	if err != nil {
+		t.Fatalf("GenPeer target: %v", err)
+	}
+	peers := make([]host.Host, 3)
+	for i := range peers {
+		peers[i], err = mn.GenPeer()
+		if err != nil {
+			t.Fatalf("GenPeer %d: %v", i, err)
+		}
+	}
+	if err := mn.LinkAll(); err != nil {
+		t.Fatalf("LinkAll: %v", err)
+	}
+
+	peerMgr := newPeerManager(target, discovery.NewPeerCache(10), nil, NewPeerScorer(), time.Hour, newMemPeerRepo())
+	notifier := &connNotifier{
+		host:      target,
+		peerMgr:   peerMgr,
+		bus:       events.New(),
+		admission: protocols.NewAdmissionRegistry(),
+		maxPeers:  1,
+	}
+	defer notifier.bus.Close()
+	disconnectedEvents := make(chan peer.ID, 16)
+	unsubscribe := notifier.bus.Subscribe(domain.EventPeerDisconnected, func(event domain.Event) {
+		if payload, ok := event.Payload.(domain.PeerDisconnectedPayload); ok {
+			disconnectedEvents <- payload.PeerID
+		}
+	})
+	defer unsubscribe()
+	target.Network().Notify(notifier)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, len(peers))
+	for _, remote := range peers {
+		wg.Go(func() {
+			<-start
+			errs <- remote.Connect(context.Background(), target.Peerstore().PeerInfo(target.ID()))
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("Connect: %v", err)
+		}
+	}
+
+	connected := waitForConnectedPeerCount(t, target, 1)
+	if len(connected) != 1 {
+		ids := make([]string, 0, len(connected))
+		for _, id := range connected {
+			ids = append(ids, id.String())
+		}
+		t.Fatalf("connected peers = %v, want exactly one peer with maxPeers=1", ids)
+	}
+
+	accepted := connected[0]
+	var replacement host.Host
+	for _, candidate := range peers {
+		if candidate.ID() != accepted {
+			replacement = candidate
+			break
+		}
+	}
+	if replacement == nil {
+		t.Fatal("no unaccepted peer available for admission after disconnect")
+	}
+	if err := target.Network().ClosePeer(accepted); err != nil {
+		t.Fatalf("ClosePeer(%s): %v", accepted, err)
+	}
+	waitForPeerEvent(t, disconnectedEvents, accepted)
+	deadline := time.Now().Add(time.Second)
+	for target.Network().Connectedness(replacement.ID()) != network.Connected && time.Now().Before(deadline) {
+		if err := target.Connect(context.Background(), replacement.Peerstore().PeerInfo(replacement.ID())); err != nil {
+			t.Fatalf("Connect replacement peer after admission slot freed: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if target.Network().Connectedness(replacement.ID()) != network.Connected {
+		t.Fatalf("replacement peer %s was not admitted after slot freed", replacement.ID())
+	}
+}
+
+func waitForConnectedPeerCount(t *testing.T, h host.Host, want int) []peer.ID {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	peers := h.Network().Peers()
+	for len(peers) != want && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		peers = h.Network().Peers()
+	}
+	return peers
+}
+
+func waitForPeerEvent(t *testing.T, events <-chan peer.ID, want peer.ID) {
+	t.Helper()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case pid := <-events:
+			if pid == want {
+				return
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for peer event for %s", want)
+		}
 	}
 }
 

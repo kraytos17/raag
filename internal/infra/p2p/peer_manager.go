@@ -34,8 +34,12 @@ type peerManager struct {
 	caps      map[peer.ID]*peerCaps
 
 	fetchCancelMu sync.RWMutex
-	fetchCancel   map[peer.ID]context.CancelFunc
+	fetchCancel   map[peer.ID]*fetchEntry
 	ttl           time.Duration
+}
+
+type fetchEntry struct {
+	cancel context.CancelFunc
 }
 
 type peerManifest struct {
@@ -57,7 +61,7 @@ func newPeerManager(h host.Host, peerCache *discovery.PeerCache, library app.Lib
 		repo:        repo,
 		manifests:   make(map[peer.ID]*peerManifest),
 		caps:        make(map[peer.ID]*peerCaps),
-		fetchCancel: make(map[peer.ID]context.CancelFunc),
+		fetchCancel: make(map[peer.ID]*fetchEntry),
 		ttl:         ttl,
 	}
 }
@@ -128,20 +132,6 @@ func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.Tr
 	return owners
 }
 
-func (pm *peerManager) GetTrackOwners(trackID string) []peer.ID {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-	pm.pruneExpiredManifestsLocked(time.Now())
-
-	var owners []peer.ID
-	for pid, pmf := range pm.manifests {
-		if slices.Contains(pmf.data.TrackIds, trackID) {
-			owners = append(owners, pid)
-		}
-	}
-	return owners
-}
-
 func (pm *peerManager) GetPeerScore(ctx context.Context, pid peer.ID) *domain.PeerScore {
 	if pm.scorer == nil {
 		return nil
@@ -176,13 +166,6 @@ func (pm *peerManager) IsBanned(pid peer.ID) bool {
 		return pm.scorer.IsBanned(pid)
 	}
 	return false
-}
-
-func (pm *peerManager) GetPeerLatency(pid peer.ID) time.Duration {
-	if pm.scorer != nil {
-		return pm.scorer.AvgLatency(pid)
-	}
-	return 0
 }
 
 func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities {
@@ -357,12 +340,13 @@ func (pm *peerManager) pruneExpiredManifestsLocked(now time.Time) {
 
 func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 	pm.fetchCancelMu.Lock()
-	if existingCancel, ok := pm.fetchCancel[pid]; ok {
-		existingCancel()
+	if existing, ok := pm.fetchCancel[pid]; ok {
+		existing.cancel()
 	}
 
 	baseCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	pm.fetchCancel[pid] = cancel
+	entry := &fetchEntry{cancel: cancel}
+	pm.fetchCancel[pid] = entry
 	pm.fetchCancelMu.Unlock()
 
 	var trackCount int
@@ -409,7 +393,9 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 
 	wg.Wait()
 	pm.fetchCancelMu.Lock()
-	delete(pm.fetchCancel, pid)
+	if current, ok := pm.fetchCancel[pid]; ok && current == entry {
+		delete(pm.fetchCancel, pid)
+	}
 	pm.fetchCancelMu.Unlock()
 
 	if caps := pm.GetCapabilities(pid); caps != nil {
@@ -426,8 +412,8 @@ func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
 
 func (pm *peerManager) onPeerDisconnected(pid peer.ID) {
 	pm.fetchCancelMu.Lock()
-	if cancel, ok := pm.fetchCancel[pid]; ok {
-		cancel()
+	if entry, ok := pm.fetchCancel[pid]; ok {
+		entry.cancel()
 		delete(pm.fetchCancel, pid)
 	}
 

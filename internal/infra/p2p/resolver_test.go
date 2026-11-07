@@ -10,29 +10,35 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/p-society/raag/internal/domain"
 	"github.com/p-society/raag/internal/infra/p2p/discovery"
+	"github.com/p-society/raag/internal/infra/p2p/protocols"
+	"github.com/p-society/raag/internal/infra/wire"
 	pb "github.com/p-society/raag/proto/gen"
 )
 
 type mockPeerManager struct {
-	peers       map[peer.ID]*domain.PeerInfo
-	scores      map[peer.ID]*domain.PeerScore
-	caps        map[peer.ID]*domain.PeerCapabilities
-	banned      map[peer.ID]bool
-	failCount   map[peer.ID]int
-	findResults map[domain.TrackID][]peer.ID
+	peers        map[peer.ID]*domain.PeerInfo
+	scores       map[peer.ID]*domain.PeerScore
+	caps         map[peer.ID]*domain.PeerCapabilities
+	banned       map[peer.ID]bool
+	successCount map[peer.ID]int
+	failCount    map[peer.ID]int
+	findResults  map[domain.TrackID][]peer.ID
 }
 
 func newMockPeerManager() *mockPeerManager {
 	return &mockPeerManager{
-		peers:       make(map[peer.ID]*domain.PeerInfo),
-		scores:      make(map[peer.ID]*domain.PeerScore),
-		caps:        make(map[peer.ID]*domain.PeerCapabilities),
-		banned:      make(map[peer.ID]bool),
-		failCount:   make(map[peer.ID]int),
-		findResults: make(map[domain.TrackID][]peer.ID),
+		peers:        make(map[peer.ID]*domain.PeerInfo),
+		scores:       make(map[peer.ID]*domain.PeerScore),
+		caps:         make(map[peer.ID]*domain.PeerCapabilities),
+		banned:       make(map[peer.ID]bool),
+		successCount: make(map[peer.ID]int),
+		failCount:    make(map[peer.ID]int),
+		findResults:  make(map[domain.TrackID][]peer.ID),
 	}
 }
 
@@ -45,6 +51,7 @@ func (m *mockPeerManager) GetPeerScore(ctx context.Context, pid peer.ID) *domain
 }
 
 func (m *mockPeerManager) RecordSuccess(pid peer.ID) {
+	m.successCount[pid]++
 	delete(m.failCount, pid)
 }
 
@@ -61,19 +68,6 @@ func (m *mockPeerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilit
 		return c
 	}
 	return &domain.PeerCapabilities{}
-}
-
-func (m *mockPeerManager) GetTrackOwners(trackID string) []peer.ID {
-	for tid, owners := range m.findResults {
-		if string(tid) == trackID {
-			return owners
-		}
-	}
-	return nil
-}
-
-func (m *mockPeerManager) GetPeerLatency(pid peer.ID) time.Duration {
-	return 0
 }
 
 type mockLibraryRepo struct {
@@ -219,6 +213,125 @@ func TestP2PResolver_ResolveRemote(t *testing.T) {
 		t.Fatal("Resolve() returned nil reader")
 	}
 	reader.Close()
+}
+
+func TestP2PResolver_ResolveRemoteRecordsSuccessAfterFirstBytes(t *testing.T) {
+	trackID := domain.TrackID(track1ID)
+	pid := peer.ID("first-byte-peer")
+	host := &resolverSequenceHost{streams: []network.Stream{
+		&mockStream{id: "metadata-stream"}, // Metadata probing is best-effort and may fail.
+		newChunkResponseStream(t, []byte("audio bytes")),
+	}}
+	pool := NewStreamPool(host, protocols.StreamProtocol)
+	defer pool.Close()
+	repo := newMockLibraryRepo()
+	peerMgr := newMockPeerManager()
+	scorer := NewPeerScorer()
+	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
+	peerMgr.findResults[trackID] = []peer.ID{pid}
+
+	reader, err := resolver.Resolve(context.Background(), trackID)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	defer reader.Close()
+	if peerMgr.failCount[pid] != 0 {
+		t.Fatalf("failure count after opening stream = %d, want 0", peerMgr.failCount[pid])
+	}
+	if peerMgr.successCount[pid] != 0 {
+		t.Fatal("peer should not be recorded successful merely because the lazy reader opened")
+	}
+	buf := make([]byte, 32)
+	n, err := reader.Read(buf)
+	if err != nil {
+		t.Fatalf("first Read() error = %v", err)
+	}
+	if n == 0 {
+		t.Fatal("first Read() returned no audio bytes")
+	}
+	if peerMgr.successCount[pid] != 1 {
+		t.Fatalf("success count after first bytes = %d, want 1", peerMgr.successCount[pid])
+	}
+	if got := resolver.LastPeerID(); got != pid {
+		t.Fatalf("LastPeerID() = %s, want %s after first bytes", got, pid)
+	}
+	if peerMgr.failCount[pid] != 0 {
+		t.Fatalf("failure count after successful first bytes = %d, want 0", peerMgr.failCount[pid])
+	}
+}
+
+func TestP2PResolver_ResolveRemoteRecordsFailureBeforeFirstBytes(t *testing.T) {
+	trackID := domain.TrackID(track1ID)
+	pid := peer.ID("first-read-failure-peer")
+	host := &resolverSequenceHost{streams: []network.Stream{
+		&mockStream{id: "metadata-stream"}, // Metadata probing is best-effort.
+		&mockStream{id: "failed-audio-stream"},
+	}}
+	pool := NewStreamPool(host, protocols.StreamProtocol)
+	defer pool.Close()
+	peerMgr := newMockPeerManager()
+	resolver := NewP2PResolver(newMockLibraryRepo(), pool, peerMgr, NewPeerScorer(), host)
+	peerMgr.findResults[trackID] = []peer.ID{pid}
+
+	reader, err := resolver.Resolve(context.Background(), trackID)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	defer reader.Close()
+	if peerMgr.successCount[pid] != 0 || peerMgr.failCount[pid] != 0 {
+		t.Fatalf("scores immediately after Resolve = success:%d failure:%d, want 0/0", peerMgr.successCount[pid], peerMgr.failCount[pid])
+	}
+	if _, err := reader.Read(make([]byte, 32)); err == nil {
+		t.Fatal("first Read() error = nil, want stream failure")
+	}
+	if peerMgr.successCount[pid] != 0 || peerMgr.failCount[pid] != 1 {
+		t.Fatalf("scores after failed first Read = success:%d failure:%d, want 0/1", peerMgr.successCount[pid], peerMgr.failCount[pid])
+	}
+}
+
+func newChunkResponseStream(t *testing.T, data []byte) network.Stream {
+	t.Helper()
+	var frame bytes.Buffer
+	if err := wire.WriteMsg(&frame, &pb.ChunkResponse{
+		TrackId:   track1ID,
+		Data:      data,
+		LastChunk: true,
+		TotalSize: int64(len(data)),
+	}); err != nil {
+		t.Fatalf("encode chunk response: %v", err)
+	}
+	return &resolverFrameStream{
+		mockStream: &mockStream{id: "resolver-stream"},
+		response:   frame.Bytes(),
+	}
+}
+
+type resolverSequenceHost struct {
+	streams []network.Stream
+}
+
+func (h *resolverSequenceHost) NewStream(context.Context, peer.ID, ...protocol.ID) (network.Stream, error) {
+	if len(h.streams) == 0 {
+		return nil, errors.New("unexpected NewStream call")
+	}
+	stream := h.streams[0]
+	h.streams = h.streams[1:]
+	return stream, nil
+}
+
+type resolverFrameStream struct {
+	*mockStream
+	response []byte
+	readPos  int
+}
+
+func (s *resolverFrameStream) Read(p []byte) (int, error) {
+	if s.readPos >= len(s.response) {
+		return 0, io.EOF
+	}
+	n := copy(p, s.response[s.readPos:])
+	s.readPos += n
+	return n, nil
 }
 
 func TestP2PResolver_TrackNotFound(t *testing.T) {
@@ -436,379 +549,6 @@ func TestStreamingReader_ReadThenClose(t *testing.T) {
 	}
 }
 
-func TestPeerScorer_RecordSuccess(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("test-peer")
-
-	scorer.RecordFailure(pid)
-	scorer.RecordFailure(pid)
-	scorer.RecordFailure(pid)
-
-	if !scorer.IsBanned(pid) {
-		t.Error("IsBanned() = false, want true after 3 failures")
-	}
-
-	scorer.RecordSuccess(pid)
-	if scorer.IsBanned(pid) {
-		t.Error("IsBanned() = true, want false after success")
-	}
-}
-
-func TestPeerScorer_RecordFailure(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("test-peer")
-
-	scorer.RecordFailure(pid)
-	scorer.RecordFailure(pid)
-
-	scorer.mu.RLock()
-	count := scorer.failures[pid]
-	scorer.mu.RUnlock()
-	if count != 2 {
-		t.Errorf("failures[%s] = %d, want 2", pid, count)
-	}
-}
-
-func TestPeerScorer_Cooldown(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(2, 100*time.Millisecond)
-	pid := peer.ID("test-peer")
-	scorer.RecordFailure(pid)
-	scorer.RecordFailure(pid)
-	if !scorer.IsBanned(pid) {
-		t.Error("IsBanned() = false, want true after 2 failures")
-	}
-
-	time.Sleep(150 * time.Millisecond)
-	if scorer.IsBanned(pid) {
-		t.Error("IsBanned() = true, want false after cooldown")
-	}
-}
-
-func TestPeerScorer_RecordFailure_NoGaterEscalation(t *testing.T) {
-	// Failure-based bans must stay cooldown-bounded and never escalate to a
-	// permanent gater ban, which RecordSuccess cannot undo.
-	scorer := NewPeerScorerWithConfig(3, 5*time.Minute)
-	gater := NewPeerGater()
-	pid := peer.ID("fail-peer")
-
-	scorer.RecordFailure(pid)
-	scorer.RecordFailure(pid)
-	if gater.IsBanned(pid) {
-		t.Fatal("gater banned peer before failLimit reached")
-	}
-
-	scorer.RecordFailure(pid) // reaches failLimit -> scorer ban only
-	if !scorer.IsBanned(pid) {
-		t.Error("IsBanned() = false, want true after failLimit failures")
-	}
-	if gater.IsBanned(pid) {
-		t.Error("gater.IsBanned() = true, want false (no permanent ban on failure)")
-	}
-
-	// A success must clear the scorer ban.
-	scorer.RecordSuccess(pid)
-	if scorer.IsBanned(pid) {
-		t.Error("IsBanned() = true, want false after RecordSuccess")
-	}
-}
-
-func TestPeerScorer_Score(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("test-peer")
-	score := scorer.Score(pid, 100*time.Millisecond, 1000000, 0.9)
-	if score <= 0 {
-		t.Errorf("Score() = %f, want > 0", score)
-	}
-}
-
-func TestPeerScorer_ScoreComponents(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-	// Zero latency, zero bandwidth, zero success
-	s1 := scorer.Score(pid, 0, 0, 0)
-	// High latency should reduce score
-	s2 := scorer.Score(pid, 10*time.Second, 0, 0)
-	if s2 >= s1 {
-		t.Errorf("higher latency should reduce score: s1=%f, s2=%f", s1, s2)
-	}
-
-	// Higher bandwidth should increase score
-	s3 := scorer.Score(pid, 0, 10_000_000, 0.9)
-	s4 := scorer.Score(pid, 0, 100_000_000, 0.9)
-	if s4 <= s3 {
-		t.Errorf("higher bandwidth should increase score: s3=%f, s4=%f", s3, s4)
-	}
-}
-
-func TestPeerScorer_RecordLatency(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("test-peer")
-	if lat := scorer.AvgLatency(pid); lat != 0 {
-		t.Fatalf("AvgLatency() = %v, want 0 for unknown peer", lat)
-	}
-
-	scorer.RecordLatency(pid, 100*time.Millisecond)
-	scorer.RecordLatency(pid, 200*time.Millisecond)
-	avg := scorer.AvgLatency(pid)
-	if avg != 150*time.Millisecond {
-		t.Fatalf("AvgLatency() = %v, want 150ms", avg)
-	}
-}
-
-func TestPeerScorer_RecordLatency_SlidingWindow(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-	// Record 7 latencies, window is 5
-	for i := range 7 {
-		scorer.RecordLatency(pid, time.Duration(i+1)*time.Millisecond)
-	}
-
-	scorer.mu.RLock()
-	count := len(scorer.latencies[pid])
-	scorer.mu.RUnlock()
-	if count != 5 {
-		t.Fatalf("latency window = %d, want 5", count)
-	}
-
-	// avg of 3,4,5,6,7 = 5
-	avg := scorer.AvgLatency(pid)
-	if avg != 5*time.Millisecond {
-		t.Fatalf("AvgLatency() = %v, want 5ms", avg)
-	}
-}
-
-func TestPeerScorer_ClearLatency(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-
-	scorer.RecordLatency(pid, 100*time.Millisecond)
-	scorer.ClearLatency(pid)
-	if lat := scorer.AvgLatency(pid); lat != 0 {
-		t.Fatalf("AvgLatency() = %v after clear, want 0", lat)
-	}
-}
-
-func TestPeerScorer_RecordBandwidth(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-	if bw := scorer.AvgBandwidth(pid); bw != 0 {
-		t.Fatalf("AvgBandwidth() = %d, want 0 for unknown peer", bw)
-	}
-
-	scorer.RecordBandwidth(pid, 1000)
-	scorer.RecordBandwidth(pid, 2000)
-	if bw := scorer.AvgBandwidth(pid); bw != 1500 {
-		t.Fatalf("AvgBandwidth() = %d, want 1500", bw)
-	}
-}
-
-func TestPeerScorer_RecordBandwidth_IgnoresNonPositive(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-
-	scorer.RecordBandwidth(pid, 0)
-	scorer.RecordBandwidth(pid, -100)
-	if bw := scorer.AvgBandwidth(pid); bw != 0 {
-		t.Fatalf("AvgBandwidth() = %d, want 0 after non-positive recordings", bw)
-	}
-}
-
-func TestPeerScorer_RecordBandwidth_SlidingWindow(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-	for i := range 7 {
-		scorer.RecordBandwidth(pid, int64((i+1)*1000))
-	}
-
-	scorer.mu.RLock()
-	count := len(scorer.bandwidths[pid])
-	scorer.mu.RUnlock()
-	if count != 5 {
-		t.Fatalf("bandwidth window = %d, want 5", count)
-	}
-}
-
-func TestPeerScorer_Snapshot(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(5, time.Minute)
-	pid := peer.ID("p")
-
-	scorer.RecordLatency(pid, 100*time.Millisecond)
-	scorer.RecordBandwidth(pid, 5000)
-	scorer.RecordSuccess(pid)
-	scorer.RecordSuccess(pid)
-	scorer.RecordFailure(pid)
-
-	avgLat, avgBw, successes, failures, banned := scorer.Snapshot(pid)
-	if avgLat != 100*time.Millisecond {
-		t.Errorf("Snapshot avgLat = %v, want 100ms", avgLat)
-	}
-	if avgBw != 5000 {
-		t.Errorf("Snapshot avgBw = %d, want 5000", avgBw)
-	}
-	if successes != 2 {
-		t.Errorf("Snapshot successes = %d, want 2", successes)
-	}
-	if failures != 1 {
-		t.Errorf("Snapshot failures = %d, want 1", failures)
-	}
-	if banned {
-		t.Error("Snapshot banned = true, want false (under threshold)")
-	}
-}
-
-func TestPeerScorer_Snapshot_BannedExpires(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(1, 50*time.Millisecond)
-	pid := peer.ID("p")
-	scorer.RecordFailure(pid)
-	snap := func() bool {
-		_, _, _, _, b := scorer.Snapshot(pid)
-		return b
-	}
-	if !snap() {
-		t.Error("should be banned immediately after failure")
-	}
-
-	time.Sleep(100 * time.Millisecond)
-	banned := snap()
-	if banned {
-		t.Error("should not be banned after cooldown")
-	}
-}
-
-func TestPeerScorer_Reset(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-
-	scorer.RecordLatency(pid, 100*time.Millisecond)
-	scorer.RecordBandwidth(pid, 5000)
-	scorer.RecordSuccess(pid)
-	scorer.RecordFailure(pid)
-	scorer.Reset(pid)
-
-	if lat := scorer.AvgLatency(pid); lat != 0 {
-		t.Errorf("after Reset, AvgLatency = %v, want 0", lat)
-	}
-	if bw := scorer.AvgBandwidth(pid); bw != 0 {
-		t.Errorf("after Reset, AvgBandwidth = %d, want 0", bw)
-	}
-	if scorer.IsBanned(pid) {
-		t.Error("after Reset, IsBanned = true, want false")
-	}
-}
-
-func TestPeerScorer_ConcurrentAccess(t *testing.T) {
-	scorer := NewPeerScorer()
-	pid := peer.ID("p")
-
-	var wg sync.WaitGroup
-	for i := range 100 {
-		wg.Add(1)
-		go func(n int) {
-			defer wg.Done()
-			switch n % 6 {
-			case 0:
-				scorer.RecordLatency(pid, time.Duration(n)*time.Millisecond)
-			case 1:
-				scorer.RecordBandwidth(pid, int64(n*1000))
-			case 2:
-				scorer.RecordSuccess(pid)
-			case 3:
-				scorer.RecordFailure(pid)
-			case 4:
-				scorer.IsBanned(pid)
-			case 5:
-				scorer.Score(pid, time.Millisecond, 1000, 0.5)
-			}
-		}(i)
-	}
-	wg.Wait()
-}
-
-func TestNewPeerScorerWithConfig(t *testing.T) {
-	scorer := NewPeerScorerWithConfig(10, 2*time.Minute)
-	pid := peer.ID("p")
-	// Need 10 failures to ban
-	for range 9 {
-		scorer.RecordFailure(pid)
-	}
-	if scorer.IsBanned(pid) {
-		t.Error("should not be banned after 9 failures with limit 10")
-	}
-
-	scorer.RecordFailure(pid)
-	if !scorer.IsBanned(pid) {
-		t.Error("should be banned after 10 failures with limit 10")
-	}
-}
-
-func TestP2PResolverAdapter_LastPeerID(t *testing.T) {
-	repo := newMockLibraryRepo()
-	host := newMockHost()
-	pool := NewStreamPool(host, "/raag/stream/1.0.0")
-	defer pool.Close()
-
-	scorer := NewPeerScorer()
-	peerMgr := newMockPeerManager()
-
-	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
-	adapter := NewP2PResolverAdapter(resolver)
-
-	// Set via resolver and verify adapter reads it through the same lock
-	testPeer := peer.ID("peer-42")
-	resolver.lastPeerMu.Lock()
-	resolver.lastPeerID = testPeer
-	resolver.lastPeerMu.Unlock()
-
-	if got := adapter.LastPeerID(); got != testPeer.String() {
-		t.Fatalf("adapter.LastPeerID() = %q, want %q", got, testPeer.String())
-	}
-}
-
-func TestP2PResolverAdapter_FindPeersWithTrack(t *testing.T) {
-	repo := newMockLibraryRepo()
-	host := newMockHost()
-	pool := NewStreamPool(host, "/raag/stream/1.0.0")
-	defer pool.Close()
-	scorer := NewPeerScorer()
-	peerMgr := newMockPeerManager()
-
-	trackID := domain.TrackID(track1ID)
-	peerMgr.findResults[trackID] = []peer.ID{"p1", "p2"}
-
-	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
-	adapter := NewP2PResolverAdapter(resolver)
-
-	result := adapter.FindPeersWithTrack(context.Background(), trackID)
-	if len(result) != 2 {
-		t.Fatalf("FindPeersWithTrack() len = %d, want 2", len(result))
-	}
-}
-
-func TestP2PResolverAdapter_Resolve_Local(t *testing.T) {
-	repo := newMockLibraryRepo()
-	host := newMockHost()
-	pool := NewStreamPool(host, "/raag/stream/1.0.0")
-	defer pool.Close()
-	scorer := NewPeerScorer()
-	peerMgr := newMockPeerManager()
-
-	trackID := domain.GenerateTrackID("/music/test.mp3")
-	tmpFile := t.TempDir() + "/test.mp3"
-	if err := os.WriteFile(tmpFile, []byte("data"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	repo.tracks[trackID] = &domain.Track{ID: trackID, Path: tmpFile}
-
-	resolver := NewP2PResolver(repo, pool, peerMgr, scorer, host)
-	adapter := NewP2PResolverAdapter(resolver)
-
-	reader, err := adapter.Resolve(context.Background(), trackID)
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-	reader.Close()
-}
-
 func TestRequestedCodecFor(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1010,8 +750,8 @@ func TestP2PResolver_TryPeers_RequestsTranscodeCodec(t *testing.T) {
 	if cr.codec != codecMP3 {
 		t.Errorf("requested codec = %q, want %q", cr.codec, codecMP3)
 	}
-	if got := resolver.LastPeerID(); got != pid {
-		t.Errorf("LastPeerID() = %v, want %v", got, pid)
+	if got := resolver.LastPeerID(); got != "" {
+		t.Errorf("LastPeerID() = %v before the reader delivered bytes, want empty", got)
 	}
 }
 

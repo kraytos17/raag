@@ -27,8 +27,6 @@ type PeerManager interface {
 	RecordFailure(pid peer.ID)
 	IsBanned(pid peer.ID) bool
 	GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities
-	GetTrackOwners(trackID string) []peer.ID
-	GetPeerLatency(pid peer.ID) time.Duration
 }
 
 type P2PResolver struct {
@@ -73,8 +71,8 @@ func (r *P2PResolver) fetchTrackMetadata(ctx context.Context, trackID domain.Tra
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
 
+	defer stream.Close()
 	req := &pb.SyncRequest{
 		Payload: &pb.SyncRequest_TrackDetailRequest{
 			TrackDetailRequest: &pb.TrackDetailRequest{
@@ -97,7 +95,7 @@ func (r *P2PResolver) fetchTrackMetadata(ctx context.Context, trackID domain.Tra
 }
 
 func (r *P2PResolver) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []string {
-	pids := r.peerMgr.GetTrackOwners(string(trackID))
+	pids := r.peerMgr.FindPeersWithTrack(ctx, trackID)
 	result := make([]string, len(pids))
 	for i, p := range pids {
 		result[i] = p.String()
@@ -217,16 +215,20 @@ func (r *P2PResolver) tryPeers(ctx context.Context, trackID domain.TrackID, scor
 			continue
 		}
 
-		r.peerMgr.RecordSuccess(sp.pid)
-		r.lastPeerMu.Lock()
-		r.lastPeerID = sp.pid
-		r.lastPeerMu.Unlock()
-
 		slog.Info("streaming track from peer", "track", trackID, "peer", sp.pid, "score", sp.score, "codec", codec)
 		return &streamingReader{
 			reader:  reader,
 			trackID: trackID,
 			peerID:  sp.pid,
+			onFirstBytes: func() {
+				r.peerMgr.RecordSuccess(sp.pid)
+				r.lastPeerMu.Lock()
+				r.lastPeerID = sp.pid
+				r.lastPeerMu.Unlock()
+			},
+			onFirstError: func(error) {
+				r.peerMgr.RecordFailure(sp.pid)
+			},
 		}, nil
 	}
 	if lastErr == nil {
@@ -260,15 +262,33 @@ func isLocallyDecodable(codec string) bool {
 }
 
 type streamingReader struct {
-	reader  io.ReadCloser
-	trackID domain.TrackID
-	peerID  peer.ID
-	mu      sync.Mutex
-	closed  bool
+	reader       io.ReadCloser
+	trackID      domain.TrackID
+	peerID       peer.ID
+	mu           sync.Mutex
+	closed       bool
+	firstRead    sync.Once
+	onFirstBytes func()
+	onFirstError func(error)
 }
 
 func (r *streamingReader) Read(p []byte) (int, error) {
-	return r.reader.Read(p)
+	n, err := r.reader.Read(p)
+	switch {
+	case n > 0:
+		r.firstRead.Do(func() {
+			if r.onFirstBytes != nil {
+				r.onFirstBytes()
+			}
+		})
+	case err != nil && !errors.Is(err, context.Canceled):
+		r.firstRead.Do(func() {
+			if r.onFirstError != nil {
+				r.onFirstError(err)
+			}
+		})
+	}
+	return n, err
 }
 
 // SetReadDeadline forwards to the underlying chunkedReader so the streaming
@@ -309,282 +329,4 @@ func (r *streamingReader) Close() error {
 
 	r.closed = true
 	return r.reader.Close()
-}
-
-type PeerScorer struct {
-	mu          sync.RWMutex
-	failures    map[peer.ID]int
-	successes   map[peer.ID]int
-	failTotals  map[peer.ID]int
-	bandwidths  map[peer.ID][]int64
-	lastFailure map[peer.ID]time.Time
-	banned      map[peer.ID]bool
-	latencies   map[peer.ID][]time.Duration
-	failLimit   int
-	cooldown    time.Duration
-}
-
-func NewPeerScorer() *PeerScorer {
-	return NewPeerScorerWithConfig(3, 5*time.Minute)
-}
-
-func NewPeerScorerWithConfig(failLimit int, cooldown time.Duration) *PeerScorer {
-	return &PeerScorer{
-		failures:    make(map[peer.ID]int),
-		successes:   make(map[peer.ID]int),
-		failTotals:  make(map[peer.ID]int),
-		bandwidths:  make(map[peer.ID][]int64),
-		lastFailure: make(map[peer.ID]time.Time),
-		banned:      make(map[peer.ID]bool),
-		latencies:   make(map[peer.ID][]time.Duration),
-		failLimit:   failLimit,
-		cooldown:    cooldown,
-	}
-}
-
-func (s *PeerScorer) RecordLatency(pid peer.ID, rtt time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.latencies[pid] = append(s.latencies[pid], rtt)
-	if len(s.latencies[pid]) > 5 {
-		s.latencies[pid] = s.latencies[pid][1:]
-	}
-}
-
-func (s *PeerScorer) AvgLatency(pid peer.ID) time.Duration {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	lats := s.latencies[pid]
-	if len(lats) == 0 {
-		return 0
-	}
-
-	var sum time.Duration
-	for _, l := range lats {
-		sum += l
-	}
-	return sum / time.Duration(len(lats))
-}
-
-func (s *PeerScorer) RecordBandwidth(pid peer.ID, bytesPerSecond int64) {
-	if bytesPerSecond <= 0 {
-		return
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.bandwidths[pid] = append(s.bandwidths[pid], bytesPerSecond)
-	if len(s.bandwidths[pid]) > 5 {
-		s.bandwidths[pid] = s.bandwidths[pid][1:]
-	}
-}
-
-func (s *PeerScorer) AvgBandwidth(pid peer.ID) int64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	bws := s.bandwidths[pid]
-	if len(bws) == 0 {
-		return 0
-	}
-
-	var sum int64
-	for _, bw := range bws {
-		sum += bw
-	}
-	return sum / int64(len(bws))
-}
-
-func (s *PeerScorer) RecordSuccess(pid peer.ID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.successes[pid]++
-	delete(s.failures, pid)
-	delete(s.lastFailure, pid)
-	delete(s.banned, pid)
-	slog.Debug("peer success recorded", "peer", pid)
-}
-
-func (s *PeerScorer) RecordFailure(pid peer.ID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.failTotals[pid]++
-	s.failures[pid]++
-	s.lastFailure[pid] = time.Now()
-	if s.failures[pid] >= s.failLimit {
-		s.banned[pid] = true
-		slog.Warn("peer banned due to failures", "peer", pid, "failures", s.failures[pid])
-		// Deliberately no gater escalation: the scorer's ban is cooldown-based
-		// (IsBanned auto-clears after the cooldown and RecordSuccess clears it),
-		// while a gater ban is permanent for the session and can't be undone by
-		// success. Manual/admin bans go through the gater separately.
-	} else {
-		slog.Debug("peer failure recorded", "peer", pid, "failures", s.failures[pid])
-	}
-}
-
-func (s *PeerScorer) Snapshot(pid peer.ID) (avgLatency time.Duration, avgBandwidth int64, successes int, failures int, banned bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	lats := s.latencies[pid]
-	if len(lats) > 0 {
-		var sum time.Duration
-		for _, l := range lats {
-			sum += l
-		}
-		avgLatency = sum / time.Duration(len(lats))
-	}
-
-	successes = s.successes[pid]
-	failures = s.failTotals[pid]
-	bws := s.bandwidths[pid]
-	if len(bws) > 0 {
-		var sum int64
-		for _, bw := range bws {
-			sum += bw
-		}
-		avgBandwidth = sum / int64(len(bws))
-	}
-	if s.banned[pid] {
-		if time.Since(s.lastFailure[pid]) > s.cooldown {
-			delete(s.banned, pid)
-			banned = false
-		} else {
-			banned = true
-		}
-	}
-	return avgLatency, avgBandwidth, successes, failures, banned
-}
-
-func (s *PeerScorer) ClearLatency(pid peer.ID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.latencies, pid)
-}
-
-func (s *PeerScorer) IsBanned(pid peer.ID) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.banned[pid] {
-		return false
-	}
-	if time.Since(s.lastFailure[pid]) > s.cooldown {
-		delete(s.banned, pid)
-		return false
-	}
-	return true
-}
-
-func (s *PeerScorer) Reset(pid peer.ID) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	delete(s.failures, pid)
-	delete(s.successes, pid)
-	delete(s.failTotals, pid)
-	delete(s.bandwidths, pid)
-	delete(s.lastFailure, pid)
-	delete(s.banned, pid)
-	delete(s.latencies, pid)
-}
-
-func (s *PeerScorer) Score(pid peer.ID, latency time.Duration, bandwidth int64, successRate float64) float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	latencyScore := 1.0 / (1.0 + latency.Seconds())
-	bandwidthScore := float64(bandwidth) / 1e6 * 0.1
-	return latencyScore*0.5 + successRate*0.4 + bandwidthScore*0.1
-}
-
-type P2PResolverAdapter struct {
-	resolver      *P2PResolver
-	peersProvider func() []peer.ID
-}
-
-func NewP2PResolverAdapter(resolver *P2PResolver) *P2PResolverAdapter {
-	return &P2PResolverAdapter{resolver: resolver}
-}
-
-// SetPeersProvider wires a function that returns currently connected peers
-// (e.g. the P2P node's Peers). Required for SearchRemote fan-out.
-func (a *P2PResolverAdapter) SetPeersProvider(fn func() []peer.ID) {
-	a.peersProvider = fn
-}
-
-func (a *P2PResolverAdapter) Resolve(ctx context.Context, trackID domain.TrackID) (io.ReadCloser, error) {
-	return a.resolver.Resolve(ctx, trackID)
-}
-
-func (a *P2PResolverAdapter) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []string {
-	return a.resolver.FindPeersWithTrack(ctx, trackID)
-}
-
-func (a *P2PResolverAdapter) LastPeerID() string {
-	return a.resolver.LastPeerIDString()
-}
-
-func (a *P2PResolverAdapter) FetchTrackMetadata(ctx context.Context, trackID domain.TrackID, peerID string) (*domain.Track, error) {
-	pid, err := peer.Decode(peerID)
-	if err != nil {
-		return nil, err
-	}
-	return a.resolver.fetchTrackMetadata(ctx, trackID, pid)
-}
-
-// SearchPeer asks a single peer to search its own library and returns the
-// matching tracks (with metadata). Best-effort: any error propagates so the
-// caller can skip the peer.
-func (a *P2PResolverAdapter) SearchPeer(ctx context.Context, pid peer.ID, query string, limit int) ([]*domain.Track, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	stream, err := a.resolver.host.NewStream(ctx, pid, protocols.SyncProtocol)
-	if err != nil {
-		return nil, err
-	}
-	defer stream.Close()
-
-	req := &pb.SyncRequest{
-		Payload: &pb.SyncRequest_RemoteSearchRequest{
-			RemoteSearchRequest: &pb.RemoteSearchRequest{
-				Query: query,
-				Limit: int32(limit),
-			},
-		},
-	}
-	if err := wire.WriteMsg(stream, req); err != nil {
-		return nil, err
-	}
-
-	var resp pb.SyncResponse
-	if err := wire.ReadMsg(stream, &resp); err != nil {
-		return nil, err
-	}
-	if sr, ok := resp.GetPayload().(*pb.SyncResponse_Search); ok {
-		tracks := make([]*domain.Track, 0, len(sr.Search.Tracks))
-		for _, t := range sr.Search.Tracks {
-			tracks = append(tracks, convert.ProtoToTrack(t))
-		}
-		return tracks, nil
-	}
-	if er, ok := resp.GetPayload().(*pb.SyncResponse_Error); ok {
-		return nil, errors.New(er.Error.Message)
-	}
-	return nil, errors.New("unexpected response type")
-}
-
-// Peers returns the currently connected peer IDs.
-func (a *P2PResolverAdapter) Peers() []peer.ID {
-	if a.peersProvider != nil {
-		return a.peersProvider()
-	}
-	return nil
 }
