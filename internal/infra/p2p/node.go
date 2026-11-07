@@ -13,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	ma "github.com/multiformats/go-multiaddr"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/p-society/raag/internal/app"
 	"github.com/p-society/raag/internal/convert"
@@ -49,15 +50,23 @@ type P2PNode struct {
 	scorer           *PeerScorer
 	peerCache        *discovery.PeerCache
 	mdnsDiscovered   *discovery.TTLPeerCache
-	mdns             *discovery.MdnsDiscovery
-	broadcast        *discovery.BroadcastDiscovery
+	mdnsService      peerDiscoveryService
+	broadcastService peerDiscoveryService
+	mdnsFactory      func(<-chan struct{}, discovery.PeerHandler, discovery.PeerHandler) peerDiscoveryService
+	broadcastFactory func(<-chan struct{}, host.Host, int, string, discovery.PeerHandler, discovery.PeerHandler) peerDiscoveryService
+	notifier         network.Notifiee
 	peerMgr          *peerManager
 	mdnsServiceName  string
 	admission        *protocols.AdmissionRegistry
 	ctx              context.Context
 	cancel           context.CancelCauseFunc
-	mu               sync.Mutex
+	lifecycleMu      sync.Mutex
+	backgroundMu     sync.Mutex
+	backgroundWG     sync.WaitGroup
+	backgroundStop   bool
+	shutdownDone     chan struct{}
 	started          bool
+	stopped          bool
 	lanOnly          bool
 	maxPeers         int
 	maxKnownPeers    int
@@ -68,6 +77,16 @@ type P2PNode struct {
 	broadcastEnabled bool
 	metrics          *observability.Metrics
 	bus              domain.EventBus
+}
+
+// ErrP2PNodeStopped reports an attempt to start a node after shutdown or a
+// failed startup. A node owns non-restartable resources (host, stream pool,
+// discovery caches), so callers must construct a new node to retry.
+var ErrP2PNodeStopped = errors.New("p2p node is stopped")
+
+type peerDiscoveryService interface {
+	Start() error
+	Close() error
 }
 
 type P2PNodeConfig struct {
@@ -191,37 +210,40 @@ func NewP2PNode(cfg P2PNodeConfig, libraryRepo app.LibraryRepository) (*P2PNode,
 		broadcastTarget:  cfg.BroadcastTarget,
 		broadcastEnabled: cfg.BroadcastEnabled,
 		metrics:          cfg.Metrics,
+		shutdownDone:     make(chan struct{}),
 	}
-
 	return node, nil
 }
 
 func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
-	n.mu.Lock()
+	n.lifecycleMu.Lock()
+	defer n.lifecycleMu.Unlock()
+
+	if n.stopped {
+		return ErrP2PNodeStopped
+	}
 	if n.started {
-		n.mu.Unlock()
 		return nil
 	}
 
 	n.ctx, n.cancel = context.WithCancelCause(ctx)
-	n.started = true
-	n.mu.Unlock()
-
 	n.bus = bus
-
 	n.host.SetStreamHandler(protocols.StreamProtocol, n.streamHandler.Handle)
 	n.host.SetStreamHandler(protocols.SyncProtocol, n.syncHandler.Handle)
-	n.host.Network().Notify(&connNotifier{
-		host:          n.host,
-		streamHandler: n.streamHandler,
-		syncHandler:   n.syncHandler,
-		peerMgr:       n.peerMgr,
-		bus:           bus,
-		streamPool:    n.streamPool,
-		admission:     n.admission,
-		maxPeers:      n.maxPeers,
-	})
+	n.notifier = &connNotifier{
+		ctx:             n.ctx,
+		host:            n.host,
+		streamHandler:   n.streamHandler,
+		syncHandler:     n.syncHandler,
+		peerMgr:         n.peerMgr,
+		bus:             bus,
+		streamPool:      n.streamPool,
+		admission:       n.admission,
+		maxPeers:        n.maxPeers,
+		startBackground: n.startBackground,
+	}
 
+	n.host.Network().Notify(n.notifier)
 	for _, conn := range n.host.Network().Conns() {
 		pid := conn.RemotePeer()
 		if n.peerMgr.IsBanned(pid) {
@@ -231,98 +253,158 @@ func (n *P2PNode) Start(ctx context.Context, bus domain.EventBus) error {
 
 		pi := n.host.Peerstore().PeerInfo(pid)
 		n.peerMgr.peerCache.Add(pi)
-		go n.fetchPeerData(pid)
+		n.startBackground(func() { n.peerMgr.FetchPeerData(n.ctx, pid) })
 	}
 
-	mdns := discovery.NewMdnsDiscoveryWithHandlers(
-		n.ctx.Done(),
-		n.host,
-		n.mdnsServiceName,
-		func(pi peer.AddrInfo) {
-			n.mdnsDiscovered.Add(pi)
-		},
-		func(pi peer.AddrInfo) {
-			slog.Info("peer discovered via mDNS", "peer", pi.ID)
-		},
-	)
-
-	n.mdns = mdns
-	if err := mdns.Start(); err != nil {
-		// A failed start must not leak the pool's reaper goroutine or leave the
-		// node half-started: stop the pool and clear the started flag so a later
-		// Start retry is possible.
-		n.streamPool.Close()
-		n.mu.Lock()
-		n.started = false
-		n.mu.Unlock()
-		return err
+	onDiscovered := func(pi peer.AddrInfo) {
+		n.mdnsDiscovered.Add(pi)
+	}
+	onMDNSConnected := func(pi peer.AddrInfo) {
+		slog.Info("peer discovered via mDNS", "peer", pi.ID)
 	}
 
-	if n.broadcastEnabled {
-		bc := discovery.NewBroadcastDiscovery(
-			n.ctx.Done(),
-			n.host,
-			n.broadcastPort,
-			n.broadcastTarget,
-			func(pi peer.AddrInfo) {
-				n.mdnsDiscovered.Add(pi)
-			},
-			func(pi peer.AddrInfo) {
-				slog.Info("peer discovered via broadcast", "peer", pi.ID)
-			},
+	var mdns peerDiscoveryService
+	if n.mdnsFactory != nil {
+		mdns = n.mdnsFactory(n.ctx.Done(), onDiscovered, onMDNSConnected)
+	} else {
+		mdns = discovery.NewMdnsDiscoveryWithHandlers(
+			n.ctx.Done(), n.host, n.mdnsServiceName, onDiscovered, onMDNSConnected,
 		)
-		if err := bc.Start(); err != nil {
-			n.mdns.Close()
-			n.streamPool.Close()
-			n.mu.Lock()
-			n.started = false
-			n.mu.Unlock()
-			return err
-		}
-		n.broadcast = bc
 	}
 
-	go n.measureLatencyLoop()
-	go n.refreshManifestsLoop()
+	n.mdnsService = mdns
+	if err := mdns.Start(); err != nil {
+		return n.failStart(ctx, err)
+	}
+	if n.broadcastEnabled {
+		onBroadcastConnected := func(pi peer.AddrInfo) {
+			slog.Info("peer discovered via broadcast", "peer", pi.ID)
+		}
+
+		var broadcast peerDiscoveryService
+		if n.broadcastFactory != nil {
+			broadcast = n.broadcastFactory(n.ctx.Done(), n.host, n.broadcastPort, n.broadcastTarget,
+				onDiscovered, onBroadcastConnected)
+		} else {
+			broadcast = discovery.NewBroadcastDiscovery(
+				n.ctx.Done(), n.host, n.broadcastPort, n.broadcastTarget,
+				onDiscovered, onBroadcastConnected,
+			)
+		}
+
+		n.broadcastService = broadcast
+		if err := broadcast.Start(); err != nil {
+			return n.failStart(ctx, err)
+		}
+	}
+
+	n.startBackground(n.measureLatencyLoop)
+	n.startBackground(n.refreshManifestsLoop)
 	if !n.lanOnly {
-		if err := BootstrapPeers(ctx, n.host, n.bootstrapPeers); err != nil {
-			slog.Warn("bootstrap failed", "err", err)
-		}
+		n.startBackground(func() {
+			if err := BootstrapPeers(n.ctx, n.host, n.bootstrapPeers); err != nil {
+				slog.Warn("bootstrap failed", "err", err)
+			}
+		})
 	}
 
+	n.started = true
 	slog.Info("P2P node started", "peer_id", n.host.ID())
 	return nil
 }
 
-func (n *P2PNode) Stop(ctx context.Context) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (n *P2PNode) failStart(ctx context.Context, startErr error) error {
+	if stopErr := n.stopLocked(ctx); stopErr != nil {
+		return errors.Join(startErr, stopErr)
+	}
+	return startErr
+}
 
+func (n *P2PNode) Stop(ctx context.Context) error {
+	n.lifecycleMu.Lock()
+	defer n.lifecycleMu.Unlock()
+	return n.stopLocked(ctx)
+}
+
+// stopLocked is shared by normal shutdown and startup rollback. The caller
+// must hold lifecycleMu.
+func (n *P2PNode) stopLocked(ctx context.Context) error {
+	if n.shutdownDone == nil {
+		n.shutdownDone = make(chan struct{})
+	}
+	if n.stopped {
+		select {
+		case <-n.shutdownDone:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	n.stopped = true
+	n.started = false
 	if n.cancel != nil {
 		n.cancel(errors.New("p2p node stopped"))
 	}
 
-	if n.mdns != nil {
-		if err := n.mdns.Close(); err != nil {
+	n.backgroundMu.Lock()
+	n.backgroundStop = true
+	n.backgroundMu.Unlock()
+	// Stop discovery sources before closing the host. Their Close methods unblock
+	// their receive loops and ensure they cannot enqueue more peer work.
+	if n.mdnsService != nil {
+		if err := n.mdnsService.Close(); err != nil {
 			slog.Warn("failed to close mDNS", "error", err)
 		}
 	}
-	if n.broadcast != nil {
-		if err := n.broadcast.Close(); err != nil {
+	if n.broadcastService != nil {
+		if err := n.broadcastService.Close(); err != nil {
 			slog.Warn("failed to close broadcast discovery", "error", err)
 		}
+	}
+	if n.notifier != nil {
+		n.host.Network().StopNotify(n.notifier)
+		n.notifier = nil
 	}
 
 	n.mdnsDiscovered.Close()
 	n.streamPool.Close()
 	if err := n.host.Close(); err != nil {
-		slog.Warn("failed to close host", "error", err)
+		slog.Warn("failed to close P2P host", "error", err)
 	}
-	if tr := n.streamHandler.Transcoder(); tr != nil {
-		tr.Cleanup()
+	go func() {
+		n.backgroundWG.Wait()
+		if tr := n.streamHandler.Transcoder(); tr != nil {
+			tr.Cleanup()
+		}
+		slog.Info("P2P node stopped")
+		close(n.shutdownDone)
+	}()
+
+	select {
+	case <-n.shutdownDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	slog.Info("P2P node stopped")
-	return nil
+}
+
+// startBackground tracks node-owned work so shutdown can cancel and wait for
+// it. Once shutdown begins, no additional goroutines are admitted.
+func (n *P2PNode) startBackground(work func()) bool {
+	n.backgroundMu.Lock()
+	if n.backgroundStop {
+		n.backgroundMu.Unlock()
+		return false
+	}
+
+	n.backgroundWG.Add(1)
+	n.backgroundMu.Unlock()
+	go func() {
+		defer n.backgroundWG.Done()
+		work()
+	}()
+	return true
 }
 
 func (n *P2PNode) Host() host.Host {
@@ -506,14 +588,16 @@ func (n *P2PNode) NetworkInfo() NetworkInfo {
 }
 
 type connNotifier struct {
-	host          host.Host
-	streamHandler *protocols.StreamHandler
-	syncHandler   *protocols.SyncHandler
-	peerMgr       *peerManager
-	bus           domain.EventBus
-	streamPool    *StreamPool
-	admission     *protocols.AdmissionRegistry
-	maxPeers      int
+	ctx             context.Context
+	host            host.Host
+	streamHandler   *protocols.StreamHandler
+	syncHandler     *protocols.SyncHandler
+	peerMgr         *peerManager
+	bus             domain.EventBus
+	streamPool      *StreamPool
+	admission       *protocols.AdmissionRegistry
+	maxPeers        int
+	startBackground func(func()) bool
 }
 
 func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
@@ -544,8 +628,10 @@ func (cn *connNotifier) Connected(_ network.Network, conn network.Conn) {
 	// track-detail / remote-search guards meaningless.
 	slog.Debug("peer connected", "peer", pid, "addr", conn.RemoteMultiaddr().String())
 	cn.peerMgr.persist(pid)
+	if cn.startBackground != nil {
+		cn.startBackground(func() { cn.peerMgr.FetchPeerData(cn.ctx, pid) })
+	}
 
-	go cn.peerMgr.FetchPeerData(context.Background(), pid)
 	cn.bus.Publish(context.Background(), domain.NewEvent(
 		domain.EventPeerConnected,
 		domain.PeerConnectedPayload{
@@ -611,8 +697,12 @@ func runTickerLoop(ctx context.Context, interval time.Duration, work func()) {
 // refreshAllManifests re-fetches manifests from all currently connected peers.
 // Exposed as a method so the loop's work is unit-testable.
 func (n *P2PNode) refreshAllManifests() {
+	ctx := n.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	for _, pid := range n.Peers() {
-		n.peerMgr.FetchPeerData(context.Background(), pid)
+		n.peerMgr.FetchPeerData(ctx, pid)
 	}
 }
 
@@ -675,10 +765,6 @@ func (n *P2PNode) probePeerLatency(pid peer.ID) {
 		return
 	}
 	n.scorer.RecordLatency(pid, res.RTT)
-}
-
-func (n *P2PNode) fetchPeerData(pid peer.ID) {
-	n.peerMgr.FetchPeerData(context.Background(), pid)
 }
 
 type peerManager struct {
@@ -768,9 +854,10 @@ func (pm *peerManager) persist(pid peer.ID) {
 }
 
 func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.TrackID) []peer.ID {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 
+	pm.pruneExpiredManifestsLocked(time.Now())
 	if len(pm.manifests) == 0 {
 		slog.Warn("no peer manifests available - privacy settings may prevent sharing")
 		return nil
@@ -778,10 +865,6 @@ func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.Tr
 
 	var owners []peer.ID
 	for pid, pmf := range pm.manifests {
-		if time.Since(pmf.addedAt) > pm.ttl {
-			delete(pm.manifests, pid)
-			continue
-		}
 		if slices.Contains(pmf.data.TrackIds, string(trackID)) {
 			owners = append(owners, pid)
 		}
@@ -790,15 +873,12 @@ func (pm *peerManager) FindPeersWithTrack(ctx context.Context, trackID domain.Tr
 }
 
 func (pm *peerManager) GetTrackOwners(trackID string) []peer.ID {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.pruneExpiredManifestsLocked(time.Now())
 
 	var owners []peer.ID
 	for pid, pmf := range pm.manifests {
-		if time.Since(pmf.addedAt) > pm.ttl {
-			delete(pm.manifests, pid)
-			continue
-		}
 		if slices.Contains(pmf.data.TrackIds, trackID) {
 			owners = append(owners, pid)
 		}
@@ -850,19 +930,14 @@ func (pm *peerManager) GetPeerLatency(pid peer.ID) time.Duration {
 }
 
 func (pm *peerManager) GetPeerCapabilities(pid peer.ID) *domain.PeerCapabilities {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if pc, ok := pm.caps[pid]; ok && time.Since(pc.addedAt) < pm.ttl {
+	if pc := pm.cachedCapabilities(pid); pc != nil {
 		return &domain.PeerCapabilities{
-			SupportedCodecs:   pc.data.SupportedCodecs,
-			SupportedBitrates: pc.data.SupportedBitrates,
+			SupportedCodecs:   slices.Clone(pc.data.SupportedCodecs),
+			SupportedBitrates: slices.Clone(pc.data.SupportedBitrates),
 			CanTranscode:      pc.data.CanTranscode,
 			UploadBandwidth:   pc.data.UploadBandwidth,
 			ProtocolVersion:   pc.data.ProtocolVersion,
 		}
-	} else if ok {
-		delete(pm.caps, pid)
 	}
 	return &domain.PeerCapabilities{
 		SupportedCodecs: domain.PlayableCodecs,
@@ -963,25 +1038,73 @@ func (pm *peerManager) FetchCapabilities(ctx context.Context, pid peer.ID) error
 }
 
 func (pm *peerManager) GetManifest(pid peer.ID) *pb.LibraryManifest {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	if pmf, ok := pm.manifests[pid]; ok && time.Since(pmf.addedAt) < pm.ttl {
-		return pmf.data
-	} else if ok {
-		delete(pm.manifests, pid)
+	if pmf := pm.cachedManifest(pid); pmf != nil {
+		return proto.Clone(pmf.data).(*pb.LibraryManifest)
 	}
 	return nil
 }
 
 func (pm *peerManager) GetCapabilities(pid peer.ID) *pb.PeerCapabilities {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	if pc, ok := pm.caps[pid]; ok && time.Since(pc.addedAt) < pm.ttl {
-		return pc.data
-	} else if ok {
-		delete(pm.caps, pid)
+	if pc := pm.cachedCapabilities(pid); pc != nil {
+		return proto.Clone(pc.data).(*pb.PeerCapabilities)
 	}
 	return nil
+}
+
+func (pm *peerManager) cachedManifest(pid peer.ID) *peerManifest {
+	pm.mu.RLock()
+	entry, ok := pm.manifests[pid]
+	if !ok || !pm.isExpired(entry.addedAt, time.Now()) {
+		pm.mu.RUnlock()
+		return entry
+	}
+
+	pm.mu.RUnlock()
+	pm.mu.Lock()
+	if current, exists := pm.manifests[pid]; exists && current == entry && pm.isExpired(current.addedAt, time.Now()) {
+		delete(pm.manifests, pid)
+	}
+
+	pm.mu.Unlock()
+	return nil
+}
+
+func (pm *peerManager) cachedCapabilities(pid peer.ID) *peerCaps {
+	pm.mu.RLock()
+	entry, ok := pm.caps[pid]
+	if !ok || !pm.isExpired(entry.addedAt, time.Now()) {
+		pm.mu.RUnlock()
+		return entry
+	}
+
+	pm.mu.RUnlock()
+	pm.mu.Lock()
+	if current, exists := pm.caps[pid]; exists && current == entry && pm.isExpired(current.addedAt, time.Now()) {
+		delete(pm.caps, pid)
+	}
+
+	pm.mu.Unlock()
+	return nil
+}
+
+func (pm *peerManager) isExpired(addedAt, now time.Time) bool {
+	return pm.ttl <= 0 || now.Sub(addedAt) > pm.ttl
+}
+
+func (pm *peerManager) pruneExpiredManifestsLocked(now time.Time) {
+	for pid, manifest := range pm.manifests {
+		if pm.isExpired(manifest.addedAt, now) {
+			delete(pm.manifests, pid)
+		}
+	}
+}
+
+func (pm *peerManager) pruneExpiredCapabilitiesLocked(now time.Time) {
+	for pid, caps := range pm.caps {
+		if pm.isExpired(caps.addedAt, now) {
+			delete(pm.caps, pid)
+		}
+	}
 }
 
 func (pm *peerManager) FetchPeerData(ctx context.Context, pid peer.ID) {
@@ -1073,29 +1196,19 @@ func (pm *peerManager) onPeerDisconnected(pid peer.ID) {
 }
 
 func (pm *peerManager) GetBestCodec(pid peer.ID, preferredCodec string) string {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if pc, ok := pm.caps[pid]; ok && time.Since(pc.addedAt) < pm.ttl {
+	if pc := pm.cachedCapabilities(pid); pc != nil {
 		for _, codec := range []string{preferredCodec, codecOpus, codecMP3, codecFlac} {
 			if slices.Contains(pc.data.SupportedCodecs, codec) {
 				return codec
 			}
 		}
-	} else if ok {
-		delete(pm.caps, pid)
 	}
 	return codecMP3
 }
 
 func (pm *peerManager) HasTrack(pid peer.ID, trackID string) bool {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if pmf, ok := pm.manifests[pid]; ok && time.Since(pmf.addedAt) < pm.ttl {
+	if pmf := pm.cachedManifest(pid); pmf != nil {
 		return slices.Contains(pmf.data.TrackIds, trackID)
-	} else if ok {
-		delete(pm.manifests, pid)
 	}
 	return false
 }

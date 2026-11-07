@@ -164,6 +164,103 @@ func TestPeerManager_PersistNilScorer(t *testing.T) {
 	}
 }
 
+func TestPeerManager_ExpiredCacheReadsAreConcurrentSafe(t *testing.T) {
+	pid := peer.ID("expired-cache-peer")
+	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, nil, -time.Second, nil)
+	pm.manifests[pid] = &peerManifest{
+		data:    &pb.LibraryManifest{TrackIds: []string{"track-1"}},
+		addedAt: time.Now().Add(-time.Hour),
+	}
+	pm.caps[pid] = &peerCaps{
+		data:    &pb.PeerCapabilities{SupportedCodecs: []string{"opus"}},
+		addedAt: time.Now().Add(-time.Hour),
+	}
+
+	const readers = 64
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range readers {
+		wg.Go(func() {
+			<-start
+			if got := pm.GetManifest(pid); got != nil {
+				t.Errorf("GetManifest() = %v, want nil for expired entry", got)
+			}
+			if got := pm.GetCapabilities(pid); got != nil {
+				t.Errorf("GetCapabilities() = %v, want nil for expired entry", got)
+			}
+			if got := pm.GetPeerCapabilities(pid); got == nil {
+				t.Error("GetPeerCapabilities() = nil, want playable-codec fallback")
+			}
+			if pm.HasTrack(pid, "track-1") {
+				t.Error("HasTrack() = true, want false for expired entry")
+			}
+			if got := pm.FindPeersWithTrack(context.Background(), domain.TrackID("track-1")); len(got) != 0 {
+				t.Errorf("FindPeersWithTrack() = %v, want no expired peers", got)
+			}
+			if got := pm.GetTrackOwners("track-1"); len(got) != 0 {
+				t.Errorf("GetTrackOwners() = %v, want no expired peers", got)
+			}
+			if got := pm.GetBestCodec(pid, "opus"); got != codecMP3 {
+				t.Errorf("GetBestCodec() = %q, want fallback %q", got, codecMP3)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+}
+
+func TestPeerManager_CacheGettersReturnIndependentSnapshots(t *testing.T) {
+	pid := peer.ID("snapshot-cache-peer")
+	pm := newPeerManager(nil, discovery.NewPeerCache(10), nil, nil, time.Hour, nil)
+	pm.manifests[pid] = &peerManifest{
+		data: &pb.LibraryManifest{
+			PeerId:   "original-peer",
+			TrackIds: []string{"track-1", "track-2"},
+		},
+		addedAt: time.Now(),
+	}
+	pm.caps[pid] = &peerCaps{
+		data: &pb.PeerCapabilities{
+			SupportedCodecs:   []string{"opus", "mp3"},
+			SupportedBitrates: []int32{128, 256},
+			ProtocolVersion:   "1.0.0",
+		},
+		addedAt: time.Now(),
+	}
+
+	manifest := pm.GetManifest(pid)
+	manifest.PeerId = "corrupted-peer"
+	manifest.TrackIds[0] = "corrupted-track"
+	manifest.TrackIds = append(manifest.TrackIds, "injected-track")
+
+	caps := pm.GetCapabilities(pid)
+	caps.SupportedCodecs[0] = "corrupted-codec"
+	caps.SupportedBitrates[0] = 999
+	caps.ProtocolVersion = "corrupted-version"
+
+	domainCaps := pm.GetPeerCapabilities(pid)
+	domainCaps.SupportedCodecs[0] = "corrupted-domain-codec"
+	domainCaps.SupportedBitrates[0] = 999
+	domainCaps.ProtocolVersion = "corrupted-domain-version"
+
+	gotManifest := pm.GetManifest(pid)
+	if gotManifest.PeerId != "original-peer" || !slices.Equal(gotManifest.TrackIds, []string{"track-1", "track-2"}) {
+		t.Errorf("cached manifest changed through returned snapshot: %+v", gotManifest)
+	}
+	gotCaps := pm.GetCapabilities(pid)
+	if gotCaps.ProtocolVersion != "1.0.0" ||
+		!slices.Equal(gotCaps.SupportedCodecs, []string{"opus", "mp3"}) ||
+		!slices.Equal(gotCaps.SupportedBitrates, []int32{128, 256}) {
+		t.Errorf("cached capabilities changed through returned snapshot: %+v", gotCaps)
+	}
+	gotDomainCaps := pm.GetPeerCapabilities(pid)
+	if gotDomainCaps.ProtocolVersion != "1.0.0" ||
+		!slices.Equal(gotDomainCaps.SupportedCodecs, []string{"opus", "mp3"}) ||
+		!slices.Equal(gotDomainCaps.SupportedBitrates, []int32{128, 256}) {
+		t.Errorf("cached domain capabilities changed through returned snapshot: %+v", gotDomainCaps)
+	}
+}
+
 // TestP2PNode_RefreshAllManifests verifies refreshAllManifests re-fetches the
 // manifest from each connected peer
 func TestP2PNode_RefreshAllManifests(t *testing.T) {

@@ -6,8 +6,24 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+func TestResourceManagerLimits_IncludeLibp2pServices(t *testing.T) {
+	limits := rcmgr.DefaultLimits
+	libp2p.SetDefaultServiceLimits(&limits)
+	configured := rcmgr.NewFixedLimiter(limits.Scale(4<<20, 1024))
+
+	if got := configured.GetServiceLimits("libp2p.identify").GetStreamTotalLimit(); got != 128 {
+		t.Fatalf("identify service stream limit = %d, want bundled limit 128", got)
+	}
+	if got := configured.GetProtocolLimits(protocol.ID("/ipfs/id/1.0.0")).GetStreamTotalLimit(); got != 128 {
+		t.Fatalf("identify protocol stream limit = %d, want bundled limit 128", got)
+	}
+}
 
 func TestProbeListenAddrs_FreePorts(t *testing.T) {
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")

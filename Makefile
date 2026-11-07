@@ -1,9 +1,23 @@
-.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-fix lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify smoke-test
+.PHONY: help build build-raag build-raagd dev run-daemon run-cli test test-short test-coverage test-bench lint lint-format lint-go lint-golangci lint-fix lint-fix-format lint-fix-golangci lint-ci sec generate daemon-start daemon-start-detach daemon-stop daemon-status docker-build docker-run docker-stop dev-setup deps install clean clean-all ci release docs-verify smoke-test
 
 BIN := bin
 RAAG := $(BIN)/raag
 RAAGD := $(BIN)/raagd
-GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo $(shell go env GOPATH)/bin/golangci-lint)
+GOTOOLBIN := $(shell go env GOBIN)
+ifeq ($(strip $(GOTOOLBIN)),)
+GOTOOLBIN := $(shell go env GOPATH)/bin
+endif
+
+GOFUMPT_VERSION := v0.12.0
+GOIMPORTS_VERSION := v0.52.1-0.20261106145633-d407941a339a
+GOLANGCI_LINT_VERSION := v2.15.0
+GOSEC_VERSION := v2.30.0
+GOVULNCHECK_VERSION := v1.9.0
+AIR_VERSION := v1.67.3
+BUF_VERSION := v1.75.0
+PROTOC_GEN_GO_VERSION := v1.36.12
+GORELEASER_VERSION := v2.20.0
+TRIVY_VERSION := v0.76.2
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -40,7 +54,7 @@ help:
 	@echo "  deps               - Tidy and verify dependencies"
 	@echo "  install            - Install dev tools (pin to known-good versions)"
 	@echo "  clean              - Remove build artifacts"
-	@echo "  clean-all          - Remove build artifacts and user data (config/db)"
+	@echo "  clean-all          - Remove build artifacts and user data (requires CONFIRM_CLEAN_ALL=yes)"
 	@echo "  ci                 - Full CI pipeline"
 	@echo "  release            - Build release binaries"
 
@@ -58,7 +72,7 @@ build-raagd: $(BIN)
 	go build -ldflags="$(LDFLAGS)" -o $(RAAGD) ./cmd/raagd
 
 dev:
-	air
+	$(GOTOOLBIN)/air
 
 run-daemon:
 	go run ./cmd/raagd --music-path "$${RAAG_MUSIC:-$$HOME/Music}"
@@ -89,11 +103,11 @@ test-bench:
 lint: lint-format lint-go lint-golangci
 
 lint-format:
-	@if ! command -v gofumpt >/dev/null 2>&1; then \
+	@if [ ! -x "$(GOTOOLBIN)/gofumpt" ]; then \
 		echo "gofumpt not found. Run 'make install' first."; \
 		exit 1; \
 	fi
-	@output=$$(gofumpt -l .); \
+	@output=$$($(GOTOOLBIN)/gofumpt -l .); \
 	if [ -n "$$output" ]; then \
 		echo "Files not formatted with gofumpt:"; \
 		echo "$$output"; \
@@ -104,50 +118,50 @@ lint-go:
 	go vet ./...
 
 lint-golangci:
-	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
+	@if [ ! -x "$(GOTOOLBIN)/golangci-lint" ]; then \
 		echo "golangci-lint not found. Run 'make install' first."; \
 		exit 1; \
 	fi
-	$(GOLANGCI_LINT) run ./...
+	$(GOTOOLBIN)/golangci-lint run ./...
 
 lint-fix: lint-fix-format lint-fix-golangci
 
 lint-fix-format:
-	@if ! command -v gofumpt >/dev/null 2>&1; then \
+	@if [ ! -x "$(GOTOOLBIN)/gofumpt" ]; then \
 		echo "gofumpt not found. Run 'make install' first."; \
 		exit 1; \
 	fi
-	gofumpt -w .
+	$(GOTOOLBIN)/gofumpt -w .
 
 lint-fix-golangci:
-	@if ! command -v golangci-lint >/dev/null 2>&1 && [ ! -f $(GOLANGCI_LINT) ]; then \
+	@if [ ! -x "$(GOTOOLBIN)/golangci-lint" ]; then \
 		echo "golangci-lint not found. Run 'make install' first."; \
 		exit 1; \
 	fi
-	$(GOLANGCI_LINT) run --fix ./...
+	$(GOTOOLBIN)/golangci-lint run --fix ./...
 
 lint-ci: lint-golangci
 
 sec:
-	@if ! command -v gosec >/dev/null 2>&1; then \
+	@if [ ! -x "$(GOTOOLBIN)/gosec" ]; then \
 		echo "gosec not found. Run 'make install' first."; \
 		exit 1; \
 	fi
-	gosec ./...
-	@if ! command -v govulncheck >/dev/null 2>&1; then \
+	$(GOTOOLBIN)/gosec ./...
+	@if [ ! -x "$(GOTOOLBIN)/govulncheck" ]; then \
 		echo "govulncheck not found. Run 'make install' first."; \
 		exit 1; \
 	fi
-	govulncheck ./...
-	@if ! command -v trivy >/dev/null 2>&1; then \
+	$(GOTOOLBIN)/govulncheck ./...
+	@if [ ! -x "$(GOTOOLBIN)/trivy" ]; then \
 		echo "Trivy not found. Run 'make install' first."; \
 		exit 1; \
 	fi
-	trivy fs --security-checks vuln,config ./
+	$(GOTOOLBIN)/trivy fs --security-checks vuln,config ./
 
 generate:
-	buf lint
-	buf generate
+	$(GOTOOLBIN)/buf lint
+	$(GOTOOLBIN)/buf generate
 
 daemon-start:
 	./bin/raagd
@@ -182,26 +196,27 @@ deps:
 	go mod verify
 
 install:
-	go install mvdan.cc/gofumpt@v0.11.0
-	go install golang.org/x/tools/cmd/goimports@v0.49.0
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-	go install github.com/securego/gosec/v2/cmd/gosec@latest
-	go install golang.org/x/vuln/cmd/govulncheck@latest
-	go install github.com/air-verse/air@latest
-	go install github.com/bufbuild/buf/cmd/buf@latest
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	@if ! command -v goreleaser >/dev/null 2>&1; then \
-		echo "Installing goreleaser..."; \
-		go install github.com/goreleaser/goreleaser@latest; \
-	fi
+	go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+	go install golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION)
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
+	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	go install github.com/air-verse/air@$(AIR_VERSION)
+	go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
 	@echo "Installing Trivy..."
-	@curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $$(go env GOPATH)/bin v0.74.0
+	@curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(GOTOOLBIN) $(TRIVY_VERSION)
 	@echo "Done"
 
 clean:
 	rm -rf bin/ coverage.out coverage.html raagd.log raagd.pid
 
 clean-all: clean
+	@if [ "$(CONFIRM_CLEAN_ALL)" != "yes" ]; then \
+		echo "Refusing to remove Raag user data. Re-run with CONFIRM_CLEAN_ALL=yes to confirm."; \
+		exit 1; \
+	fi
 	@echo "Removing user data (config and database)..."
 	rm -rf ~/.config/raag ~/.local/share/raag
 	@echo "All data cleaned"
@@ -212,4 +227,4 @@ ci: lint-format lint-go lint-golangci
 	mkdir -p bin && go build -ldflags="$(LDFLAGS)" -o bin/raag ./cmd/raag && go build -ldflags="$(LDFLAGS)" -o bin/raagd ./cmd/raagd
 
 release:
-	goreleaser release --clean --skip=publish
+	$(GOTOOLBIN)/goreleaser release --clean --skip=publish

@@ -116,11 +116,14 @@ type P2PConfig struct {
 }
 
 func NewHost(privKey crypto.PrivKey, cfg P2PConfig) (host.Host, error) {
+	limits := rcmgr.DefaultLimits
+	libp2p.SetDefaultServiceLimits(&limits)
+	concreteLimits := limits.Scale(
+		4<<20, // 4MiB scaling budget; below 128MiB, base limits apply.
+		1024,  // file descriptor budget for this desktop daemon.
+	)
 	resourceManager, err := rcmgr.NewResourceManager(
-		rcmgr.NewFixedLimiter(rcmgr.DefaultLimits.Scale(
-			4<<20, // 4MiB memory base
-			1024,  // 64 peers * 3 streams + overhead
-		)),
+		rcmgr.NewFixedLimiter(concreteLimits),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource manager: %w", err)

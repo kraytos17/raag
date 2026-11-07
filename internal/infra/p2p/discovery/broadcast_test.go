@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	pb "github.com/p-society/raag/proto/gen"
@@ -127,21 +128,27 @@ func TestBroadcastDiscovery_AnnouncesAndDiscovers(t *testing.T) {
 	}
 	defer bcB.Close()
 
-	// Each side should eventually discover (and connect to) the other.
-	wantA, wantB := hostB.ID(), hostA.ID()
-	gotA, gotB := false, false
-	deadline := time.After(10 * time.Second)
-	for !gotA || !gotB {
+	// One successful dial is sufficient: libp2p's resulting bidirectional
+	// connection can make the concurrent dial from the other side redundant.
+	// Assert connectivity from both hosts instead of requiring both dial
+	// workers' onConnected callbacks to fire.
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	connectedCallback := false
+	for !connectedCallback ||
+		hostA.Network().Connectedness(hostB.ID()) != network.Connected ||
+		hostB.Network().Connectedness(hostA.ID()) != network.Connected {
 		select {
-		case id := <-connectedCh:
-			if id == wantA {
-				gotA = true
-			}
-			if id == wantB {
-				gotB = true
-			}
+		case <-connectedCh:
+			connectedCallback = true
+			// Wait for the opposite host's network state to reflect the
+			// successful connection too.
+		case <-ticker.C:
 		case <-deadline:
-			t.Fatalf("timed out: discovered A=%v, B=%v", gotB, gotA)
+			t.Fatalf("timed out: host A connected=%v, host B connected=%v",
+				hostA.Network().Connectedness(hostB.ID()),
+				hostB.Network().Connectedness(hostA.ID()))
 		}
 	}
 }
